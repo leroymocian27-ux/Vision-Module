@@ -1,0 +1,9 @@
+{
+  "onnx": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\fall_candidate_efficientnet_b0.onnx",
+  "checkpoint": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\best_model.pth",
+  "threshold": 0.3979087471961975,
+  "checker": "passed",
+  "max_abs_error": 0.0010700225830078125,
+  "max_abs_probability_error": 8.826361863611965e-11,
+  "numerically_equivalent": true
+}

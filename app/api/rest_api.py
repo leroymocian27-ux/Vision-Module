@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+import socket
+import time
+
+import cv2
+from fastapi import APIRouter, Depends, HTTPException, Response
+
+from app.api.deps import get_runtime
+from app.camera.frame_freshness import FreshnessThresholds, frame_freshness
+from app.camera.source_models import is_mock_source, mask_source_url
+from app.core.runtime import Runtime
+from app.schemas.stream import (
+    StreamControlResponse,
+    StreamHostSwitchRequest,
+    MockStreamFaultRequest,
+    StreamProbeRequest,
+    StreamProbeResponse,
+    StreamRuntimeSourceResponse,
+    StreamStartRequest,
+    StreamStopRequest,
+)
+
+router = APIRouter(tags=["stream"])
+
+
+@router.post("/stream/start", response_model=StreamControlResponse)
+def start_stream(
+    request: StreamStartRequest,
+    runtime: Runtime = Depends(get_runtime),
+) -> StreamControlResponse:
+    try:
+        created, message = runtime.stream_service.start(
+            request.camera_id,
+            request.rtsp_url,
+            main_source_url=request.main_rtsp_url,
+            analysis_source_url=request.analysis_rtsp_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    stream_runtime = runtime.source_manager.get_runtime(request.camera_id)
+    source_url = stream_runtime.config.source_url if stream_runtime else None
+    status = "started"
+    if message == "stream already running":
+        status = "running"
+    elif message == "stream restarted":
+        status = "restarted"
+    return StreamControlResponse(
+        camera_id=request.camera_id,
+        status=status,
+        message=message,
+        main_rtsp_url=mask_source_url(source_url),
+        analysis_rtsp_url=mask_source_url(source_url),
+    )
+
+
+@router.get("/stream/source", response_model=StreamRuntimeSourceResponse)
+def stream_source(
+    camera_id: str = "camera_01",
+    runtime: Runtime = Depends(get_runtime),
+) -> StreamRuntimeSourceResponse:
+    stream_runtime = runtime.source_manager.get_runtime(camera_id)
+    if stream_runtime is None:
+        return StreamRuntimeSourceResponse(
+            camera_id=camera_id,
+            running=False,
+            dual_stream_enabled=False,
+            display_source_current="none",
+            display_fallback_active=False,
+            message="camera is not running",
+        )
+
+    worker_status = runtime.source_manager.worker_status(camera_id)
+    return StreamRuntimeSourceResponse(
+        camera_id=camera_id,
+        running=worker_status.running if worker_status else False,
+        dual_stream_enabled=False,
+        display_source_current="single",
+        display_fallback_active=False,
+        main_rtsp_url_masked=mask_source_url(stream_runtime.config.source_url),
+        analysis_rtsp_url_masked=mask_source_url(stream_runtime.config.source_url),
+        main_stream_state=worker_status.stream_state if worker_status else None,
+        analysis_stream_state=worker_status.stream_state if worker_status else None,
+        main_connected=worker_status.connected if worker_status else None,
+        analysis_connected=worker_status.connected if worker_status else None,
+        main_frame_age_ms=worker_status.frame_age_ms if worker_status else None,
+        analysis_frame_age_ms=worker_status.frame_age_ms if worker_status else None,
+        main_capture_fps=worker_status.capture_fps if worker_status else None,
+        analysis_capture_fps=worker_status.capture_fps if worker_status else None,
+        frame_status=worker_status.frame_status if worker_status else None,
+        source_generation=worker_status.source_generation if worker_status else None,
+    )
+
+
+@router.get("/stream/latest-frame.jpg")
+def latest_stream_frame(
+    camera_id: str = "camera_01",
+    runtime: Runtime = Depends(get_runtime),
+) -> Response:
+    buffer = runtime.source_manager.get_buffer(camera_id)
+    packet = buffer.latest() if buffer else None
+    if packet is None:
+        worker_status = runtime.source_manager.worker_status(camera_id)
+        reason = "no_frame"
+        if worker_status is not None and worker_status.stream_state in {"stopped", "reconnecting", "unreachable", "authentication_failed", "decode_error"}:
+            reason = worker_status.stream_state
+        raise HTTPException(status_code=404, detail={
+            "code": "LATEST_FRAME_NOT_AVAILABLE",
+            "camera_id": camera_id,
+            "frame_status": "no_frame",
+            "reason": reason,
+            "safe_to_interpret_as_no_fall": False,
+        })
+    thresholds = FreshnessThresholds(
+        delayed_ms=runtime.settings.frame_delayed_threshold_ms,
+        stale_ms=runtime.settings.stream_stale_threshold_ms,
+    )
+    freshness = frame_freshness(packet.age_ms, thresholds)
+    ok, encoded = cv2.imencode(".jpg", packet.frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    if not ok:
+        raise HTTPException(status_code=500, detail="LATEST_FRAME_ENCODE_FAILED")
+    return Response(
+        content=encoded.tobytes(),
+        media_type="image/jpeg",
+        headers={
+            "X-Camera-Id": camera_id,
+            "X-Frame-Id": str(packet.seq),
+            "X-Frame-Seq": str(packet.seq),
+            "X-Frame-Age-Ms": str(packet.age_ms),
+            "X-Frame-Status": freshness.frame_status,
+            "X-Source-Generation": str(packet.source_generation),
+            "X-Frame-Is-Stale": "true" if freshness.is_stale else "false",
+            "X-Frame-Captured-At": packet.captured_at_iso,
+            "X-Frame-Received-At": packet.received_at_iso,
+        },
+    )
+
+
+@router.post("/stream/mock-fault", response_model=StreamControlResponse)
+def set_mock_stream_fault(
+    request: MockStreamFaultRequest,
+    runtime: Runtime = Depends(get_runtime),
+) -> StreamControlResponse:
+    if runtime.settings.runtime_profile != "safe_demo":
+        raise HTTPException(status_code=403, detail="MOCK_FAULT_ONLY_ALLOWED_IN_SAFE_DEMO")
+    stream_runtime = runtime.source_manager.get_runtime(request.camera_id)
+    if stream_runtime is None or not is_mock_source(stream_runtime.config.source_url):
+        raise HTTPException(status_code=409, detail="MOCK_FAULT_REQUIRES_ACTIVE_MOCK_SOURCE")
+    mode = runtime.source_manager.set_mock_fault(request.camera_id, request.mode)
+    worker_status = runtime.source_manager.worker_status(request.camera_id)
+    return StreamControlResponse(
+        camera_id=request.camera_id,
+        status=mode,
+        message=f"mock fault mode set to {mode}",
+        main_rtsp_url=mask_source_url(stream_runtime.config.source_url),
+        analysis_rtsp_url=mask_source_url(stream_runtime.config.source_url),
+    )
+
+
+@router.post("/stream/switch-host", response_model=StreamControlResponse)
+def switch_stream_host(
+    request: StreamHostSwitchRequest,
+    runtime: Runtime = Depends(get_runtime),
+) -> StreamControlResponse:
+    main_rtsp_url = _build_rtsp_url(
+        scheme=request.scheme,
+        username=request.username,
+        password=request.password,
+        host=request.host,
+        port=request.port,
+        path=request.main_path,
+    )
+    analysis_rtsp_url = _build_rtsp_url(
+        scheme=request.scheme,
+        username=request.username,
+        password=request.password,
+        host=request.host,
+        port=request.port,
+        path=request.analysis_path,
+    )
+    try:
+        _, message = runtime.stream_service.start(
+            request.camera_id,
+            analysis_rtsp_url,
+            main_source_url=main_rtsp_url,
+            analysis_source_url=analysis_rtsp_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return StreamControlResponse(
+        camera_id=request.camera_id,
+        status="restarted",
+        message=message,
+        main_rtsp_url=mask_source_url(main_rtsp_url),
+        analysis_rtsp_url=mask_source_url(analysis_rtsp_url),
+    )
+
+
+@router.post("/stream/probe", response_model=StreamProbeResponse)
+def probe_stream_host(request: StreamProbeRequest) -> StreamProbeResponse:
+    started = time.monotonic()
+    try:
+        with socket.create_connection(
+            (request.host, request.port),
+            timeout=request.timeout_ms / 1000,
+        ):
+            elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+            return StreamProbeResponse(
+                host=request.host,
+                port=request.port,
+                reachable=True,
+                elapsed_ms=elapsed_ms,
+            )
+    except OSError as exc:
+        elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        return StreamProbeResponse(
+            host=request.host,
+            port=request.port,
+            reachable=False,
+            elapsed_ms=elapsed_ms,
+            error=str(exc),
+        )
+
+
+@router.post("/stream/stop", response_model=StreamControlResponse)
+def stop_stream(
+    request: StreamStopRequest,
+    runtime: Runtime = Depends(get_runtime),
+) -> StreamControlResponse:
+    stopped = runtime.stream_service.stop(request.camera_id)
+    return StreamControlResponse(
+        camera_id=request.camera_id,
+        status="stopped" if stopped else "not_found",
+        message="stream stopped" if stopped else "stream was not running",
+    )
+
+
+def _build_rtsp_url(
+    *,
+    scheme: str,
+    username: str,
+    password: str,
+    host: str,
+    port: int,
+    path: str,
+) -> str:
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{scheme}://{username}:{password}@{host}:{port}{normalized_path}"

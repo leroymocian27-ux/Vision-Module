@@ -1,0 +1,23 @@
+{
+  "epochs": 1,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "stride": 2,
+  "seed": 42,
+  "input_manifest": "data\\temporal_v6_training\\lstm_v6_pose_dev_smoke_training_manifest.json",
+  "input_manifest_sha256": "cf4cfb1e3bc948da0f8ff5e3cacd1280676e1d31907d62856fc30ab513017a72",
+  "input_manifest_metadata": {
+    "path": "data\\temporal_v6_training\\lstm_v6_pose_dev_smoke_training_manifest.json",
+    "sha256": "cf4cfb1e3bc948da0f8ff5e3cacd1280676e1d31907d62856fc30ab513017a72"
+  },
+  "input_count": 2,
+  "input_file_sha256s": {
+    "D:\\Program\\vision_service\\data\\temporal_sequences_pose_dev_smoke\\ur_fall\\adl-01.jsonl": "01fc42e421d836c0f8c7e9b1f6043cac18217498a15aca5cbebb93360cbfb89e",
+    "D:\\Program\\vision_service\\data\\temporal_sequences_pose_dev_smoke\\ur_fall\\fall-01.jsonl": "c32f33f10cc2dec75b4a9a703c5cb2a73a8e206d47909cb49018256ea5ad0db0"
+  },
+  "model": {
+    "input_dim": 15,
+    "hidden_dim": 64,
+    "layers": 1
+  }
+}

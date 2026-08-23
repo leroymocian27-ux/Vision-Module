@@ -1,0 +1,636 @@
+﻿{
+    "model_path":  "models/person_yolo_batch001_yolov8n_best.pt",
+    "sha256":  "127E97F88CA3CADCF7B261B8FC01D0FE516AAD4C5BE3F65E5E34696EE24EE117",
+    "created_at":  "2026-06-29",
+    "purpose":  "single-class YOLO person detector candidate for fall-detection scenes",
+    "base_model":  "yolov8n.pt",
+    "dataset":  "datasets/person_yolo",
+    "raw_batch":  "datasets/person_yolo_raw/batch_001",
+    "dataset_summary":  {
+                            "item_count":  120,
+                            "class_names":  {
+                                                "0":  "person"
+                                            },
+                            "splits":  {
+                                           "test":  {
+                                                        "images":  10,
+                                                        "boxes":  12,
+                                                        "empty":  1
+                                                    },
+                                           "train":  {
+                                                         "images":  100,
+                                                         "boxes":  112,
+                                                         "empty":  10
+                                                     },
+                                           "val":  {
+                                                       "images":  10,
+                                                       "boxes":  11,
+                                                       "empty":  1
+                                                   }
+                                       },
+                            "groups":  {
+                                           "bending":  {
+                                                           "train":  10,
+                                                           "images":  12,
+                                                           "boxes":  12,
+                                                           "val":  1,
+                                                           "test":  1
+                                                       },
+                                           "fallen":  {
+                                                          "test":  1,
+                                                          "images":  12,
+                                                          "boxes":  12,
+                                                          "train":  10,
+                                                          "val":  1
+                                                      },
+                                           "falling":  {
+                                                           "train":  10,
+                                                           "images":  12,
+                                                           "boxes":  12,
+                                                           "val":  1,
+                                                           "test":  1
+                                                       },
+                                           "kneeling":  {
+                                                            "train":  10,
+                                                            "images":  12,
+                                                            "boxes":  12,
+                                                            "test":  1,
+                                                            "val":  1
+                                                        },
+                                           "lying":  {
+                                                         "train":  10,
+                                                         "images":  12,
+                                                         "boxes":  12,
+                                                         "test":  1,
+                                                         "val":  1
+                                                     },
+                                           "multi_occlusion_complex":  {
+                                                                           "train":  10,
+                                                                           "images":  12,
+                                                                           "boxes":  36,
+                                                                           "val":  1,
+                                                                           "test":  1
+                                                                       },
+                                           "no_person":  {
+                                                             "train":  10,
+                                                             "images":  12,
+                                                             "boxes":  0,
+                                                             "empty":  12,
+                                                             "val":  1,
+                                                             "test":  1
+                                                         },
+                                           "sitting":  {
+                                                           "val":  1,
+                                                           "images":  12,
+                                                           "boxes":  12,
+                                                           "train":  10,
+                                                           "test":  1
+                                                       },
+                                           "standing":  {
+                                                            "val":  1,
+                                                            "images":  12,
+                                                            "boxes":  15,
+                                                            "train":  10,
+                                                            "test":  1
+                                                        },
+                                           "walking":  {
+                                                           "train":  10,
+                                                           "images":  12,
+                                                           "boxes":  12,
+                                                           "test":  1,
+                                                           "val":  1
+                                                       }
+                                       },
+                            "warnings":  [
+
+                                         ]
+                        },
+    "training":  {
+                     "data":  "D:\\Program\\vision_service\\datasets\\person_yolo\\data.yaml",
+                     "base_model":  "D:\\Program\\vision_service\\yolov8n.pt",
+                     "save_dir":  "D:\\Program\\vision_service\\runs\\person_yolo\\batch_001_yolov8n_person_v1",
+                     "best_model":  "D:\\Program\\vision_service\\runs\\person_yolo\\batch_001_yolov8n_person_v1\\weights\\best.pt",
+                     "last_model":  "D:\\Program\\vision_service\\runs\\person_yolo\\batch_001_yolov8n_person_v1\\weights\\last.pt",
+                     "epochs":  80,
+                     "imgsz":  640,
+                     "batch":  8,
+                     "device":  "0"
+                 },
+    "test_metrics":  {
+                         "model":  "D:\\Program\\vision_service\\runs\\person_yolo\\batch_001_yolov8n_person_v1\\weights\\best.pt",
+                         "data":  "D:\\Program\\vision_service\\datasets\\person_yolo\\data.yaml",
+                         "split":  "test",
+                         "save_dir":  "D:\\Program\\vision_service\\runs\\person_yolo_eval\\batch_001_yolov8n_person_v1_test",
+                         "precision":  1.0,
+                         "recall":  0.9977172327961876,
+                         "map50":  0.995,
+                         "map50_95":  0.7319832991997572
+                     },
+    "baseline_yolov8n_test_metrics":  {
+                                          "model":  "D:\\Program\\vision_service\\yolov8n.pt",
+                                          "data":  "D:\\Program\\vision_service\\datasets\\person_yolo\\data.yaml",
+                                          "split":  "test",
+                                          "save_dir":  "D:\\Program\\vision_service\\runs\\person_yolo_eval\\baseline_yolov8n_test",
+                                          "precision":  0.9917571745406565,
+                                          "recall":  0.9166666666666666,
+                                          "map50":  0.9341999999999998,
+                                          "map50_95":  0.6146101616161616
+                                      },
+    "caution":  "First candidate trained from 120 images; metrics are promising but not enough for direct production replacement without video replay/field validation.",
+    "audit_conf025":  {
+                          "model":  "D:\\Program\\vision_service\\models\\person_yolo_batch001_yolov8n_best.pt",
+                          "batch_dir":  "D:\\Program\\vision_service\\datasets\\person_yolo_raw\\batch_001",
+                          "conf":  0.25,
+                          "match_iou":  0.3,
+                          "total":  {
+                                        "images":  120,
+                                        "gt_boxes":  135,
+                                        "pred_boxes":  147,
+                                        "matched":  135,
+                                        "missed":  0,
+                                        "false_positive":  12,
+                                        "empty_images":  12
+                                    },
+                          "groups":  {
+                                         "bending":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     },
+                                         "fallen":  {
+                                                        "images":  12,
+                                                        "gt_boxes":  12,
+                                                        "pred_boxes":  12,
+                                                        "matched":  12,
+                                                        "missed":  0,
+                                                        "false_positive":  0
+                                                    },
+                                         "falling":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  17,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  5
+                                                     },
+                                         "kneeling":  {
+                                                          "images":  12,
+                                                          "gt_boxes":  12,
+                                                          "pred_boxes":  13,
+                                                          "matched":  12,
+                                                          "missed":  0,
+                                                          "false_positive":  1
+                                                      },
+                                         "lying":  {
+                                                       "images":  12,
+                                                       "gt_boxes":  12,
+                                                       "pred_boxes":  16,
+                                                       "matched":  12,
+                                                       "missed":  0,
+                                                       "false_positive":  4
+                                                   },
+                                         "multi_occlusion_complex":  {
+                                                                         "images":  12,
+                                                                         "gt_boxes":  36,
+                                                                         "pred_boxes":  36,
+                                                                         "matched":  36,
+                                                                         "missed":  0,
+                                                                         "false_positive":  0
+                                                                     },
+                                         "no_person":  {
+                                                           "images":  12,
+                                                           "gt_boxes":  0,
+                                                           "pred_boxes":  0,
+                                                           "matched":  0,
+                                                           "missed":  0,
+                                                           "false_positive":  0,
+                                                           "empty_images":  12
+                                                       },
+                                         "sitting":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     },
+                                         "standing":  {
+                                                          "images":  12,
+                                                          "gt_boxes":  15,
+                                                          "pred_boxes":  17,
+                                                          "matched":  15,
+                                                          "missed":  0,
+                                                          "false_positive":  2
+                                                      },
+                                         "walking":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     }
+                                     },
+                          "failure_count":  12,
+                          "failures":  [
+                                           {
+                                               "image":  "curated_falling_b008_003.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b008_004.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_001.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_003.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_004.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_kneeling_b012_004.jpg",
+                                               "group":  "kneeling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_000.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_001.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_008.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_009.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "local_recovery_standing_002.jpg",
+                                               "group":  "standing",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "local_standing_front_000.jpg",
+                                               "group":  "standing",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           }
+                                       ]
+                      },
+    "audit_conf040":  {
+                          "model":  "D:\\Program\\vision_service\\models\\person_yolo_batch001_yolov8n_best.pt",
+                          "batch_dir":  "D:\\Program\\vision_service\\datasets\\person_yolo_raw\\batch_001",
+                          "conf":  0.4,
+                          "match_iou":  0.3,
+                          "total":  {
+                                        "images":  120,
+                                        "gt_boxes":  135,
+                                        "pred_boxes":  141,
+                                        "matched":  135,
+                                        "missed":  0,
+                                        "false_positive":  6,
+                                        "empty_images":  12
+                                    },
+                          "groups":  {
+                                         "bending":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     },
+                                         "fallen":  {
+                                                        "images":  12,
+                                                        "gt_boxes":  12,
+                                                        "pred_boxes":  12,
+                                                        "matched":  12,
+                                                        "missed":  0,
+                                                        "false_positive":  0
+                                                    },
+                                         "falling":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  15,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  3
+                                                     },
+                                         "kneeling":  {
+                                                          "images":  12,
+                                                          "gt_boxes":  12,
+                                                          "pred_boxes":  13,
+                                                          "matched":  12,
+                                                          "missed":  0,
+                                                          "false_positive":  1
+                                                      },
+                                         "lying":  {
+                                                       "images":  12,
+                                                       "gt_boxes":  12,
+                                                       "pred_boxes":  14,
+                                                       "matched":  12,
+                                                       "missed":  0,
+                                                       "false_positive":  2
+                                                   },
+                                         "multi_occlusion_complex":  {
+                                                                         "images":  12,
+                                                                         "gt_boxes":  36,
+                                                                         "pred_boxes":  36,
+                                                                         "matched":  36,
+                                                                         "missed":  0,
+                                                                         "false_positive":  0
+                                                                     },
+                                         "no_person":  {
+                                                           "images":  12,
+                                                           "gt_boxes":  0,
+                                                           "pred_boxes":  0,
+                                                           "matched":  0,
+                                                           "missed":  0,
+                                                           "false_positive":  0,
+                                                           "empty_images":  12
+                                                       },
+                                         "sitting":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     },
+                                         "standing":  {
+                                                          "images":  12,
+                                                          "gt_boxes":  15,
+                                                          "pred_boxes":  15,
+                                                          "matched":  15,
+                                                          "missed":  0,
+                                                          "false_positive":  0
+                                                      },
+                                         "walking":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     }
+                                     },
+                          "failure_count":  6,
+                          "failures":  [
+                                           {
+                                               "image":  "curated_falling_b008_003.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_001.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_003.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_kneeling_b012_004.jpg",
+                                               "group":  "kneeling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_000.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_001.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           }
+                                       ]
+                      },
+    "audit_conf050":  {
+                          "model":  "D:\\Program\\vision_service\\models\\person_yolo_batch001_yolov8n_best.pt",
+                          "batch_dir":  "D:\\Program\\vision_service\\datasets\\person_yolo_raw\\batch_001",
+                          "conf":  0.5,
+                          "match_iou":  0.3,
+                          "total":  {
+                                        "images":  120,
+                                        "gt_boxes":  135,
+                                        "pred_boxes":  139,
+                                        "matched":  134,
+                                        "missed":  1,
+                                        "false_positive":  5,
+                                        "empty_images":  12
+                                    },
+                          "groups":  {
+                                         "bending":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     },
+                                         "fallen":  {
+                                                        "images":  12,
+                                                        "gt_boxes":  12,
+                                                        "pred_boxes":  12,
+                                                        "matched":  12,
+                                                        "missed":  0,
+                                                        "false_positive":  0
+                                                    },
+                                         "falling":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  13,
+                                                         "matched":  11,
+                                                         "missed":  1,
+                                                         "false_positive":  2
+                                                     },
+                                         "kneeling":  {
+                                                          "images":  12,
+                                                          "gt_boxes":  12,
+                                                          "pred_boxes":  13,
+                                                          "matched":  12,
+                                                          "missed":  0,
+                                                          "false_positive":  1
+                                                      },
+                                         "lying":  {
+                                                       "images":  12,
+                                                       "gt_boxes":  12,
+                                                       "pred_boxes":  14,
+                                                       "matched":  12,
+                                                       "missed":  0,
+                                                       "false_positive":  2
+                                                   },
+                                         "multi_occlusion_complex":  {
+                                                                         "images":  12,
+                                                                         "gt_boxes":  36,
+                                                                         "pred_boxes":  36,
+                                                                         "matched":  36,
+                                                                         "missed":  0,
+                                                                         "false_positive":  0
+                                                                     },
+                                         "no_person":  {
+                                                           "images":  12,
+                                                           "gt_boxes":  0,
+                                                           "pred_boxes":  0,
+                                                           "matched":  0,
+                                                           "missed":  0,
+                                                           "false_positive":  0,
+                                                           "empty_images":  12
+                                                       },
+                                         "sitting":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     },
+                                         "standing":  {
+                                                          "images":  12,
+                                                          "gt_boxes":  15,
+                                                          "pred_boxes":  15,
+                                                          "matched":  15,
+                                                          "missed":  0,
+                                                          "false_positive":  0
+                                                      },
+                                         "walking":  {
+                                                         "images":  12,
+                                                         "gt_boxes":  12,
+                                                         "pred_boxes":  12,
+                                                         "matched":  12,
+                                                         "missed":  0,
+                                                         "false_positive":  0
+                                                     }
+                                     },
+                          "failure_count":  6,
+                          "failures":  [
+                                           {
+                                               "image":  "curated_falling_b011_001.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_003.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_falling_b011_004.jpg",
+                                               "group":  "falling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  0,
+                                               "missed":  1,
+                                               "false_positive":  0
+                                           },
+                                           {
+                                               "image":  "curated_kneeling_b012_004.jpg",
+                                               "group":  "kneeling",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_000.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           },
+                                           {
+                                               "image":  "curated_lying_b009_001.jpg",
+                                               "group":  "lying",
+                                               "gt_boxes":  1,
+                                               "pred_boxes":  2,
+                                               "missed":  0,
+                                               "false_positive":  1
+                                           }
+                                       ]
+                      },
+    "deployment_recommendation":  "Do not replace YOLO_MODEL_PATH yet. Prepare batch_002 hard negatives and replay videos before deployment."
+}

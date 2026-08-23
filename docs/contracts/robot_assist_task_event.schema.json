@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "RobotTaskState": {
+      "enum": [
+        "CREATED",
+        "POLICY_CHECKED",
+        "AWAITING_APPROVAL",
+        "QUEUED",
+        "DISPATCHING",
+        "EXECUTING",
+        "ARRIVED",
+        "CHECKING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMED_OUT",
+        "SAFETY_BLOCKED"
+      ],
+      "title": "RobotTaskState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "eldercare.robot-task-event.v1",
+      "default": "eldercare.robot-task-event.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "event_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "task_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "event_type": {
+      "enum": [
+        "state_changed",
+        "adapter_status",
+        "safety",
+        "audit"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "previous_state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RobotTaskState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "current_state": {
+      "$ref": "#/$defs/RobotTaskState"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "main_system",
+        "robot_assist_service",
+        "mock_adapter",
+        "go2_adapter"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "details": {
+      "additionalProperties": true,
+      "title": "Details",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event_id",
+    "task_id",
+    "event_type",
+    "current_state",
+    "source",
+    "message"
+  ],
+  "title": "RobotAssistTaskEvent",
+  "type": "object"
+}

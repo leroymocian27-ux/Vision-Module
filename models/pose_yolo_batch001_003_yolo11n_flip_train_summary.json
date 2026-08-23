@@ -1,0 +1,14 @@
+{
+  "model": "yolo11n-pose.pt",
+  "data": "D:\\Program\\vision_service\\datasets\\pose_yolo\\data.yaml",
+  "run_dir": "D:\\Program\\vision_service\\runs\\pose_yolo\\pose_yolo_batch001_003_yolo11n_flip",
+  "best": "D:\\Program\\vision_service\\runs\\pose_yolo\\pose_yolo_batch001_003_yolo11n_flip\\weights\\best.pt",
+  "last": "D:\\Program\\vision_service\\runs\\pose_yolo\\pose_yolo_batch001_003_yolo11n_flip\\weights\\last.pt",
+  "exported_model": "D:\\Program\\vision_service\\models\\pose_yolo_batch001_003_yolo11n_flip_best.pt",
+  "epochs": 160,
+  "imgsz": 640,
+  "batch": 16,
+  "device": "0",
+  "cuda_available": true,
+  "cuda_device": "NVIDIA GeForce RTX 5060 Laptop GPU"
+}

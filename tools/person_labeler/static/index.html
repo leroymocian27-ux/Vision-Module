@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YOLO person labeler</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; }
+    body { margin: 0; background: #f6f7f9; color: #1f2937; }
+    header { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 18px; background: #fff; border-bottom: 1px solid #d8dde6; }
+    main { display: grid; grid-template-columns: 280px 1fr 270px; height: calc(100vh - 52px); }
+    aside { overflow: auto; background: #fff; border-right: 1px solid #d8dde6; }
+    .right { border-right: 0; border-left: 1px solid #d8dde6; padding: 14px; }
+    .image-list button { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-bottom: 1px solid #edf0f4; background: #fff; cursor: pointer; font-size: 12px; }
+    .image-list button.active { background: #dbeafe; }
+    .image-list button.reviewed { color: #166534; }
+    .stage-wrap { overflow: auto; padding: 16px; }
+    .stage { position: relative; display: inline-block; background: #111827; user-select: none; }
+    .stage img { display: block; max-width: calc(100vw - 620px); max-height: calc(100vh - 92px); }
+    .box { position: absolute; border: 2px solid #f97316; box-sizing: border-box; cursor: pointer; }
+    .box.selected { border-color: #16a34a; box-shadow: 0 0 0 2px rgba(22,163,74,.25); }
+    .box span { position: absolute; left: -2px; top: -22px; background: #f97316; color: #fff; padding: 2px 6px; font-size: 12px; white-space: nowrap; }
+    .box.selected span { background: #16a34a; }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button { border: 1px solid #b8c1cc; background: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+    button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+    button.danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+    .small { color: #6b7280; font-size: 12px; }
+    .panel-title { font-weight: 700; margin: 0 0 8px; }
+    .help { line-height: 1.55; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong id="pageTitle">YOLO person labeler</strong>
+    <div class="toolbar">
+      <button id="prevBtn">Prev</button>
+      <button id="nextBtn">Next</button>
+      <button id="saveBtn" class="primary">Save</button>
+      <button id="emptyBtn">No person</button>
+      <button id="deleteBtn" class="danger">Delete selected</button>
+    </div>
+    <span id="status" class="small"></span>
+  </header>
+  <main>
+    <aside>
+      <div id="imageList" class="image-list"></div>
+    </aside>
+    <section class="stage-wrap">
+      <div id="stage" class="stage">
+        <img id="image" alt="">
+      </div>
+    </section>
+    <aside class="right">
+      <p class="panel-title">Source</p>
+      <div id="sourceInfo" class="help"></div>
+      <p class="panel-title">Operation</p>
+      <div class="help">
+        Drag on the image to create a person box.<br>
+        Click a box to select it.<br>
+        Delete removes the selected box.<br>
+        Save writes a YOLO txt label.<br>
+        For no-person frames, click No person, then Save.<br>
+        Keyboard: left/right arrows, Delete, Ctrl+S.
+      </div>
+      <p class="panel-title">Class Rule</p>
+      <div class="help">
+        Only class 0: person.<br>
+        Label every visible human, including standing, walking, sitting, bending, kneeling, lying, falling, and fallen people.<br>
+        Do not label action classes.
+      </div>
+    </aside>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

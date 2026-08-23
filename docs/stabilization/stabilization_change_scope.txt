@@ -1,0 +1,122 @@
+Stage: S2_STARTUP_SHUTDOWN_AND_PROCESS_STABILITY
+Date: 2026-07-20
+
+Allowed change scope:
+
+- Add or update S2 startup/shutdown/process stability scripts.
+- Add directed stabilization tests under tests/stabilization/.
+- Add S2 evidence reports under artifacts/stabilization/S2_STARTUP_SHUTDOWN_AND_PROCESS_STABILITY/.
+- Update stabilization documentation and release/operation notes with S2 results.
+
+Explicitly out of scope:
+
+- FallFusionService semantics, weights, thresholds, and state transitions.
+- FallEventReporterService replacement.
+- Real .env changes.
+- Real Delivery, real main-system POST, Robot Assist, Go2 control, Qwen/Ollama VLM advisory.
+- Real RTSP acceptance.
+- Synthetic/mock/replay results presented as real RTSP or real fall validation.
+- Broad unrelated refactors.
+
+Repository handling:
+
+- Existing dirty and untracked files are preserved.
+- No git reset, clean, stash, or git add . is used.
+- S2 uses directed checks, not full pytest as the sole gate.
+
+---
+
+Stage: S3_CAMERA_AND_VIDEO_STREAM_RESILIENCE
+Date: 2026-07-20
+
+Allowed change scope:
+
+- Camera public state mapping and frame freshness metadata.
+- FrameBuffer source generation metadata.
+- Mock-only fault injection guarded by `safe_demo` and active mock source.
+- Latest-frame response headers and structured no-frame response.
+- S3 camera stream gate script and directed tests under `tests/stabilization/`.
+- S3 stabilization documentation and release evidence references.
+
+Explicitly out of scope:
+
+- FallFusionService semantics, weights, thresholds, candidate/confirmed/cooldown behavior.
+- Real `.env` changes.
+- Real RTSP credentials or guessed RTSP endpoints.
+- Real Delivery, real main-system POST, Robot Assist, Go2 control, Qwen/Ollama VLM advisory.
+- Treating mock results as real RTSP acceptance.
+
+S3 evidence:
+
+```text
+artifacts/stabilization/S3_CAMERA_AND_VIDEO_STREAM_RESILIENCE/20260720T025317Z/
+```
+
+---
+
+Stage: S4_AI_PIPELINE_RESILIENCE
+Date: 2026-07-20
+
+Allowed change scope:
+
+- Add directed AI-pipeline stabilization tests under `tests/stabilization/`.
+- Document module lifecycle and frame alignment contracts under `docs/stabilization/`.
+- Update acceptance, release, and operation notes with S4 results after directed validation.
+- Record S4 evidence under `artifacts/stabilization/S4_AI_PIPELINE_RESILIENCE/`.
+
+Explicitly out of scope:
+
+- `FallFusionService` semantics, weights, thresholds, candidate/confirmed/cooldown behavior, and state transitions.
+- `FallEventReporterService` replacement.
+- Real `.env` changes.
+- Real Delivery, real main-system POST, Robot Assist, Go2 control, Qwen/Ollama VLM advisory.
+- Real RTSP acceptance or real fall-algorithm acceptance.
+- Synthetic/mock/replay results presented as real RTSP or real fall validation.
+- Public `/status` vocabulary convergence beyond S4 contract documentation; this remains S5.
+
+S4 stabilization files:
+
+```text
+tests/stabilization/test_pose_disabled.py
+tests/stabilization/test_temporal_warmup.py
+tests/stabilization/test_inference_exception.py
+tests/stabilization/test_pipeline_backpressure.py
+tests/stabilization/test_frame_alignment.py
+docs/stabilization/s4_ai_pipeline_resilience.md
+docs/stabilization/module_lifecycle_contract.md
+docs/stabilization/frame_alignment_contract.md
+```
+
+---
+
+Stage: S5_UNIFIED_STATUS_AND_DEGRADATION
+Date: 2026-07-20
+
+Allowed change scope:
+
+- Add a small shared status contract helper for public safety semantics.
+- Add status fields for `confidence_level`, `degraded_by`, `reason`, and `safe_to_interpret_as_no_fall`.
+- Align `/status.latest_result` and `/integration/results/{camera_id}/latest` camera-availability semantics.
+- Add directed S5 tests under `tests/stabilization/`.
+- Document the unified status contract and record S5 evidence.
+
+S5 stabilization files:
+
+```text
+app/fall/status_contract.py
+app/schemas/status.py
+app/schemas/integration.py
+app/services/status_service.py
+app/api/integration_api.py
+tests/stabilization/test_unified_status_contract.py
+docs/stabilization/s5_unified_status_contract.md
+```
+
+Explicitly out of scope:
+
+- `FallFusionService` semantics, weights, thresholds, candidate/confirmed/cooldown behavior, and state transitions.
+- `FallEventReporterService` replacement.
+- Real `.env` changes.
+- Real Delivery, real main-system POST, Robot Assist, Go2 control, Qwen/Ollama VLM advisory.
+- Real RTSP acceptance or real fall-algorithm acceptance.
+- Marking S6/S7/S8/S9 as PASS before their gates are executed.

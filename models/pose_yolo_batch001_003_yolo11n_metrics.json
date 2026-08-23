@@ -1,0 +1,49 @@
+{
+  "baseline_model": "yolo11n-pose.pt",
+  "candidate_model": "models/pose_yolo_batch001_003_yolo11n_best.pt",
+  "data": "D:\\Program\\vision_service\\datasets\\pose_yolo\\data.yaml",
+  "imgsz": 640,
+  "device": "0",
+  "baseline": {
+    "box_precision": 0.948805,
+    "box_recall": 1.0,
+    "box_map50": 0.980476,
+    "box_map50_95": 0.620302,
+    "pose_precision": 0.948805,
+    "pose_recall": 1.0,
+    "pose_map50": 0.980476,
+    "pose_map50_95": 0.883491,
+    "speed_ms": {
+      "preprocess": 1.727117,
+      "inference": 17.094438,
+      "loss": 0.00117,
+      "postprocess": 5.683243
+    }
+  },
+  "candidate": {
+    "box_precision": 0.998542,
+    "box_recall": 1.0,
+    "box_map50": 0.995,
+    "box_map50_95": 0.770736,
+    "pose_precision": 0.948615,
+    "pose_recall": 0.95,
+    "pose_map50": 0.95603,
+    "pose_map50_95": 0.885408,
+    "speed_ms": {
+      "preprocess": 1.556742,
+      "inference": 8.293815,
+      "loss": 0.00069,
+      "postprocess": 2.745432
+    }
+  },
+  "delta": {
+    "box_map50": 0.014524,
+    "box_map50_95": 0.150434,
+    "box_precision": 0.049737,
+    "box_recall": 0.0,
+    "pose_map50": -0.024446,
+    "pose_map50_95": 0.001917,
+    "pose_precision": -0.00019,
+    "pose_recall": -0.05
+  }
+}

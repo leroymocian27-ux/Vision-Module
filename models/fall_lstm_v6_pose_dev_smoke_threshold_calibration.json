@@ -1,0 +1,12 @@
+{
+  "fall_probability": 0.5,
+  "scope": "train",
+  "method": "max_f1_min_fp_highest_threshold_grid_0.30_0.85",
+  "sample_count": 5,
+  "positive_samples": 3,
+  "negative_samples": 2,
+  "precision": 0.6,
+  "recall": 1.0,
+  "f1": 0.75,
+  "false_positive_count": 2
+}

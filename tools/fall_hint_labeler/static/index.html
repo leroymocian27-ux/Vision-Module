@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fall Hint Boundary Review</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --line: #d9dee7;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --blue: #2563eb;
+      --green: #15803d;
+      --orange: #ea580c;
+      --red: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header {
+      min-height: 58px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: center;
+      padding: 10px 18px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    main {
+      display: grid;
+      grid-template-columns: 300px 1fr 360px;
+      height: calc(100vh - 60px);
+    }
+    aside, section { min-width: 0; }
+    .left, .right {
+      overflow: auto;
+      background: var(--panel);
+    }
+    .left { border-right: 1px solid var(--line); }
+    .right { border-left: 1px solid var(--line); padding: 14px; }
+    .stage-wrap { overflow: auto; padding: 16px; }
+    .stage {
+      position: relative;
+      display: inline-block;
+      background: #111827;
+      user-select: none;
+      box-shadow: 0 8px 30px rgba(15, 23, 42, 0.16);
+    }
+    .stage img {
+      display: block;
+      max-width: calc(100vw - 720px);
+      max-height: calc(100vh - 114px);
+    }
+    .box {
+      position: absolute;
+      border: 2px solid var(--orange);
+      cursor: pointer;
+    }
+    .box.selected {
+      border-color: #22c55e;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.24);
+    }
+    .box span {
+      position: absolute;
+      left: -2px;
+      top: -22px;
+      background: var(--orange);
+      color: #fff;
+      padding: 2px 6px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .box.selected span { background: #22c55e; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    button, select, textarea, input {
+      border: 1px solid #b8c1cc;
+      border-radius: 6px;
+      background: #fff;
+      color: inherit;
+      font: inherit;
+    }
+    button {
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+    select, input, textarea {
+      width: 100%;
+      padding: 8px 10px;
+    }
+    textarea { min-height: 78px; resize: vertical; }
+    button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    button.success { background: var(--green); border-color: var(--green); color: #fff; }
+    button.warn { background: #fff7ed; border-color: #fdba74; color: #c2410c; }
+    button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+    .small { color: var(--muted); font-size: 12px; }
+    .progress { color: var(--blue); font-weight: 700; }
+    .image-list button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 8px 10px;
+      border: 0;
+      border-bottom: 1px solid #edf0f4;
+      border-radius: 0;
+      background: #fff;
+      font-size: 12px;
+    }
+    .image-list button.active { background: #dbeafe; }
+    .image-list button.reviewed { color: var(--green); }
+    .image-list button.decision-reject { color: var(--red); }
+    .image-list button.decision-needs_fix { color: #b45309; }
+    .filter-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      border-bottom: 1px solid #edf0f4;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .filter-row input { width: auto; margin: 0; }
+    .panel-title { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+    .panel { margin-bottom: 16px; }
+    .field-line {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 8px;
+      align-items: start;
+      padding: 5px 0;
+      border-bottom: 1px dashed #e5e7eb;
+      font-size: 12px;
+    }
+    .field-line span { color: var(--muted); }
+    .field-line strong {
+      font-weight: 600;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .stack { display: grid; gap: 8px; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .help { font-size: 12px; line-height: 1.6; color: #4b5563; }
+    @media (max-width: 1280px) {
+      main { grid-template-columns: 260px 1fr 320px; }
+      .stage img { max-width: calc(100vw - 620px); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong id="pageTitle">Fall Hint Boundary Review</strong>
+    <div class="toolbar">
+      <button id="prevBtn">上一张</button>
+      <button id="nextBtn">下一张</button>
+      <button id="nextPendingBtn" class="primary">下一张待审核</button>
+      <button id="jumpPendingBtn">跳到第一张待审核</button>
+      <button id="saveBtn">只保存框</button>
+      <button id="emptyBtn">清空框</button>
+      <button id="deleteBtn" class="danger">删除选中框</button>
+    </div>
+    <span id="status" class="small"></span>
+    <span id="progressStatus" class="small progress"></span>
+  </header>
+  <main>
+    <aside class="left">
+      <label class="filter-row">
+        <input id="pendingOnlyToggle" type="checkbox">
+        只看待审核样本
+      </label>
+      <div id="imageList" class="image-list"></div>
+    </aside>
+
+    <section class="stage-wrap">
+      <div id="stage" class="stage">
+        <img id="image" alt="">
+      </div>
+    </section>
+
+    <aside class="right">
+      <div class="panel">
+        <p class="panel-title">来源信息</p>
+        <div id="sourceInfo" class="stack"></div>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">Boundary 信息</p>
+        <div id="reviewInfo" class="stack"></div>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">当前审核状态</p>
+        <div id="queueInfo" class="stack"></div>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">框类别修改</p>
+        <div class="stack">
+          <select id="labelClassSelect"></select>
+          <button id="applyClassBtn">应用到选中框</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">correct_class</p>
+        <select id="correctClassSelect"></select>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">reject_reason</p>
+        <input id="rejectReason" type="text" placeholder="例如：语义不对 / 画面不清 / 框错误严重">
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">review_notes</p>
+        <textarea id="reviewNotes" placeholder="写下你对该样本的判断依据或后续提醒"></textarea>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">审核决策</p>
+        <div class="actions">
+          <button id="passTrainBtn" class="success">pass_train</button>
+          <button id="passValBtn" class="primary">pass_val</button>
+          <button id="needsFixBtn" class="warn">needs_fix</button>
+          <button id="rejectBtn" class="danger">reject</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">操作说明</p>
+        <div class="help">
+          拖拽图片可以新建框，点击框后可以改类别或删除。<br>
+          `pass_train`：允许进入训练集。<br>
+          `pass_val`：允许进入验证集。<br>
+          `needs_fix`：这张图仍需继续修框或复核。<br>
+          `reject`：这张图不进入后续数据集。<br><br>
+          快捷键：<br>
+          `Ctrl/Cmd + S` 只保存框<br>
+          `Shift + T` 保存并标记 `pass_train`<br>
+          `Shift + V` 保存并标记 `pass_val`<br>
+          `Shift + F` 保存并标记 `needs_fix`<br>
+          `Shift + R` 保存并标记 `reject`
+        </div>
+      </div>
+    </aside>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

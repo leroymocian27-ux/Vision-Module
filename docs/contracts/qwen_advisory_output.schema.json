@@ -1,0 +1,67 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "eldercare.qwen-advisory.v1",
+      "default": "eldercare.qwen-advisory.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "possible_false_positive_reasons": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Possible False Positive Reasons",
+      "type": "array"
+    },
+    "care_recommendations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Care Recommendations",
+      "type": "array"
+    },
+    "robot_assist_recommended": {
+      "title": "Robot Assist Recommended",
+      "type": "boolean"
+    },
+    "robot_assist_reason": {
+      "default": "",
+      "maxLength": 1000,
+      "title": "Robot Assist Reason",
+      "type": "string"
+    },
+    "uncertainty_notes": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Uncertainty Notes",
+      "type": "array"
+    },
+    "advisory_confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Advisory Confidence",
+      "type": "string"
+    }
+  },
+  "required": [
+    "summary",
+    "robot_assist_recommended",
+    "advisory_confidence"
+  ],
+  "title": "QwenAdvisoryOutput",
+  "type": "object"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "human-fall-detection-yolo11_20260703",
+  "source": "https://huggingface.co/melihuzunoglu/human-fall-detection",
+  "download_url_used": "https://hf-mirror.com/melihuzunoglu/human-fall-detection/resolve/main/best.pt",
+  "weight_file": "best.pt",
+  "downloaded_at": "2026-07-03",
+  "framework": "Ultralytics YOLO",
+  "task": "detect",
+  "reported_architecture": "YOLOv11",
+  "license": "agpl-3.0",
+  "sha256": "3F56AD30358D5C63BF8DBC0C1299CF68818C3D291DFB10C94107B94110AADD4C",
+  "classes": {
+    "0": "fallen",
+    "1": "sitting",
+    "2": "standing"
+  },
+  "intended_use": "fresh external base weight for YOLO Fall Hint training with human-reviewed labels only",
+  "runtime_chain_status": "not connected; do not use directly as FALL_DETECTOR model"
+}

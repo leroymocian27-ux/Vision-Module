@@ -1,0 +1,31 @@
+{
+  "training_status": "partial_completed_timeout_after_epoch_2",
+  "requested_epochs": 8,
+  "completed_epochs": 2,
+  "imgsz": 960,
+  "batch": 8,
+  "source_weight": "D:\\Program\\model_test\\fall_detection_model_bundle\\v3_upgrade_lab\\weights\\yolo26\\yolo26_fall_detector_v3_best.pt",
+  "best_weight": "D:\\Program\\vision_service\\models\\yolo_fall_detector_v4_best.pt",
+  "run_dir": "D:\\Program\\vision_service\\runs\\phase7_yolo_v4\\fall_detector_v4",
+  "last_metrics": {
+    "epoch": "2",
+    "time": "1354.74",
+    "train/box_loss": "1.02522",
+    "train/cls_loss": "1.54959",
+    "train/dfl_loss": "1.26264",
+    "metrics/precision(B)": "0.23856",
+    "metrics/recall(B)": "0.46744",
+    "metrics/mAP50(B)": "0.29327",
+    "metrics/mAP50-95(B)": "0.2195",
+    "val/box_loss": "0.83586",
+    "val/cls_loss": "1.80233",
+    "val/dfl_loss": "1.21053",
+    "lr/pg0": "0.000486296",
+    "lr/pg1": "0.000486296",
+    "lr/pg2": "0.000486296"
+  },
+  "notes": [
+    "Training reached 2 epochs before command timeout; best.pt was saved and copied as versioned v4 trial weight.",
+    "Do not treat this as final production-quality YOLO v4 without longer training and field validation."
+  ]
+}

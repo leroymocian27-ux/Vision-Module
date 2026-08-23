@@ -1,0 +1,30 @@
+{
+  "schema_version": "fall_lstm_features_v1",
+  "input_dim": 15,
+  "window_size": 32,
+  "feature_names": [
+    "bbox_center_x_norm",
+    "bbox_center_y_norm",
+    "bbox_width_norm",
+    "bbox_height_norm",
+    "aspect_ratio_clipped",
+    "delta_x_norm",
+    "delta_y_norm",
+    "velocity_x_norm",
+    "velocity_y_norm",
+    "speed_norm",
+    "pose_available",
+    "pose_confidence",
+    "torso_angle_norm",
+    "head_height_ratio_filled",
+    "hip_height_ratio_filled"
+  ],
+  "schema_hash": "db4246cef1eb39a1",
+  "missing_pose_fill": {
+    "pose_available": 0.0,
+    "pose_confidence": 0.0,
+    "torso_angle_norm": 0.0,
+    "head_height_ratio_filled": -1.0,
+    "hip_height_ratio_filled": -1.0
+  }
+}

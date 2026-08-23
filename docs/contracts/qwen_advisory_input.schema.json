@@ -1,0 +1,112 @@
+{
+  "additionalProperties": false,
+  "description": "Whitelisted, single-use semantic input. It deliberately has no identity or media.",
+  "properties": {
+    "schema_version": {
+      "const": "eldercare.qwen-advisory-input.v1",
+      "default": "eldercare.qwen-advisory-input.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "fall_state": {
+      "const": "fallen_confirmed",
+      "title": "Fall State",
+      "type": "string"
+    },
+    "risk_level": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Risk Level",
+      "type": "string"
+    },
+    "duration_on_ground_seconds": {
+      "anyOf": [
+        {
+          "maximum": 3600,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration On Ground Seconds"
+    },
+    "posture": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Posture"
+    },
+    "movement_state": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Movement State"
+    },
+    "evidence_completeness": {
+      "enum": [
+        "collecting",
+        "complete",
+        "degraded"
+      ],
+      "title": "Evidence Completeness",
+      "type": "string"
+    },
+    "missing_reasons": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Missing Reasons",
+      "type": "array"
+    },
+    "rule_signals": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 30,
+      "title": "Rule Signals",
+      "type": "array"
+    },
+    "camera_zone_code": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Camera Zone Code"
+    }
+  },
+  "required": [
+    "fall_state",
+    "risk_level",
+    "evidence_completeness"
+  ],
+  "title": "QwenAdvisoryInput",
+  "type": "object"
+}

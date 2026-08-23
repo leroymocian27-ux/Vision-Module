@@ -1,0 +1,11 @@
+{
+  "name": "yolo11n_coco_clean_base_20260703",
+  "source_url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
+  "downloaded_at": "2026-07-03",
+  "sha256": "0EBBC80D4A7680D14987A577CD21342B65ECFD94632BD9A8DA63AE6417644EE1",
+  "framework": "Ultralytics YOLO",
+  "task": "detect",
+  "pretraining": "COCO 80-class detection",
+  "intended_use": "clean base model for YOLO Fall Hint training with human-reviewed labels only",
+  "runtime_chain_status": "not connected; do not use directly as FALL_DETECTOR model"
+}

@@ -1,0 +1,8 @@
+{
+  "threshold": 0.6,
+  "source": "evaluations/phase7_lstm_v4_eval_001.json",
+  "precision": 0.9231,
+  "recall": 0.4444,
+  "f1": 0.6,
+  "notes": "Phase 7 v4 limited-trial threshold; do not promote without state-machine/field gate."
+}

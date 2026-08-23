@@ -1,0 +1,4 @@
+# Optional model dependencies. Install inside the dedicated identity environment.
+# On Windows, insightface may require Microsoft C++ Build Tools if no wheel is available.
+insightface>=0.7
+onnxruntime-gpu>=1.17

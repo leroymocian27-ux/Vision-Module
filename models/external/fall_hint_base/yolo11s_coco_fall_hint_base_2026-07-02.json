@@ -1,0 +1,13 @@
+{
+  "file": "yolo11s_coco_fall_hint_base_2026-07-02.pt",
+  "source_url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
+  "source_release": "ultralytics/assets v8.3.0",
+  "downloaded_at": "2026-07-02",
+  "sha256": "85A76FE86DD8AFE384648546B56A7A78580C7CB7B404FC595F97969322D502D5",
+  "model_family": "YOLO11",
+  "variant": "s",
+  "task": "detect",
+  "pretraining": "COCO 80-class detection",
+  "intended_project_use": "base initialization for YOLO Fall Hint 7-class detector training",
+  "runtime_chain_status": "not connected; do not use directly as FALL_DETECTOR model"
+}

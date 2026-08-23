@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "EvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_status": {
+          "enum": [
+            "collecting",
+            "complete",
+            "degraded"
+          ],
+          "title": "Evidence Status",
+          "type": "string"
+        },
+        "keyframe_count": {
+          "maximum": 6,
+          "minimum": 0,
+          "title": "Keyframe Count",
+          "type": "integer"
+        },
+        "keyframe_urls": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "title": "Keyframe Urls",
+          "type": "array"
+        },
+        "missing_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "evidence_status",
+        "keyframe_count"
+      ],
+      "title": "EvidenceReference",
+      "type": "object"
+    },
+    "RobotAdvisory": {
+      "additionalProperties": false,
+      "properties": {
+        "robot_assist_recommended": {
+          "title": "Robot Assist Recommended",
+          "type": "boolean"
+        },
+        "reason": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Reason",
+          "type": "string"
+        },
+        "advisory_only": {
+          "const": true,
+          "default": true,
+          "title": "Advisory Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "robot_assist_recommended"
+      ],
+      "title": "RobotAdvisory",
+      "type": "object"
+    },
+    "RuleAnalysisSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "support_fall_alarm": {
+          "title": "Support Fall Alarm",
+          "type": "boolean"
+        },
+        "final_event_type": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Final Event Type",
+          "type": "string"
+        },
+        "final_risk_level": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "Final Risk Level",
+          "type": "string"
+        },
+        "explanation": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "uncertainty": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Uncertainty",
+          "type": "array"
+        }
+      },
+      "required": [
+        "support_fall_alarm",
+        "final_event_type",
+        "final_risk_level",
+        "explanation"
+      ],
+      "title": "RuleAnalysisSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Additive payload placed in legacy `metadata`, never at its top level.",
+  "properties": {
+    "extension_schema": {
+      "const": "eldercare.vision-event-extension.v1",
+      "default": "eldercare.vision-event-extension.v1",
+      "title": "Extension Schema",
+      "type": "string"
+    },
+    "evidence": {
+      "$ref": "#/$defs/EvidenceReference"
+    },
+    "semantic_analysis": {
+      "$ref": "#/$defs/RuleAnalysisSummary"
+    },
+    "robot_advisory": {
+      "$ref": "#/$defs/RobotAdvisory"
+    }
+  },
+  "required": [
+    "evidence",
+    "semantic_analysis",
+    "robot_advisory"
+  ],
+  "title": "VisionEventMetadataExtension",
+  "type": "object"
+}

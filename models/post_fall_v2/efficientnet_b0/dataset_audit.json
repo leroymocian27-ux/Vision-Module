@@ -1,0 +1,46 @@
+{
+  "source": "D:\\Code\\dog\\data",
+  "manifest": "D:\\Code\\dog\\outputs\\dataset_manifest.csv",
+  "total_images": 185,
+  "class_counts": {
+    "Fall": 64,
+    "noFall": 121
+  },
+  "split_counts": {
+    "val": {
+      "Fall": 22,
+      "noFall": 42
+    },
+    "train": {
+      "Fall": 26,
+      "noFall": 49
+    },
+    "test": {
+      "Fall": 16,
+      "noFall": 30
+    }
+  },
+  "split_group_counts": {
+    "val": 4,
+    "train": 5,
+    "test": 3
+  },
+  "groups": {
+    "go2_batch15_20260731_202001": "val",
+    "go2_batch15_20260731_202732": "test",
+    "go2_batch15_20260731_203357": "train",
+    "go2_batch15_2min_20260731_203637": "train",
+    "go2_batch20_2min_20260731_204755": "train",
+    "go2_batch20_2min_20260731_205114": "train",
+    "go2_batch20_2min_20260731_205548": "test",
+    "go2_batch35_2min_20260731_205938": "val",
+    "go2_fall_batch50_3min_20260731_210528": "val",
+    "go2_fall_batch50_3min_20260731_211034": "train",
+    "go2_fall_batch70_3min_20260731_212052": "test",
+    "go2_initial_20260731": "val"
+  },
+  "invalid_images": [],
+  "exact_duplicates": [],
+  "cross_split_near_duplicates_dhash_le_2": [],
+  "leakage_free_by_group": true
+}

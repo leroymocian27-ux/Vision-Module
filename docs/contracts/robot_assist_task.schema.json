@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "RobotTaskState": {
+      "enum": [
+        "CREATED",
+        "POLICY_CHECKED",
+        "AWAITING_APPROVAL",
+        "QUEUED",
+        "DISPATCHING",
+        "EXECUTING",
+        "ARRIVED",
+        "CHECKING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMED_OUT",
+        "SAFETY_BLOCKED"
+      ],
+      "title": "RobotTaskState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "eldercare.robot-assist-task.v1",
+      "default": "eldercare.robot-assist-task.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "fall_scene_check",
+      "default": "fall_scene_check",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "incident_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "alarm_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Alarm Id",
+      "type": "string"
+    },
+    "elder_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Elder Id",
+      "type": "string"
+    },
+    "target_room": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Target Room",
+      "type": "string"
+    },
+    "observation_point_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Observation Point Id",
+      "type": "string"
+    },
+    "priority": {
+      "default": "high",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "critical"
+      ],
+      "title": "Priority",
+      "type": "string"
+    },
+    "approval_status": {
+      "default": "pending",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "title": "Approval Status",
+      "type": "string"
+    },
+    "approved_by": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approved By"
+    },
+    "approved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approved At"
+    },
+    "state": {
+      "$ref": "#/$defs/RobotTaskState",
+      "default": "CREATED"
+    },
+    "adapter_mode": {
+      "default": "mock",
+      "enum": [
+        "mock",
+        "go2"
+      ],
+      "title": "Adapter Mode",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "idempotency_key",
+    "incident_id",
+    "alarm_id",
+    "elder_id",
+    "target_room",
+    "observation_point_id"
+  ],
+  "title": "RobotAssistTask",
+  "type": "object"
+}

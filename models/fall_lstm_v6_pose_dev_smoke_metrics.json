@@ -1,0 +1,38 @@
+{
+  "samples": 5,
+  "positive_samples": 3,
+  "negative_samples": 2,
+  "all_window_count": 5,
+  "split_counts": {
+    "train": 5
+  },
+  "subtype_counts": {
+    "squatting": 2,
+    "fall": 3
+  },
+  "last_loss": 0.665388,
+  "onnx_validation": {
+    "passed": true,
+    "max_abs_diff": 0.0
+  },
+  "threshold_calibration": {
+    "fall_probability": 0.5,
+    "scope": "train",
+    "method": "max_f1_min_fp_highest_threshold_grid_0.30_0.85",
+    "sample_count": 5,
+    "positive_samples": 3,
+    "negative_samples": 2,
+    "precision": 0.6,
+    "recall": 1.0,
+    "f1": 0.75,
+    "false_positive_count": 2
+  },
+  "trained_from_inputs": [
+    "D:\\Program\\vision_service\\data\\temporal_sequences_pose_dev_smoke\\ur_fall\\adl-01.jsonl",
+    "D:\\Program\\vision_service\\data\\temporal_sequences_pose_dev_smoke\\ur_fall\\fall-01.jsonl"
+  ],
+  "input_manifest": {
+    "path": "data\\temporal_v6_training\\lstm_v6_pose_dev_smoke_training_manifest.json",
+    "sha256": "cf4cfb1e3bc948da0f8ff5e3cacd1280676e1d31907d62856fc30ab513017a72"
+  }
+}

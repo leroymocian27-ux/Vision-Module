@@ -1,0 +1,26 @@
+{
+  "name": "syed-yolov11-le2i-fall",
+  "source": "https://github.com/SyedBurhanAhmed/Real-Time-Fall-Detection-using-YOLO",
+  "weight_file": "best.pt",
+  "downloaded_at": "2026-06-27",
+  "framework": "Ultralytics YOLO",
+  "task": "detect",
+  "reported_architecture": "YOLOv11",
+  "reported_dataset": "LE2I Fall Detection Dataset",
+  "repository_license": "MIT",
+  "sha256": "C4D360AB58B942EF2C78D46E8CF734BFE5FF15210E1B90634CA1474E7AE3A6F4",
+  "classes": {
+    "0": "non-fall",
+    "1": "fall"
+  },
+  "recommended_runtime_mapping": {
+    "fall": "strong_fall_hint",
+    "non-fall": "normal_ignore"
+  },
+  "notes": [
+    "Loaded successfully with the local ultralytics runtime.",
+    "The source repository reports YOLOv11 fine-tuning on LE2I and real-time fall detection.",
+    "The model has a direct fall/non-fall label space, but no sitting/standing suppressor class.",
+    "Repository license is MIT, but Ultralytics runtime/model-family licensing still needs separate deployment review."
+  ]
+}

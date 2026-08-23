@@ -1,0 +1,52 @@
+{
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "development_images": 185,
+  "elapsed_seconds": 50.76435327529907,
+  "checkpoint": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\best_model.pth",
+  "epochs": 25,
+  "threshold_from_group_oof": 0.3979087471961975,
+  "group_oof_metrics": {
+    "threshold": 0.3979087471961975,
+    "recall": 1.0,
+    "precision": 0.810126582278481,
+    "specificity": 0.8760330578512396,
+    "f2": 0.9552238805970151,
+    "accuracy": 0.918918918918919,
+    "tp": 64,
+    "fp": 15,
+    "tn": 106,
+    "fn": 0,
+    "support_fall": 64,
+    "support_no_fall": 121,
+    "roc_auc": 0.9904442148760331,
+    "average_precision": 0.9814251954233002
+  },
+  "config": {
+    "architecture": "efficientnet_b0",
+    "seed": 42,
+    "image_size": 224,
+    "batch_size": 16,
+    "workers": 2,
+    "dropout": 0.2,
+    "fall_weight": 3.0,
+    "label_smoothing": 0.0,
+    "stage1_epochs": 8,
+    "stage2_epochs": 20,
+    "stage1_lr": 0.0003,
+    "stage2_lr": 7e-05,
+    "weight_decay": 0.0001,
+    "unfreeze_blocks": 3,
+    "target_recall": 1.0,
+    "pretrained": true,
+    "require_cuda": true,
+    "train_splits": [
+      "train",
+      "val",
+      "test"
+    ],
+    "val_splits": [
+      "val"
+    ]
+  }
+}

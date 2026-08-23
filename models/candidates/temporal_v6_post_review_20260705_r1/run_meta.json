@@ -1,0 +1,9 @@
+{
+  "manifest": "data/temporal_v6_training/lstm_v6_training_manifest.json",
+  "model_version": "v6_post_review_20260705_r1",
+  "epochs": 20,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "stride": 4,
+  "seed": 42
+}

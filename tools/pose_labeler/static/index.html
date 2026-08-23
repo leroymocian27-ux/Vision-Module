@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YOLO pose labeler</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; }
+    body { margin: 0; background: #f5f7fb; color: #172033; }
+    header { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 14px; background: #fff; border-bottom: 1px solid #d8dee9; }
+    main { display: grid; grid-template-columns: 280px 1fr 300px; height: calc(100vh - 52px); }
+    aside { overflow: auto; background: #fff; border-right: 1px solid #d8dee9; }
+    .right { border-right: 0; border-left: 1px solid #d8dee9; padding: 12px; }
+    .image-list button { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-bottom: 1px solid #edf1f5; background: #fff; cursor: pointer; font-size: 12px; }
+    .image-list button.active { background: #dbeafe; }
+    .image-list button.reviewed { color: #166534; }
+    .stage-wrap { overflow: auto; padding: 14px; }
+    .stage { position: relative; display: inline-block; background: #111827; user-select: none; }
+    .stage img { display: block; max-width: calc(100vw - 640px); max-height: calc(100vh - 86px); }
+    .box { position: absolute; border: 2px solid #f97316; box-sizing: border-box; pointer-events: none; }
+    .box.active { border-color: #16a34a; box-shadow: 0 0 0 2px rgba(22,163,74,.25); }
+    .kp { position: absolute; width: 11px; height: 11px; margin-left: -5.5px; margin-top: -5.5px; border-radius: 50%; background: #2563eb; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,.35); cursor: pointer; }
+    .kp.current { width: 15px; height: 15px; margin-left: -7.5px; margin-top: -7.5px; background: #dc2626; }
+    .toolbar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+    button { border: 1px solid #b8c1cc; background: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+    button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+    button.warn { background: #f59e0b; border-color: #f59e0b; color: #111827; }
+    .small { color: #667085; font-size: 12px; }
+    .panel-title { font-weight: 700; margin: 10px 0 8px; }
+    .help { line-height: 1.45; font-size: 13px; }
+    .select-row { display: grid; grid-template-columns: 72px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+    select { width: 100%; padding: 6px; border: 1px solid #b8c1cc; border-radius: 6px; }
+    .kp-list { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; font-size: 12px; }
+    .kp-list button { padding: 4px 7px; font-size: 12px; }
+    .kp-row.current { color: #dc2626; font-weight: 700; }
+    .kp-row.done { color: #166534; }
+    .kp-row.missing { color: #9a3412; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong id="pageTitle">YOLO pose labeler</strong>
+    <div class="toolbar">
+      <button id="prevBtn">Prev</button>
+      <button id="nextBtn">Next</button>
+      <button id="saveBtn" class="primary">Save</button>
+      <button id="missingBtn" class="warn">Missing point</button>
+      <button id="resetPersonBtn">Reset person</button>
+    </div>
+    <span id="status" class="small"></span>
+  </header>
+  <main>
+    <aside>
+      <div id="imageList" class="image-list"></div>
+    </aside>
+    <section class="stage-wrap">
+      <div id="stage" class="stage">
+        <img id="image" alt="">
+      </div>
+    </section>
+    <aside class="right">
+      <div class="select-row">
+        <label for="personSelect">Person</label>
+        <select id="personSelect"></select>
+      </div>
+      <p class="panel-title">Current Point</p>
+      <div id="currentPoint" class="help"></div>
+      <p class="panel-title">Keypoints</p>
+      <div id="kpList" class="kp-list"></div>
+      <p class="panel-title">Source</p>
+      <div id="sourceInfo" class="help"></div>
+      <p class="panel-title">Rules</p>
+      <div class="help">
+        Click the exact joint on the raw frame.<br>
+        Use Missing for points outside frame or impossible to locate.<br>
+        Do not guess floating joints away from the body.<br>
+        Mark all persons shown in the person selector.<br>
+        Keyboard: arrows change image, M marks missing, Ctrl+S saves.
+      </div>
+    </aside>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

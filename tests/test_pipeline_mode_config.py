@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import unittest
+from dataclasses import replace
+
+from app.core.config import Settings
+
+
+class PipelineModeConfigTest(unittest.TestCase):
+    def test_legacy_mode_requires_detection_service_fall_hint_writer(self) -> None:
+        settings = replace(
+            Settings(),
+            pipeline_mode="legacy",
+            fall_hint_in_detection_service=True,
+            fall_hint_worker_enabled=False,
+        )
+
+        self.assertEqual(settings.pipeline_mode, "legacy")
+
+        with self.assertRaises(ValueError):
+            replace(settings, fall_hint_worker_enabled=True)
+
+    def test_async_v1_mode_requires_worker_fall_hint_writer(self) -> None:
+        settings = replace(
+            Settings(),
+            pipeline_mode="async_v1",
+            fall_hint_in_detection_service=False,
+            fall_hint_worker_enabled=True,
+        )
+
+        self.assertEqual(settings.pipeline_mode, "async_v1")
+
+        with self.assertRaises(ValueError):
+            replace(settings, fall_hint_in_detection_service=True)
+
+    def test_fall_disabled_mode_requires_all_fall_hint_paths_off(self) -> None:
+        settings = replace(
+            Settings(),
+            pipeline_mode="fall_disabled",
+            fall_hint_in_detection_service=False,
+            fall_hint_worker_enabled=False,
+            fall_detector_enabled=False,
+        )
+
+        self.assertEqual(settings.pipeline_mode, "fall_disabled")
+
+        with self.assertRaises(ValueError):
+            replace(settings, fall_hint_worker_enabled=True)
+
+        with self.assertRaises(ValueError):
+            replace(settings, fall_detector_enabled=True)
+
+    def test_post_fall_v2_mode_enables_binary_first_runtime_without_legacy_requirements(self) -> None:
+        settings = replace(
+            Settings(),
+            pipeline_mode="post_fall_v2",
+            post_fall_v2_enabled=True,
+            fall_hint_in_detection_service=True,
+            fall_hint_worker_enabled=False,
+            fall_detector_enabled=True,
+        )
+
+        self.assertEqual(settings.pipeline_mode, "post_fall_v2")
+        self.assertTrue(settings.post_fall_v2_enabled)
+
+        with self.assertRaises(ValueError):
+            replace(settings, post_fall_v2_enabled=False)
+
+
+if __name__ == "__main__":
+    unittest.main()

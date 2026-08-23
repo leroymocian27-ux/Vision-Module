@@ -1,0 +1,23 @@
+# Phase 7 v4 merged YOLO dataset. Paths are absolute to avoid stale v3 lab aliases.
+path: .
+train:
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_existing/images/train
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_v2_recall_existing/images/train
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_v3_gmdcsa24_autolabel/images/train
+val:
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_existing/images/val
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_v2_recall_existing/images/val
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_v3_gmdcsa24_autolabel/images/val
+test:
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_existing/images/test
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_v2_recall_existing/images/test
+  - D:/Program/model_test/fall_detection_model_bundle/v3_upgrade_lab/datasets/fall_detect_v3_gmdcsa24_autolabel/images/test
+names:
+  0: person
+  1: fall
+  2: fallen
+  3: lying
+  4: sitting
+  5: bending
+  6: kneeling
+  7: standing

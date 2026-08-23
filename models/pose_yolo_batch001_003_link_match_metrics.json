@@ -1,0 +1,629 @@
+{
+  "split": "test",
+  "items": 40,
+  "imgsz": 640,
+  "conf": 0.12,
+  "models": {
+    "yolo11n-pose.pt": {
+      "count": 40,
+      "matched_rate": 1.0,
+      "detached_rate": 0.0,
+      "mean_candidate_iou": 0.565292,
+      "mean_inside_ratio": 0.942647,
+      "mean_torso_inside_ratio": 1.0,
+      "mean_skeleton_confidence": 0.947178,
+      "mean_keypoint_recall": 1.0,
+      "mean_mean_kp_distance_ratio": 0.044966,
+      "groups": {
+        "bending": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.931373,
+          "mean_candidate_iou": 0.552132,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.078615
+        },
+        "fallen": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.95098,
+          "mean_candidate_iou": 0.547051,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.075047
+        },
+        "falling": {
+          "count": 7,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.550993,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.022372
+        },
+        "hard_negative_object": {
+          "count": 1,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.73561,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.085352
+        },
+        "kneeling": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.574995,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.025375
+        },
+        "lying": {
+          "count": 7,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.957983,
+          "mean_candidate_iou": 0.556703,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.021845
+        },
+        "sitting": {
+          "count": 3,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.921569,
+          "mean_candidate_iou": 0.578183,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.052432
+        },
+        "standing": {
+          "count": 4,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.585648,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.043063
+        }
+      },
+      "worst_rows": [
+        {
+          "image": "batch_001_batch_001_lying_042_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.6374614484652164,
+          "inside_ratio": 1.0,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9684091210365295,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.007083,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_kneeling_126_p00.jpg",
+          "group": "kneeling",
+          "matched": true,
+          "candidate_iou": 0.494208947100691,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9474440813064575,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.0083,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_falling_039_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.613005229466553,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9313783645629883,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.00839,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_lying_073_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.5352968709144384,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9261337518692017,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.008743,
+          "detached": false
+        },
+        {
+          "image": "batch_001_batch_001_falling_010_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.8266466721420238,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9330720901489258,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009202,
+          "detached": false
+        },
+        {
+          "image": "batch_001_batch_001_fallen_034_p00.jpg",
+          "group": "fallen",
+          "matched": true,
+          "candidate_iou": 0.583324707266895,
+          "inside_ratio": 1.0,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9322600364685059,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009691,
+          "detached": false
+        },
+        {
+          "image": "batch_001_batch_001_fallen_029_p00.jpg",
+          "group": "fallen",
+          "matched": true,
+          "candidate_iou": 0.6083108451578108,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9510736465454102,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.01022,
+          "detached": false
+        },
+        {
+          "image": "batch_002_batch_002_lying_063_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.5976328956331416,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9556363224983215,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.011068,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_falling_013_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.4805084545580951,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9321742653846741,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.011502,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_standing_217_p00.jpg",
+          "group": "standing",
+          "matched": true,
+          "candidate_iou": 0.4972461701862278,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9424781799316406,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.011717,
+          "detached": false
+        }
+      ]
+    },
+    "models/pose_yolo_batch001_003_yolo11n_best.pt": {
+      "count": 40,
+      "matched_rate": 1.0,
+      "detached_rate": 0.0,
+      "mean_candidate_iou": 0.570769,
+      "mean_inside_ratio": 0.945588,
+      "mean_torso_inside_ratio": 1.0,
+      "mean_skeleton_confidence": 0.988356,
+      "mean_keypoint_recall": 1.0,
+      "mean_mean_kp_distance_ratio": 0.060079,
+      "groups": {
+        "bending": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.95098,
+          "mean_candidate_iou": 0.566523,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.0589
+        },
+        "fallen": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.892157,
+          "mean_candidate_iou": 0.461781,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.215821
+        },
+        "falling": {
+          "count": 7,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.94958,
+          "mean_candidate_iou": 0.582686,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.019928
+        },
+        "hard_negative_object": {
+          "count": 1,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.767397,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.083556
+        },
+        "kneeling": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.970588,
+          "mean_candidate_iou": 0.595283,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.010459
+        },
+        "lying": {
+          "count": 7,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.94958,
+          "mean_candidate_iou": 0.573623,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.037948
+        },
+        "sitting": {
+          "count": 3,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.980392,
+          "mean_candidate_iou": 0.636456,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.014899
+        },
+        "standing": {
+          "count": 4,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.579574,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.03967
+        }
+      },
+      "worst_rows": [
+        {
+          "image": "batch_002_batch_002_lying_063_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.6158630082809013,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9948543906211853,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.006267,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_kneeling_126_p00.jpg",
+          "group": "kneeling",
+          "matched": true,
+          "candidate_iou": 0.5184351411875916,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.995164155960083,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.00628,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_lying_073_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.5700497001552733,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9951711893081665,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.006395,
+          "detached": false
+        },
+        {
+          "image": "batch_001_batch_001_fallen_029_p00.jpg",
+          "group": "fallen",
+          "matched": true,
+          "candidate_iou": 0.6011533655179332,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9957001209259033,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.006759,
+          "detached": false
+        },
+        {
+          "image": "batch_002_batch_002_lying_058_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.5505154401576599,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9942779541015625,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.007536,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_kneeling_122_p00.jpg",
+          "group": "kneeling",
+          "matched": true,
+          "candidate_iou": 0.5241617916372011,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9954272508621216,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.007591,
+          "detached": false
+        },
+        {
+          "image": "batch_001_batch_001_falling_010_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.8674055242296572,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.996647298336029,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.007618,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_falling_039_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.6515567802937966,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9968514442443848,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.008199,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_kneeling_129_p00.jpg",
+          "group": "kneeling",
+          "matched": true,
+          "candidate_iou": 0.6555817391943815,
+          "inside_ratio": 1.0,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9709203243255615,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.008398,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_bending_184_p00.jpg",
+          "group": "bending",
+          "matched": true,
+          "candidate_iou": 0.6532565160143674,
+          "inside_ratio": 1.0,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9680166840553284,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.0088,
+          "detached": false
+        }
+      ]
+    },
+    "models/pose_yolo_batch001_003_yolo11n_flip_best.pt": {
+      "count": 40,
+      "matched_rate": 1.0,
+      "detached_rate": 0.0,
+      "mean_candidate_iou": 0.543661,
+      "mean_inside_ratio": 0.952941,
+      "mean_torso_inside_ratio": 1.0,
+      "mean_skeleton_confidence": 0.987023,
+      "mean_keypoint_recall": 1.0,
+      "mean_mean_kp_distance_ratio": 0.043032,
+      "groups": {
+        "bending": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.970588,
+          "mean_candidate_iou": 0.552247,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.043106
+        },
+        "fallen": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.475409,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.0958
+        },
+        "falling": {
+          "count": 7,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.94958,
+          "mean_candidate_iou": 0.534587,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.021324
+        },
+        "hard_negative_object": {
+          "count": 1,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.691503,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.08378
+        },
+        "kneeling": {
+          "count": 6,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.95098,
+          "mean_candidate_iou": 0.571375,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.017339
+        },
+        "lying": {
+          "count": 7,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.941176,
+          "mean_candidate_iou": 0.527492,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.056852
+        },
+        "sitting": {
+          "count": 3,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.980392,
+          "mean_candidate_iou": 0.617234,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.016602
+        },
+        "standing": {
+          "count": 4,
+          "matched_rate": 1.0,
+          "detached_rate": 0.0,
+          "mean_inside_ratio": 0.955882,
+          "mean_candidate_iou": 0.543622,
+          "mean_keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.025748
+        }
+      },
+      "worst_rows": [
+        {
+          "image": "batch_001_batch_001_fallen_029_p00.jpg",
+          "group": "fallen",
+          "matched": true,
+          "candidate_iou": 0.5992078391875233,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.996182918548584,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.007453,
+          "detached": false
+        },
+        {
+          "image": "batch_002_batch_002_lying_063_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.595097056928949,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9964462518692017,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.007661,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_falling_039_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.5800731561638914,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9953804016113281,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.008169,
+          "detached": false
+        },
+        {
+          "image": "batch_002_batch_002_lying_058_p00.jpg",
+          "group": "lying",
+          "matched": true,
+          "candidate_iou": 0.5391566302774488,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9961977005004883,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.008378,
+          "detached": false
+        },
+        {
+          "image": "batch_001_batch_001_falling_010_p00.jpg",
+          "group": "falling",
+          "matched": true,
+          "candidate_iou": 0.7864935650061413,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9950801730155945,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.008902,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_kneeling_126_p00.jpg",
+          "group": "kneeling",
+          "matched": true,
+          "candidate_iou": 0.4910328656530521,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9956823587417603,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009369,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_bending_184_p00.jpg",
+          "group": "bending",
+          "matched": true,
+          "candidate_iou": 0.6125070835989408,
+          "inside_ratio": 1.0,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9742386937141418,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009403,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_bending_192_p00.jpg",
+          "group": "bending",
+          "matched": true,
+          "candidate_iou": 0.6480558445864952,
+          "inside_ratio": 1.0,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9695125818252563,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009576,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_standing_217_p00.jpg",
+          "group": "standing",
+          "matched": true,
+          "candidate_iou": 0.47119048515834133,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.9965197443962097,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009594,
+          "detached": false
+        },
+        {
+          "image": "batch_003_batch_003_standing_216_p00.jpg",
+          "group": "standing",
+          "matched": true,
+          "candidate_iou": 0.590799224971426,
+          "inside_ratio": 0.9411764705882353,
+          "torso_inside_ratio": 1.0,
+          "skeleton_confidence": 0.996461033821106,
+          "keypoint_recall": 1.0,
+          "mean_kp_distance_ratio": 0.009695,
+          "detached": false
+        }
+      ]
+    }
+  }
+}

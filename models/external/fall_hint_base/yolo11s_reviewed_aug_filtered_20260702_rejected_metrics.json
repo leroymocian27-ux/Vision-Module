@@ -1,0 +1,92 @@
+{
+  "status": "trained_but_not_accepted_for_runtime",
+  "reason": "new model underperforms current runtime Fall Hint model on validation and test metrics",
+  "run_dir": "D:\\Program\\vision_service\\runs\\fall_hint_v2\\yolo11s_reviewed_aug_filtered_20260702_e80_w0",
+  "dataset": "D:\\Program\\vision_service\\datasets\\fall_hint_v2_training_reviewed_aug_filtered_20260702",
+  "base_model": "D:\\Program\\vision_service\\models\\external\\fall_hint_base\\yolo11s_coco_fall_hint_base_2026-07-02.pt",
+  "best_weight": "D:\\Program\\vision_service\\runs\\fall_hint_v2\\yolo11s_reviewed_aug_filtered_20260702_e80_w0\\weights\\best.pt",
+  "last_weight": "D:\\Program\\vision_service\\runs\\fall_hint_v2\\yolo11s_reviewed_aug_filtered_20260702_e80_w0\\weights\\last.pt",
+  "training": {
+    "completed_epochs": 38,
+    "early_stopped": true,
+    "best_epoch_by_map50_95": 18,
+    "best_val_map50_95": 0.40812,
+    "best_val_map50_at_that_epoch": 0.58915,
+    "best_epoch_by_map50": 18,
+    "best_val_map50": 0.58915,
+    "best_val_map50_95_at_best_map50_epoch": 0.40812
+  },
+  "final_validation_from_ultralytics": {
+    "precision": 0.589,
+    "recall": 0.608,
+    "map50": 0.589,
+    "map50_95": 0.408,
+    "per_class": {
+      "falling": {
+        "precision": 0.289,
+        "recall": 0.354,
+        "map50": 0.328,
+        "map50_95": 0.254
+      },
+      "fallen": {
+        "precision": 0.373,
+        "recall": 0.457,
+        "map50": 0.487,
+        "map50_95": 0.354
+      },
+      "lying": {
+        "precision": 0.73,
+        "recall": 0.525,
+        "map50": 0.568,
+        "map50_95": 0.256
+      },
+      "sitting": {
+        "precision": 0.54,
+        "recall": 0.933,
+        "map50": 0.721,
+        "map50_95": 0.527
+      },
+      "bending": {
+        "precision": 0.545,
+        "recall": 0.5,
+        "map50": 0.468,
+        "map50_95": 0.31
+      },
+      "kneeling": {
+        "precision": 0.946,
+        "recall": 0.589,
+        "map50": 0.741,
+        "map50_95": 0.543
+      },
+      "standing": {
+        "precision": 0.697,
+        "recall": 0.897,
+        "map50": 0.811,
+        "map50_95": 0.609
+      }
+    }
+  },
+  "test_metrics": {
+    "precision": 0.33533227961978884,
+    "recall": 0.46555285409302927,
+    "map50": 0.4152422047715473,
+    "map50_95": 0.2938553244612811,
+    "fitness": 0.30599401249230773,
+    "per_class_notes": {
+      "lying": "very weak on test: map50 about 0.066",
+      "kneeling": "failed on test: recall 0 and map50 about 0.045"
+    }
+  },
+  "current_runtime_model": {
+    "path": "D:\\Program\\vision_service\\models\\yolo_fall_hint_v2_plus_b012_best.pt",
+    "known_val_map50": 0.761,
+    "known_val_map50_95": 0.579,
+    "env_still_points_to": "models/yolo_fall_hint_v2_plus_b012_best.pt"
+  },
+  "decision": {
+    "replace_runtime_model": false,
+    "modify_env": false,
+    "train_more_now": false,
+    "next_data_action": "finish relabel repair batch 031, rebuild cleaned reviewed archive, regenerate augmentation, then retrain or fine-tune from the current best runtime model rather than only COCO base"
+  }
+}

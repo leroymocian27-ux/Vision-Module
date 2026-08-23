@@ -1,0 +1,10 @@
+{
+  "samples": 186,
+  "positive_samples": 31,
+  "negative_samples": 155,
+  "last_loss": 0.534587,
+  "onnx_validation": {
+    "passed": true,
+    "max_abs_diff": 5.960464477539063e-08
+  }
+}

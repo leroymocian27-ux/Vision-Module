@@ -1,0 +1,81 @@
+{
+  "schema_version": "model_locator.v1",
+  "generated_at": "2026-07-17T08:08:35Z",
+  "project": "Vision Service",
+  "runtime_profile": "default",
+  "active_models": [
+    {
+      "role": "person_detection",
+      "path": "yolov8n.pt",
+      "framework": "Ultralytics YOLO",
+      "enabled": true,
+      "deployment_status": "active",
+      "size_bytes": 6549796,
+      "sha256": "F59B3D833E2FF32E194B5BB8E08D211DC7C5BDF144B90D2C8412C47CCFC83B36"
+    },
+    {
+      "role": "fall_hint",
+      "path": "models/yolo_fall_hint_candidate_v3_c_temporal_friendly_20260705.pt",
+      "framework": "Ultralytics YOLO",
+      "enabled": true,
+      "deployment_status": "active",
+      "size_bytes": 5455706,
+      "sha256": "9AF8F3990296106B3CBCBAE2FD634F0815E116CAED59F6EC8DFC58B099206521",
+      "supported_labels": ["standing", "fallen", "sitting", "lying", "falling", "kneeling", "bending"]
+    },
+    {
+      "role": "pose_estimation",
+      "path": "models/pose_yolo_batch001_003_yolo11s_best.pt",
+      "framework": "Ultralytics YOLO Pose",
+      "provider": "yolo11_legacy",
+      "enabled": true,
+      "deployment_status": "active",
+      "size_bytes": 20178504,
+      "sha256": "B03C350774DBB83E3C2D0BF6F1F72700044E3FD0F1A14D17C61E7AB564C0C5FB"
+    },
+    {
+      "role": "temporal_fall_estimation",
+      "path": "models/fall_lstm_v5.onnx",
+      "framework": "ONNX Runtime",
+      "enabled": true,
+      "deployment_status": "active",
+      "size_bytes": 85630,
+      "sha256": "01AF710C6F8996EA0B894EF063956121988F32DF6DF10208F21EDA4869FB0A8C",
+      "feature_schema_path": "models/fall_lstm_v5_features.json",
+      "feature_schema_sha256": "36EC2CF4E64E08B40E55F0F0C9A3BD83226D7C4BC0720921861440EB0BCAFD9F"
+    }
+  ],
+  "candidate_models": [
+    {
+      "role": "pose_estimation_candidate",
+      "path": "models/rtmpose/rtmpose-m-body7-256x192-end2end.onnx",
+      "framework": "ONNX Runtime RTMPose",
+      "provider": "rtmpose_onnx",
+      "deployment_status": "available_not_active",
+      "size_bytes": 54330655,
+      "sha256": "5C0A4BF67953E6D2AC43CE15E77DC9D5D354AE18430A47D2C5963A7BC5683E3C"
+    }
+  ],
+  "research_only_models": [
+    {
+      "path": "models/external/human-fall-detection-yolo11/best.pt",
+      "reason": "Requires event-level fall/ADL/hard-negative evaluation and AGPL licensing review before deployment."
+    },
+    {
+      "path": "models/external/syed-yolov11-le2i-fall/best.pt",
+      "reason": "External fall/non-fall candidate, not connected to the runtime decision chain."
+    },
+    {
+      "path": "models/external/fall_hint_base_20260703_clean/yolo11n_coco_clean_base_20260703.pt",
+      "reason": "Clean training base only; not a fall detector."
+    }
+  ],
+  "verification": {
+    "configured_assets_present": true,
+    "independent_load_check": "passed_2026-07-15",
+    "notes": [
+      "Do not replace the active fall-hint model with a research candidate without event-level evaluation.",
+      "Model paths are relative to the repository root."
+    ]
+  }
+}

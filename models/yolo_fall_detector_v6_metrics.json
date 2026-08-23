@@ -1,0 +1,11 @@
+{
+  "precision": 0.6628527548622535,
+  "recall": 0.2180684423582545,
+  "map50": 0.1735033665020513,
+  "map50_95": 0.10689116595449938,
+  "exists": true,
+  "model": "D:\\Program\\vision_service\\models\\yolo_fall_detector_v6_best.pt",
+  "generated_at": "2026-06-08T06:41:18.047192+00:00",
+  "best_weight": "D:\\Program\\vision_service\\models\\yolo_fall_detector_v6_best.pt",
+  "note": "Training command timed out after producing checkpoint; benchmarked as partial v6 candidate."
+}

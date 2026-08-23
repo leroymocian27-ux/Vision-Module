@@ -1,0 +1,368 @@
+{
+  "document_name": "Vision Service JSON 数据回报格式",
+  "format_version": "2026-07-07.v1",
+  "service": "vision_service",
+  "description": "本文件定义 Vision Service 向主系统、前端或联调脚本回报数据时建议使用的 JSON 格式。重点覆盖连接状态、实时检测结果、跌倒告警推送、告警轮询、10 分钟监听统计和错误回报。",
+  "current_network": {
+    "camera_ip": "192.168.8.250",
+    "vision_service_base_url": "http://192.168.8.249:8000",
+    "main_system_base_url": "http://192.168.8.248:8000/api/v1",
+    "default_camera_id": "camera_01",
+    "default_device_mac": "CAMERA-192.168.8.250"
+  },
+  "transport": {
+    "push_to_main_system": {
+      "method": "POST",
+      "url": "http://192.168.8.248:8000/api/v1/video-bridge/fall-events",
+      "content_type": "application/json",
+      "auth_header": "X-Vision-Service-Token",
+      "purpose": "Vision Service 确认跌倒后主动向主系统推送告警事件，主系统据此产生跌倒告警弹窗。"
+    },
+    "latest_result_polling": {
+      "method": "GET",
+      "url": "http://192.168.8.249:8000/integration/results/{camera_id}/latest",
+      "purpose": "主系统或前端按需拉取某个摄像头最新结构化视觉结果。"
+    },
+    "fall_alert_polling": {
+      "method": "GET",
+      "url": "http://192.168.8.249:8000/integration/fall-alerts/{camera_id}/poll?last_incident_id={last_incident_id}",
+      "purpose": "前端轮询是否有新的跌倒弹窗告警。"
+    },
+    "connection_status": {
+      "method": "GET",
+      "url": "http://192.168.8.249:8000/integration/connection-status",
+      "purpose": "检查 Vision Service、主系统和摄像头链路状态。"
+    }
+  },
+  "field_dictionary": {
+    "camera_id": "摄像头 ID，例如 camera_01。",
+    "stream_name": "视频流名称，默认 primary。",
+    "source": "数据来源，默认 vision_service。",
+    "event_type": "事件类型。跌倒确认事件使用 fall_confirmed。",
+    "state": "对外事件状态。确认跌倒建议使用 confirmed_fall。",
+    "status": "视觉内部状态。常见值 normal、falling、fallen_candidate、fallen_confirmed。",
+    "service_state": "服务运行状态。常见值 running、degraded、unknown。",
+    "severity": "告警等级。建议 L1/L2/L3，跌倒高风险用 L3。",
+    "risk": "风险等级。常见值 low、medium、high、critical。",
+    "risk_level": "同 risk，用于兼容主系统字段。",
+    "fall_detected": "是否检测到跌倒确认事件。",
+    "fall_prob": "跌倒概率，范围 0 到 1。",
+    "fall_score": "跌倒评分，通常与 fall_prob 保持一致。",
+    "track_id": "目标跟踪 ID，用于排查同一个人的连续事件。",
+    "incident_id": "跌倒事件唯一 ID。主系统应使用它做弹窗去重。",
+    "bbox": "人体框，格式为 [x1, y1, x2, y2]，单位为原始视频帧像素。",
+    "snapshot_url": "Vision Service 暴露的跌倒截图 URL，主系统前端可直接展示。",
+    "snapshot_path": "Vision Service 本机保存的截图路径，仅用于服务侧排查。",
+    "timestamp": "事件或帧时间，ISO 8601 字符串。",
+    "frame_seq": "帧序号。",
+    "frame_width": "视频帧宽度。",
+    "frame_height": "视频帧高度。",
+    "scores": "多模型评分集合。",
+    "injury": "伤害风险解释和处置建议。",
+    "metadata": "调试、模型证据、融合证据和事件复用信息。"
+  },
+  "payload_templates": {
+    "fall_event_push_to_main_system": {
+      "required_fields": [
+        "camera_id",
+        "source",
+        "event_type",
+        "status",
+        "severity",
+        "risk_level",
+        "fall_detected",
+        "fall_prob",
+        "track_id",
+        "incident_id",
+        "bbox",
+        "timestamp"
+      ],
+      "example": {
+        "camera_id": "camera_01",
+        "stream_name": "primary",
+        "source": "vision_service",
+        "event_type": "fall_confirmed",
+        "state": "confirmed_fall",
+        "status": "fallen_confirmed",
+        "service_state": "running",
+        "severity": "L3",
+        "risk": "critical",
+        "risk_level": "critical",
+        "fall_detected": true,
+        "fall_prob": 0.93,
+        "fall_score": 0.93,
+        "track_id": "20",
+        "incident_id": "vision-fall-camera_01_track_20-20260707093015532100",
+        "bbox": [
+          118.4,
+          176.2,
+          372.8,
+          348.5
+        ],
+        "snapshot_url": "http://192.168.8.249:8000/fall-events/snapshots/camera_01_20_20260707093015532100.jpg",
+        "snapshot_path": "D:/Program/vision_service/data/fall_events/camera_01_20_20260707093015532100.jpg",
+        "timestamp": "2026-07-07T09:30:15.532100+08:00",
+        "scores": {
+          "temporal": 0.91,
+          "shadow_onnx_lstm": 0.88,
+          "detector": 0.93,
+          "hybrid": 0.93
+        },
+        "injury": {
+          "level": "I3",
+          "reason": "vision_service_fallen_confirmed",
+          "advice": "Please inspect the live camera view immediately and confirm the elder's condition."
+        },
+        "metadata": {
+          "provider": "onnx_lstm",
+          "model_source": "pose_temporal_fusion",
+          "frame_seq": 18342,
+          "frame_width": 640,
+          "frame_height": 360,
+          "object_confidence": 0.95,
+          "person_id": null,
+          "person_name": null,
+          "fall_decision": {
+            "fall_state": "fallen_confirmed",
+            "risk_level": "critical",
+            "fall_probability": 0.93,
+            "confirm_source": "field_low_posture_recent_fall_hint"
+          },
+          "alarm_preview": {
+            "confirmed": true,
+            "risk_level": "critical",
+            "fall_probability": 0.93
+          },
+          "incident_reuse_debug": {
+            "incident_reused": false,
+            "previous_incident_id": null,
+            "track_handoff_detected": false,
+            "duplicate_incident_suppressed": false
+          }
+        }
+      }
+    },
+    "latest_result_response": {
+      "endpoint": "GET /integration/results/{camera_id}/latest",
+      "example": {
+        "type": "vision_result",
+        "camera_id": "camera_01",
+        "stream_name": "primary",
+        "source": "vision_service",
+        "event_type": "fall_confirmed",
+        "state": "fallen_confirmed",
+        "status": "fallen_confirmed",
+        "service_state": "running",
+        "camera_lost": false,
+        "capture_stale": false,
+        "frame_age_ms": 82.4,
+        "source_fps": 10.8,
+        "analysis_fps": 4.1,
+        "fall_detected": true,
+        "fall_state": "fallen_confirmed",
+        "risk": "critical",
+        "risk_level": "critical",
+        "fall_prob": 0.93,
+        "fall_score": 0.93,
+        "track_id": 20,
+        "incident_id": "vision-fall-camera_01_track_20-20260707093015532100",
+        "bbox": [
+          118.4,
+          176.2,
+          372.8,
+          348.5
+        ],
+        "target": {
+          "target_id": null,
+          "label": "person",
+          "matched": false,
+          "confidence": 0.95,
+          "metadata": {
+            "is_target": false,
+            "identity_state": null
+          }
+        },
+        "snapshot_url": "http://192.168.8.249:8000/fall-events/snapshots/camera_01_20_20260707093015532100.jpg",
+        "snapshot_path": "D:/Program/vision_service/data/fall_events/camera_01_20_20260707093015532100.jpg",
+        "timestamp": "2026-07-07T09:30:15.532100+08:00",
+        "frame_seq": 18342,
+        "frame_width": 640,
+        "frame_height": 360,
+        "alarm_confirmed": true,
+        "scores": {
+          "hybrid": 0.93,
+          "detector": 0.93,
+          "posture": 0.88
+        },
+        "injury": {
+          "level": "I3",
+          "reason": "vision_service_fallen_confirmed",
+          "advice": "Please inspect the live camera view immediately and confirm the elder's condition."
+        },
+        "metadata": {
+          "track_id": 20,
+          "fall_decision": {
+            "fall_state": "fallen_confirmed",
+            "risk_level": "critical",
+            "fall_probability": 0.93
+          },
+          "temporal": {
+            "fall_probability": 0.91,
+            "source": "onnx_lstm"
+          }
+        },
+        "objects": [
+          {
+            "label": "person",
+            "confidence": 0.95,
+            "bbox": [
+              118.4,
+              176.2,
+              372.8,
+              348.5
+            ],
+            "track_id": 20,
+            "is_target": false,
+            "person_id": null,
+            "person_name": null,
+            "identity_state": null,
+            "pose": {},
+            "behavior": {},
+            "temporal": {},
+            "fall_decision": {},
+            "alarm_preview": {},
+            "features": {},
+            "fusion_debug": {}
+          }
+        ],
+        "detector": {
+          "person_model": "yolov8n",
+          "fall_hint_model": "yolo_fall_hint_candidate_v3_c_temporal_friendly_20260705",
+          "pose_model": "yolo11n-pose",
+          "temporal_model": "onnx_lstm"
+        }
+      }
+    },
+    "fall_alert_poll_response": {
+      "endpoint": "GET /integration/fall-alerts/{camera_id}/poll",
+      "example_new_alert": {
+        "camera_id": "camera_01",
+        "status": "new_alert",
+        "should_popup": true,
+        "last_incident_id": "vision-fall-camera_01_track_18-20260707092500000000",
+        "incident_id": "vision-fall-camera_01_track_20-20260707093015532100",
+        "event_timestamp": "2026-07-07T09:30:15.532100+08:00",
+        "fall_state": "fallen_confirmed",
+        "risk_level": "critical",
+        "snapshot_url": "http://192.168.8.249:8000/fall-events/snapshots/camera_01_20_20260707093015532100.jpg",
+        "alert": {
+          "camera_id": "camera_01",
+          "event_type": "fall_confirmed",
+          "status": "fallen_confirmed",
+          "risk_level": "critical",
+          "incident_id": "vision-fall-camera_01_track_20-20260707093015532100"
+        }
+      },
+      "example_no_alert": {
+        "camera_id": "camera_01",
+        "status": "no_alert",
+        "should_popup": false,
+        "last_incident_id": null,
+        "incident_id": null,
+        "event_timestamp": null,
+        "fall_state": null,
+        "risk_level": null,
+        "snapshot_url": null,
+        "alert": null
+      }
+    },
+    "connection_status_response": {
+      "endpoint": "GET /integration/connection-status",
+      "example": {
+        "vision_service": {
+          "base_url": "http://192.168.8.249:8000",
+          "status": "online"
+        },
+        "main_system": {
+          "base_url": "http://192.168.8.248:8000",
+          "status": "online"
+        },
+        "camera": {
+          "camera_id": "camera_01"
+        },
+        "timestamp": "2026-07-07T09:30:15.532100+08:00"
+      }
+    },
+    "ten_minute_monitor_summary": {
+      "purpose": "10 分钟持续监听和录制结束后，向人工或主系统汇总本轮检测、推送和弹窗结果。",
+      "example": {
+        "type": "vision_monitor_summary",
+        "camera_id": "camera_01",
+        "window": {
+          "start_time": "2026-07-07T09:20:00+08:00",
+          "end_time": "2026-07-07T09:30:00+08:00",
+          "duration_seconds": 600
+        },
+        "camera": {
+          "ip": "192.168.8.250",
+          "connected": true,
+          "frame_width": 640,
+          "frame_height": 360,
+          "capture_fps_avg": 10.8
+        },
+        "counts": {
+          "fall_detected_total": 3,
+          "fall_confirmed_total": 3,
+          "main_system_push_attempts": 3,
+          "main_system_push_success": 3,
+          "main_system_popup_alerts": 3
+        },
+        "files": {
+          "continuous_video": "D:/Program/vision_service/tmp/monitor_10min_clips/continuous_camera_01_20260707_092000.mp4",
+          "summary_json": "D:/Program/vision_service/tmp/monitor_10min_clips/summary_20260707_092000.json",
+          "samples_jsonl": "D:/Program/vision_service/tmp/monitor_10min_clips/samples_20260707_092000.jsonl",
+          "fall_clip_dir": "D:/Program/vision_service/tmp/monitor_10min_clips/fall_clips_20260707_092000"
+        },
+        "fall_events": [
+          {
+            "index": 1,
+            "incident_id": "vision-fall-camera_01_track_20-20260707092339506853",
+            "track_id": "20",
+            "timestamp": "2026-07-07T09:23:39.506853+08:00",
+            "fall_state": "fallen_confirmed",
+            "risk_level": "critical",
+            "fall_prob": 0.92,
+            "push_status_code": 200,
+            "popup_observed": true,
+            "clip_path": "D:/Program/vision_service/tmp/monitor_10min_clips/fall_clips_20260707_092000/fall_clip_001.mp4",
+            "clip_duration_seconds": 15
+          }
+        ]
+      }
+    },
+    "error_report": {
+      "purpose": "接口失败、摄像头断流、主系统推送失败或模型异常时统一回报。",
+      "example": {
+        "type": "vision_error",
+        "camera_id": "camera_01",
+        "severity": "warning",
+        "code": "MAIN_SYSTEM_PUSH_FAILED",
+        "message": "Fall event was confirmed locally but failed to push to main system.",
+        "timestamp": "2026-07-07T09:30:15.532100+08:00",
+        "retryable": true,
+        "context": {
+          "endpoint": "http://192.168.8.248:8000/api/v1/video-bridge/fall-events",
+          "last_post_status": "request_error",
+          "incident_id": "vision-fall-camera_01_track_20-20260707093015532100"
+        }
+      }
+    }
+  },
+  "integration_rules": {
+    "popup_deduplication": "主系统或前端应使用 incident_id 去重。同一个 incident_id 只弹一次窗。",
+    "popup_trigger": "当 fall_alert_poll_response.should_popup 为 true，或 fall_event_push_to_main_system.event_type 为 fall_confirmed 且 status 为 fallen_confirmed 时，应触发跌倒告警弹窗。",
+    "risk_policy": "risk_level 为 critical 或 high 时建议弹出强告警；medium 可做弱提醒；low 不建议弹窗。",
+    "snapshot_policy": "snapshot_url 可直接用于主系统前端展示；snapshot_path 仅服务端排查使用，不建议暴露给终端用户。",
+    "time_policy": "timestamp 建议统一使用 ISO 8601，带时区。当前现场时区为 Asia/Shanghai。"
+  }
+}

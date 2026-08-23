@@ -1,0 +1,27 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+opencv-python>=4.8
+numpy>=1.24
+aiortc>=1.6
+av>=11
+ultralytics>=8.0
+pydantic>=2.0
+lap>=0.5.12
+python-multipart>=0.0.9
+onnxruntime>=1.17
+
+# Optional for Phase 2.2 identity enrollment:
+# insightface>=0.7
+# onnxruntime-gpu>=1.17
+
+# Optional for Phase 6 temporal ONNX inference/training:
+# onnxruntime>=1.17
+# onnx>=1.16
+# torch>=2.0
+
+# Optional for RTMPose pose upgrade:
+# openmim
+# mmengine
+# "mmcv>=2.0,<2.2"
+# "mmdet>=3.0,<3.4"
+# mmpose

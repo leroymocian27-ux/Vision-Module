@@ -1,0 +1,97 @@
+{
+  "selection_rule": "Recall >=95% and ONNX CPU p95 <50 ms; then precision, AUC, latency",
+  "selected": {
+    "architecture": "efficientnet_b0",
+    "oof_metrics": {
+      "threshold": 0.3979087471961975,
+      "recall": 1.0,
+      "precision": 0.810126582278481,
+      "specificity": 0.8760330578512396,
+      "f2": 0.9552238805970151,
+      "accuracy": 0.918918918918919,
+      "tp": 64,
+      "fp": 15,
+      "tn": 106,
+      "fn": 0,
+      "support_fall": 64,
+      "support_no_fall": 121,
+      "roc_auc": 0.9904442148760331,
+      "average_precision": 0.9814251954233002
+    },
+    "threshold": 0.3979087471961975,
+    "onnx_cpu_latency_ms": {
+      "torch_median": 9.96990007115528,
+      "torch_p95": 12.229874968761578,
+      "onnx_median": 2.9978500097058713,
+      "onnx_p95": 5.126120091881603
+    },
+    "parameters": 4010110,
+    "onnx_bytes": 16030443,
+    "checkpoint": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\best_model.pth",
+    "onnx": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\fall_candidate_efficientnet_b0.onnx"
+  },
+  "candidates": [
+    {
+      "architecture": "mobilenet_v3_small",
+      "oof_metrics": {
+        "threshold": 0.07609138637781143,
+        "recall": 1.0,
+        "precision": 0.7272727272727273,
+        "specificity": 0.8016528925619835,
+        "f2": 0.930232558139535,
+        "accuracy": 0.8702702702702703,
+        "tp": 64,
+        "fp": 24,
+        "tn": 97,
+        "fn": 0,
+        "support_fall": 64,
+        "support_no_fall": 121,
+        "roc_auc": 0.9826962809917356,
+        "average_precision": 0.9674085123498862
+      },
+      "threshold": 0.07609138637781143,
+      "onnx_cpu_latency_ms": {
+        "torch_median": 4.0354999946430326,
+        "torch_p95": 5.298330023651943,
+        "onnx_median": 1.3373500551097095,
+        "onnx_p95": 4.880809981841579
+      },
+      "parameters": 1519906,
+      "onnx_bytes": 6089245,
+      "checkpoint": "D:\\Code\\dog\\outputs\\final\\best_model.pth",
+      "onnx": "D:\\Code\\dog\\outputs\\final\\fall_candidate_mobilenet_v3_small.onnx"
+    },
+    {
+      "architecture": "efficientnet_b0",
+      "oof_metrics": {
+        "threshold": 0.3979087471961975,
+        "recall": 1.0,
+        "precision": 0.810126582278481,
+        "specificity": 0.8760330578512396,
+        "f2": 0.9552238805970151,
+        "accuracy": 0.918918918918919,
+        "tp": 64,
+        "fp": 15,
+        "tn": 106,
+        "fn": 0,
+        "support_fall": 64,
+        "support_no_fall": 121,
+        "roc_auc": 0.9904442148760331,
+        "average_precision": 0.9814251954233002
+      },
+      "threshold": 0.3979087471961975,
+      "onnx_cpu_latency_ms": {
+        "torch_median": 9.96990007115528,
+        "torch_p95": 12.229874968761578,
+        "onnx_median": 2.9978500097058713,
+        "onnx_p95": 5.126120091881603
+      },
+      "parameters": 4010110,
+      "onnx_bytes": 16030443,
+      "checkpoint": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\best_model.pth",
+      "onnx": "D:\\Code\\dog\\outputs\\efficientnet_b0\\final\\fall_candidate_efficientnet_b0.onnx"
+    }
+  ],
+  "metric_protocol": "three recording-group-held-out folds; final deployment checkpoints use all 185 images",
+  "warning": "Only three positive recording groups exist; collect external scenes before production safety claims."
+}

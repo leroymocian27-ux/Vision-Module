@@ -1,0 +1,323 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 视觉监护控制台</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="global-header" aria-label="页面概览">
+        <div class="brand-block">
+          <div class="brand-icon" aria-hidden="true">AI</div>
+          <div>
+            <p class="eyebrow">AIoT Care Console</p>
+            <h1>视觉跌倒监护工作台</h1>
+            <p class="header-copy">实时视频、目标识别、跌倒风险与链路诊断统一查看。</p>
+          </div>
+        </div>
+        <div class="header-status" aria-label="链路摘要">
+          <span class="status-pill"><strong>WebRTC</strong><em id="webrtcState">idle</em></span>
+          <span class="status-pill"><strong>WebSocket</strong><em id="wsState">idle</em></span>
+          <span class="status-pill"><strong>Stream</strong><em id="streamState">idle</em></span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <section class="monitor-area" aria-label="实时视频监护">
+          <div class="monitor-toolbar">
+            <div>
+              <p class="eyebrow">Live Monitor</p>
+              <h2>实时画面</h2>
+            </div>
+            <dl class="quick-metrics" aria-label="实时指标">
+              <div>
+                <dt>Frame</dt>
+                <dd id="frameInfo">-</dd>
+              </div>
+              <div>
+                <dt>Persons</dt>
+                <dd id="personCount">0</dd>
+              </div>
+              <div>
+                <dt>Latency</dt>
+                <dd id="latency">-</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="viewer">
+            <video id="video" autoplay playsinline muted></video>
+            <img id="frameFallback" class="frame-fallback" alt="" hidden />
+            <canvas id="overlay"></canvas>
+            <div class="viewer-empty" aria-hidden="true">
+              <strong>等待视频连接</strong>
+              <span>点击右侧 Connect 后显示实时分析画面</span>
+            </div>
+          </div>
+
+          <div id="recoveryBanner" class="recovery-banner" hidden></div>
+        </section>
+
+        <aside class="side-rail" aria-label="监护操作与诊断">
+          <section class="panel source-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Source</p>
+                <h2>视频源配置</h2>
+              </div>
+              <span class="soft-tag">camera_79</span>
+            </div>
+            <label>
+              <span>Camera ID</span>
+              <input id="cameraId" value="camera_01" autocomplete="off" />
+            </label>
+            <label>
+              <span>RTSP URL</span>
+              <input id="rtspUrl" value="" placeholder="仅手动输入经批准的摄像头地址" autocomplete="off" />
+              <span class="hint">连接信息不会从服务状态回填到页面；演示时请勿输入或展示真实凭据。</span>
+            </label>
+            <div class="actions">
+              <button id="startBtn" class="ghost-btn" type="button">启动流</button>
+              <button id="connectBtn" class="primary-btn" type="button">连接画面</button>
+            </div>
+          </section>
+
+          <section class="panel discovery-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Network Discovery</p>
+                <h2>网络发现</h2>
+              </div>
+              <button id="rescanDevicesBtn" class="ghost-btn compact-btn" type="button">重新搜索</button>
+            </div>
+            <div class="discovery-actions">
+              <button id="autoConnectDevicesBtn" class="primary-btn" type="button">一键连接</button>
+              <button id="connectMainSystemBtn" class="ghost-btn" type="button">连接主系统</button>
+            </div>
+            <dl class="detail-grid">
+              <dt>主系统</dt><dd id="mainSystemDiscoveryState">-</dd>
+              <dt>主系统 IP</dt><dd id="mainSystemDiscoveryIp">-</dd>
+              <dt>摄像头</dt><dd id="cameraDiscoveryState">-</dd>
+              <dt>摄像头 IP</dt><dd id="cameraDiscoveryIp">-</dd>
+              <dt>当前网段</dt><dd id="discoverySubnet">-</dd>
+              <dt>最近发现</dt><dd id="discoveryLastScan">-</dd>
+            </dl>
+            <div id="discoveryResult" class="manual-alert-result">等待状态刷新</div>
+          </section>
+
+          <section class="panel manual-alert">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Alarm Probe</p>
+                <h2>模拟告警发送</h2>
+              </div>
+            </div>
+            <label>
+              <span>接收服务器 IP</span>
+              <input id="manualAlertIp" value="192.168.8.253" placeholder="192.168.8.253" inputmode="decimal" />
+            </label>
+            <button id="sendManualAlertBtn" class="warning-btn" type="button">发送模拟告警</button>
+            <div id="manualAlertResult" class="manual-alert-result">尚未发送</div>
+          </section>
+
+          <section class="panel inspector target-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Target</p>
+                <h2>目标状态</h2>
+              </div>
+            </div>
+            <dl class="detail-grid">
+              <dt>当前 Pipeline</dt><dd id="pipelineMode">-</dd>
+              <dt>二分类</dt><dd id="binaryLabel">-</dd>
+              <dt>Track ID</dt><dd id="targetTrackId">-</dd>
+              <dt>目标人物</dt><dd id="targetFlag">-</dd>
+              <dt>身份</dt><dd id="targetPerson">-</dd>
+              <dt>跟踪</dt><dd id="trackingState">-</dd>
+              <dt>识别</dt><dd id="identityState">-</dd>
+              <dt>行为</dt><dd id="behaviorState">-</dd>
+              <dt>姿态</dt><dd id="poseState">-</dd>
+              <dt>跌倒状态</dt><dd id="fallState">-</dd>
+              <dt>风险等级</dt><dd id="riskLevel">-</dd>
+              <dt>跌倒概率</dt><dd id="fallProbability">-</dd>
+              <dt>倒计时</dt><dd id="fallCountdown">-</dd>
+              <dt>影子概率</dt><dd id="shadowProbability">-</dd>
+              <dt>时间窗口</dt><dd id="temporalWindow">-</dd>
+              <dt>keyframe status</dt><dd id="keyframeStatus">-</dd>
+              <dt>vlm status</dt><dd id="vlmStatus">-</dd>
+              <dt>Incident ID</dt><dd id="incidentId">-</dd>
+              <dt>上报器</dt><dd id="reporterStatus">-</dd>
+            </dl>
+            <div class="event-review-copy pfv2-summary">
+              <div>
+                <strong>千问事件后分析摘要</strong>
+                <p id="vlmSummary">-</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel event-panel" id="eventPanel" aria-live="polite">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Evidence Chain</p>
+                <h2>Event Semantic Review</h2>
+              </div>
+              <span class="soft-tag" id="eventPipelineState">inactive</span>
+            </div>
+            <div class="event-health-strip" aria-label="Event pipeline health">
+              <span><strong>Pipeline</strong><em id="eventHealthPipeline">inactive</em></span>
+              <span><strong>Worker</strong><em id="eventHealthWorker">-</em></span>
+              <span><strong>Outbox</strong><em id="eventHealthOutbox">0 / 0 / 0 / 0</em></span>
+            </div>
+            <div class="event-recent">
+              <div class="event-recent-head">
+                <strong>Recent Events</strong>
+                <button id="eventShowLatestBtn" class="ghost-btn compact-btn" type="button">Latest</button>
+              </div>
+              <div class="event-recent-list" id="eventRecentList">事件语义链路未启用</div>
+            </div>
+            <div class="event-empty-state" id="eventEmptyState">事件语义链路未启用</div>
+            <dl class="detail-grid dense event-summary-grid">
+              <dt>Incident</dt><dd id="eventIncidentId">-</dd>
+              <dt>Camera</dt><dd id="eventCameraId">-</dd>
+              <dt>Track</dt><dd id="eventTrackId">-</dd>
+              <dt>Event</dt><dd id="eventType">-</dd>
+              <dt>State</dt><dd id="eventFallState">-</dd>
+              <dt>Risk</dt><dd id="eventRiskLevel">-</dd>
+              <dt>Confidence</dt><dd id="eventConfidence">-</dd>
+              <dt>Status</dt><dd id="eventStatus">-</dd>
+              <dt>Source</dt><dd id="eventResultSource">-</dd>
+              <dt>Archive</dt><dd id="eventArchiveStatus">-</dd>
+            </dl>
+            <div class="event-review-copy">
+              <div>
+                <strong>Review Result</strong>
+                <p id="eventReviewResult">-</p>
+              </div>
+              <div>
+                <strong>Explanation</strong>
+                <p id="eventExplanation">事件语义链路未启用</p>
+              </div>
+              <div>
+                <strong>Recommended Action</strong>
+                <p id="eventRecommendedAction">-</p>
+              </div>
+              <div>
+                <strong>Uncertainty</strong>
+                <p id="eventUncertainty">-</p>
+              </div>
+              <div>
+                <strong>Degradation</strong>
+                <p id="eventDegradation" class="event-tag-list">-</p>
+              </div>
+              <div>
+                <strong>Observed Process</strong>
+                <p id="eventObservedProcess">-</p>
+              </div>
+              <div>
+                <strong>Risk Interpretation</strong>
+                <p id="eventRiskInterpretation">-</p>
+              </div>
+              <div>
+                <strong>ADL Likelihood</strong>
+                <p id="eventAdlLikelihood">-</p>
+              </div>
+              <div>
+                <strong>VLM Advisory</strong>
+                <p id="eventVlmStatus">-</p>
+              </div>
+            </div>
+            <div class="event-review-copy" aria-label="本地千问关键帧辅助描述">
+              <div>
+                <strong>Qwen Keyframe Analysis</strong>
+                <p id="eventQwenStatus">未启用</p>
+              </div>
+              <div>
+                <strong>Scene Summary</strong>
+                <p id="eventQwenSceneSummary">-</p>
+              </div>
+              <div>
+                <strong>Posture / Movement</strong>
+                <p id="eventQwenPostureMovement">-</p>
+              </div>
+              <div>
+                <strong>Care Advice</strong>
+                <p id="eventQwenCareAdvice">-</p>
+              </div>
+              <div>
+                <strong>Uncertainty</strong>
+                <p id="eventQwenUncertainty">-</p>
+              </div>
+            </div>
+            <div class="event-delivery-copy">
+              <strong>Delivery Status</strong>
+              <dl class="detail-grid dense event-delivery-grid">
+                <dt>Status</dt><dd id="eventDeliveryStatus">暂无投递状态</dd>
+                <dt>Mode</dt><dd id="eventDeliveryMode">not configured</dd>
+                <dt>Dry Run</dt><dd id="eventDeliveryDryRun">-</dd>
+                <dt>Retry</dt><dd id="eventDeliveryRetry">-</dd>
+                <dt>Next Retry</dt><dd id="eventDeliveryNextRetry">-</dd>
+                <dt>Delivered</dt><dd id="eventDeliveryDeliveredAt">-</dd>
+                <dt>Backend</dt><dd id="eventDeliveryBackend">-</dd>
+                <dt>Last Error</dt><dd id="eventDeliveryLastError">-</dd>
+              </dl>
+            </div>
+            <div class="event-timeline-image" id="eventTimelineImagePanel">
+              <strong>Timeline Image</strong>
+              <div id="eventTimelineImage">不提供事件过程图</div>
+            </div>
+            <div class="event-timeline-head">
+              <strong>Keyframe Timeline</strong>
+              <span>pre-fall / trigger / post-fall evidence</span>
+            </div>
+            <div class="event-timeline" id="eventTimeline" aria-label="Event keyframe timeline"></div>
+          </section>
+
+          <section class="panel inspector metrics-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Diagnostics</p>
+                <h2>性能诊断</h2>
+              </div>
+            </div>
+            <dl class="detail-grid dense">
+              <dt>Detect FPS</dt><dd id="detectionFps">-</dd>
+              <dt>Track FPS</dt><dd id="trackingFps">-</dd>
+              <dt>Pose FPS</dt><dd id="poseFps">-</dd>
+              <dt>AI FPS</dt><dd id="aiFps">-</dd>
+              <dt>Backend Source</dt><dd id="backendSource">-</dd>
+              <dt>Video FPS</dt><dd id="videoFps">-</dd>
+              <dt>WS FPS</dt><dd id="wsFps">-</dd>
+              <dt>Overlay FPS</dt><dd id="overlayFps">-</dd>
+              <dt>Overlay Age</dt><dd id="overlayAge">-</dd>
+              <dt>Video Frames</dt><dd id="videoFrames">-</dd>
+              <dt>Video Ready</dt><dd id="videoReadyState">-</dd>
+              <dt>Video Size</dt><dd id="videoSize">-</dd>
+              <dt>PC Exists</dt><dd id="pcExists">-</dd>
+              <dt>ICE State</dt><dd id="iceConnectionState">-</dd>
+              <dt>ICE Gathering</dt><dd id="iceGatheringState">-</dd>
+              <dt>Signaling</dt><dd id="signalingState">-</dd>
+              <dt>Has Stream</dt><dd id="hasSrcObject">-</dd>
+              <dt>Tracks</dt><dd id="srcObjectTracks">-</dd>
+            </dl>
+          </section>
+
+          <section class="panel raw-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Raw Status</p>
+                <h2>原始状态</h2>
+              </div>
+            </div>
+            <pre id="statusBox">{}</pre>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="./overlay.js?v=hide-skeleton-20260708"></script>
+    <script src="./app.js?v=live-frame-fallback-20260728"></script>
+  </body>
+</html>

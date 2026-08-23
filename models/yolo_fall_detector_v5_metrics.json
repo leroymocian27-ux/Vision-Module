@@ -1,0 +1,40 @@
+{
+  "training_status": "completed",
+  "base_model": "D:\\Program\\数据集\\downloaded_models\\ultralytics\\yolo11s.pt",
+  "downloaded_stronger_base_model": "D:\\Program\\数据集\\downloaded_models\\ultralytics\\yolo11m.pt",
+  "best_weight": "D:\\Program\\vision_service\\models\\yolo_fall_detector_v5_best.pt",
+  "run_dir": "D:\\Program\\vision_service\\runs\\phase8_yolo_v5\\fall_detector_v5_yolo11s",
+  "requested_epochs": 12,
+  "completed_epochs": 12,
+  "imgsz": 768,
+  "batch": 8,
+  "best_validation_epoch_by_map50_95": {
+    "epoch": "9",
+    "time": "4232.92",
+    "train/box_loss": "0.5214",
+    "train/cls_loss": "0.73428",
+    "train/dfl_loss": "0.92239",
+    "metrics/precision(B)": "0.15566",
+    "metrics/recall(B)": "0.80741",
+    "metrics/mAP50(B)": "0.26786",
+    "metrics/mAP50-95(B)": "0.2321",
+    "val/box_loss": "0.52626",
+    "val/cls_loss": "2.86878",
+    "val/dfl_loss": "0.93721",
+    "lr/pg0": "0.00028322",
+    "lr/pg1": "0.00028322",
+    "lr/pg2": "0.00028322"
+  },
+  "test_metrics": {
+    "model": "D:\\Program\\vision_service\\models\\yolo_fall_detector_v5_best.pt",
+    "precision": 0.1997494996628297,
+    "recall": 0.3250000420778299,
+    "map50": 0.1627523538163047,
+    "map50_95": 0.13508391962021588
+  },
+  "notes": [
+    "YOLO v5 candidate trained from downloaded yolo11s.pt on merged Phase 8 YOLO data.",
+    "Downloaded yolo11m.pt is a stronger generic base but not fall-specific and cannot directly replace a fall detector without fine-tuning.",
+    "v5 improves recall and mAP over v4 on the merged test split but has lower precision; use with state-machine safeguards and real-camera smoke before runtime promotion."
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "images_checked": 185,
+  "threshold": 0.3979087471961975,
+  "max_abs_logit_error": 0.0005137920379638672,
+  "max_abs_probability_error": 4.295259714126587e-05,
+  "mean_abs_probability_error": 5.998182928124152e-07,
+  "threshold_decision_mismatches": 0,
+  "torch_metrics": {
+    "threshold": 0.3979087471961975,
+    "recall": 1.0,
+    "precision": 1.0,
+    "specificity": 1.0,
+    "f2": 1.0,
+    "accuracy": 1.0,
+    "tp": 64,
+    "fp": 0,
+    "tn": 121,
+    "fn": 0,
+    "support_fall": 64,
+    "support_no_fall": 121,
+    "roc_auc": 1.0,
+    "average_precision": 1.0
+  },
+  "onnx_metrics": {
+    "threshold": 0.3979087471961975,
+    "recall": 1.0,
+    "precision": 1.0,
+    "specificity": 1.0,
+    "f2": 1.0,
+    "accuracy": 1.0,
+    "tp": 64,
+    "fp": 0,
+    "tn": 121,
+    "fn": 0,
+    "support_fall": 64,
+    "support_no_fall": 121,
+    "roc_auc": 1.0,
+    "average_precision": 1.0
+  },
+  "cpu_latency_ms_batch1": {
+    "torch_median": 9.96990007115528,
+    "torch_p95": 12.229874968761578,
+    "onnx_median": 2.9978500097058713,
+    "onnx_p95": 5.126120091881603
+  },
+  "parameters": 4010110,
+  "checkpoint_bytes": 16341049,
+  "onnx_bytes": 16030443
+}

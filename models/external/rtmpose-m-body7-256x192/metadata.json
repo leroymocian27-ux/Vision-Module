@@ -1,0 +1,31 @@
+{
+  "name": "rtmpose-m-body7-256x192",
+  "source": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip",
+  "project": "RTMPose / RTMlib body7 ONNX SDK",
+  "downloaded_at": "2026-06-27",
+  "framework": "ONNXRuntime-compatible RTMPose",
+  "task": "top-down human pose estimation",
+  "keypoint_schema": "COCO-17 body keypoints",
+  "license_note": "RTMlib and RTMPose code/model family are documented as Apache-2.0 by the project, but deployment should still review pretrained-data provenance.",
+  "onnx_file": "20230831/rtmpose_onnx/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504/end2end.onnx",
+  "sha256": "5C0A4BF67953E6D2AC43CE15E77DC9D5D354AE18430A47D2C5963A7BC5683E3C",
+  "input": {
+    "width": 192,
+    "height": 256
+  },
+  "outputs": [
+    "simcc_x",
+    "simcc_y"
+  ],
+  "recommended_runtime_mapping": {
+    "POSE_PROVIDER": "rtmpose_onnx",
+    "RTMPOSE_ONNX_MODEL_PATH": "models/external/rtmpose-m-body7-256x192/20230831/rtmpose_onnx/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504/end2end.onnx",
+    "RTMPOSE_ONNX_INPUT_WIDTH": "192",
+    "RTMPOSE_ONNX_INPUT_HEIGHT": "256"
+  },
+  "notes": [
+    "Loaded successfully with local onnxruntime.",
+    "Compatible with the project's RTMPoseOnnxEstimator input/output contract.",
+    "Recommended as the realtime-first pose candidate if RTMPose-X 384x288 is too slow."
+  ]
+}

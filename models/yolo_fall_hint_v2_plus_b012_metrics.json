@@ -1,0 +1,66 @@
+{
+  "model_name": "yolo_fall_hint_v2_plus_b012_best",
+  "created_at": "2026-06-29",
+  "base_model": "runs/fall_hint_v2/yolo_fall_hint_v2_first/weights/best.pt",
+  "best_weight": "models/yolo_fall_hint_v2_plus_b012_best.pt",
+  "training_run": "runs/fall_hint_v2/yolo_fall_hint_v2_plus_b012",
+  "dataset": "datasets/fall_hint_v2",
+  "dataset_item_count": 1334,
+  "added_batch": {
+    "batch_id": "batch_012",
+    "reviewed_items_used": 119,
+    "note": "One labeled frame without reviewed metadata was excluded by the dataset builder."
+  },
+  "class_names": {
+    "0": "falling",
+    "1": "fallen",
+    "2": "lying",
+    "3": "sitting",
+    "4": "bending",
+    "5": "kneeling",
+    "6": "standing"
+  },
+  "training": {
+    "epochs": 60,
+    "best_map50_epoch": 46,
+    "best_map50": 0.77112,
+    "best_map50_precision": 0.6852,
+    "best_map50_recall": 0.70822,
+    "best_map5095_epoch": 50,
+    "best_map5095": 0.58102
+  },
+  "validation": {
+    "val": {
+      "images": 207,
+      "instances": 208,
+      "precision": 0.749,
+      "recall": 0.71,
+      "map50": 0.761,
+      "map50_95": 0.579,
+      "falling_recall": 0.7,
+      "fallen_recall": 0.89,
+      "kneeling_recall": 1.0
+    },
+    "test": {
+      "images": 52,
+      "instances": 52,
+      "precision": 0.586,
+      "recall": 0.667,
+      "map50": 0.695,
+      "map50_95": 0.523,
+      "note": "Test split has no fallen or kneeling samples and only one falling sample, so it is not reliable for fall-hint model selection."
+    }
+  },
+  "targeted_batch_012_eval": {
+    "reviewed_images": 119,
+    "gt_kneeling_images": 74,
+    "first_model_kneeling_top_recall": 0.0,
+    "plus_b012_kneeling_top_recall": 1.0,
+    "plus_b012_kneeling_any_recall": 1.0,
+    "plus_b012_gt_kneeling_top_fallen": 0,
+    "plus_b012_gt_kneeling_top_sitting": 0,
+    "plus_b012_gt_kneeling_top_standing": 0,
+    "summary_path": "runs/fall_hint_v2/eval_yolo_fall_hint_v2_plus_b012_targeted_summary.json"
+  },
+  "sha256": "4BAFC88B2EC068921776C8D4D0E4EFD020DFAB29AFD313044ECFB07098CA67A8"
+}

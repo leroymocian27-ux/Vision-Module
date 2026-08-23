@@ -1,0 +1,26 @@
+{
+  "samples": 384,
+  "positive_samples": 51,
+  "negative_samples": 333,
+  "all_window_count": 548,
+  "split_counts": {
+    "train": 384,
+    "val": 74,
+    "test": 90
+  },
+  "subtype_counts": {
+    "lying_down_normal": 161,
+    "sitting": 62,
+    "walking": 111,
+    "standing": 43,
+    "fall": 90,
+    "bending": 35,
+    "squatting": 29,
+    "picking_object": 17
+  },
+  "last_loss": 0.690725,
+  "onnx_validation": {
+    "passed": true,
+    "max_abs_diff": 2.9802322387695312e-08
+  }
+}
