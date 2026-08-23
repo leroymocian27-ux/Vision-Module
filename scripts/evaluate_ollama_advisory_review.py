@@ -96,8 +96,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate local Ollama/Qwen text-only advisory review on synthetic events.")
-    parser.add_argument("--model", default="qwen-vision-cn:latest")
-    parser.add_argument("--fallback-model", default="qwen3.5:9b")
+    parser.add_argument("--model", default="qwen3.5:4b")
+    parser.add_argument("--fallback-model", default="qwen3.5:4b")
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434/api/chat")
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--cases", default=",".join(DEFAULT_CASES))

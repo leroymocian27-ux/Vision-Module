@@ -55,7 +55,7 @@ def run_case(name: str, raw_response: str) -> dict:
     analyzer = PFV2QwenFallAnalyzer(
         analyzer=QwenKeyframeAnalyzer(
             endpoint_url="http://127.0.0.1:11434/api/chat",
-            model_name="qwen-vision-cn:latest",
+            model_name="qwen3.5:4b",
             timeout_seconds=1,
             transport=lambda *_: {"message": {"content": raw_response}},
         ),

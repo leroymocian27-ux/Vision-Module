@@ -29,7 +29,7 @@ def main() -> int:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--camera-id", default="simulation_camera")
     parser.add_argument("--trigger-second", type=float, default=3.0)
-    parser.add_argument("--model", default="qwen-vision-cn:latest")
+    parser.add_argument("--model", default="qwen3.5:4b")
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
 

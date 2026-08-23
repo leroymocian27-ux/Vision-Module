@@ -49,7 +49,7 @@ class QwenKeyframeMultimodalTest(unittest.TestCase):
             self.assertEqual(advisory.image_count, 6)
             self.assertEqual(len(received), 1)
             request = received[0]
-            self.assertEqual(request["model"], "qwen-vision-cn:latest")
+            self.assertEqual(request["model"], "qwen3.5:4b")
             self.assertEqual(len(request["messages"][1]["images"]), 6)
             request_text = json.dumps(request, ensure_ascii=False)
             self.assertIn("所有描述值必须使用简体中文", request_text)

@@ -24,7 +24,7 @@ from app.events.qwen_keyframe import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a localhost-only Qwen keyframe advisory smoke with six synthetic images.")
-    parser.add_argument("--model", default="qwen-vision-cn:latest")
+    parser.add_argument("--model", default="qwen3.5:4b")
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434/api/chat")
     parser.add_argument("--timeout", type=float, default=90.0)
     args = parser.parse_args()

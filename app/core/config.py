@@ -374,7 +374,7 @@ class Settings:
     post_fall_v2_vlm_timeout_seconds: float = _get_float("POST_FALL_V2_VLM_TIMEOUT_SECONDS", 8.0)
     post_fall_v2_qwen_enabled: bool = _get_bool("POST_FALL_V2_QWEN_ENABLED", post_fall_v2_vlm_enabled)
     post_fall_v2_qwen_provider: str = os.getenv("POST_FALL_V2_QWEN_PROVIDER", "dummy").strip().lower()
-    post_fall_v2_qwen_model: str = os.getenv("POST_FALL_V2_QWEN_MODEL", os.getenv("EVENT_QWEN_KEYFRAME_MODEL", "qwen-vision-cn:latest"))
+    post_fall_v2_qwen_model: str = os.getenv("POST_FALL_V2_QWEN_MODEL", os.getenv("EVENT_QWEN_KEYFRAME_MODEL", "qwen3.5:4b"))
     post_fall_v2_qwen_base_url: str = os.getenv(
         "POST_FALL_V2_QWEN_BASE_URL",
         os.getenv("EVENT_QWEN_KEYFRAME_ENDPOINT", "http://127.0.0.1:11434/api/chat"),
@@ -462,10 +462,10 @@ class Settings:
         "EVENT_VLM_OLLAMA_ENDPOINT",
         os.getenv("EVENT_OLLAMA_ENDPOINT", os.getenv("EVENT_OLLAMA_BASE_URL", "http://127.0.0.1:11434/api/chat")),
     )
-    event_vlm_ollama_model: str = os.getenv("EVENT_VLM_OLLAMA_MODEL", os.getenv("EVENT_OLLAMA_MODEL", "qwen-vision-cn:latest"))
+    event_vlm_ollama_model: str = os.getenv("EVENT_VLM_OLLAMA_MODEL", os.getenv("EVENT_OLLAMA_MODEL", "qwen3.5:4b"))
     event_vlm_ollama_fallback_model: str = os.getenv(
         "EVENT_VLM_OLLAMA_FALLBACK_MODEL",
-        os.getenv("EVENT_OLLAMA_COMPARE_MODEL", "qwen3.5:9b"),
+        os.getenv("EVENT_OLLAMA_COMPARE_MODEL", "qwen3.5:4b"),
     )
     event_vlm_ollama_timeout_seconds: float = _get_float(
         "EVENT_VLM_OLLAMA_TIMEOUT_SECONDS",
@@ -488,7 +488,7 @@ class Settings:
         os.getenv("EVENT_VLM_OLLAMA_ENDPOINT", os.getenv("EVENT_OLLAMA_ENDPOINT", "http://127.0.0.1:11434/api/chat")),
     )
     event_qwen_keyframe_model: str = os.getenv(
-        "EVENT_QWEN_KEYFRAME_MODEL", os.getenv("EVENT_VLM_OLLAMA_MODEL", os.getenv("EVENT_OLLAMA_MODEL", "qwen-vision-cn:latest"))
+        "EVENT_QWEN_KEYFRAME_MODEL", os.getenv("EVENT_VLM_OLLAMA_MODEL", os.getenv("EVENT_OLLAMA_MODEL", "qwen3.5:4b"))
     )
     # Backward-compatible attribute names for the first local-Ollama audit.
     event_ollama_base_url: str = event_vlm_ollama_endpoint

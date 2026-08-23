@@ -28,7 +28,7 @@ def main() -> int:
     )
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--camera-id", default="pfv2_replay")
-    parser.add_argument("--model", default="qwen-vision-cn:latest")
+    parser.add_argument("--model", default="qwen3.5:4b")
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434/api/chat")
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--output", type=Path)
