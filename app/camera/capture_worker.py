@@ -32,7 +32,9 @@ class CaptureWorkerStatus:
     last_frame_at: str | None = None
     received_at: str | None = None
     source: str = "unknown"
+    source_protocol: str = "unknown"
     source_generation: int = 1
+    raw_jpeg_available: bool = False
     frame_status: str = "no_frame"
     is_stale: bool = False
     safe_to_interpret_as_no_fall: bool = False
@@ -57,6 +59,8 @@ class CaptureWorkerStatus:
     capture_ipc_dropped_frames: int = 0
     capture_output_width: int | None = None
     capture_output_height: int | None = None
+    mjpeg_content_type: str | None = None
+    mjpeg_parsed_frames: int = 0
     last_error: str | None = None
 
 
@@ -123,9 +127,12 @@ class CaptureWorker:
             status.last_frame_at = packet.captured_at_iso
             status.received_at = packet.received_at_iso
             status.source = packet.source
+            status.source_protocol = packet.source
             status.source_generation = packet.source_generation
+            status.raw_jpeg_available = packet.jpeg_bytes is not None
         else:
             status.source = self.frame_buffer.source
+            status.source_protocol = self.frame_buffer.source
             status.source_generation = self.frame_buffer.source_generation
         thresholds = FreshnessThresholds(
             delayed_ms=self.settings.frame_delayed_threshold_ms,

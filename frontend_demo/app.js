@@ -15,6 +15,16 @@ const FRAME_FALLBACK_REFRESH_MS = 300;
 const FRAME_FALLBACK_RECENT_MS = 2500;
 const VIDEO_PROGRESS_RECENT_MS = 2200;
 const VIDEO_BLACK_LUMA_THRESHOLD = 8;
+const ANNOTATED_OVERLAY_ENABLED = false;
+const WEBRTC_DEFAULT_ICE_SERVERS = [];
+const ALARM_INDICATOR_RESET_MS = 5000;
+const ALARM_INDICATOR_MARGIN_PX = 22;
+const ALARM_INDICATOR_TITLES = {
+  idle: "等待事件",
+  candidate: "疑似跌倒，等待复核",
+  dismissed: "本次事件未触发最终告警",
+  confirmed: "确认跌倒，已触发最终告警",
+};
 
 const state = {
   pc: null,
@@ -22,6 +32,7 @@ const state = {
   ws: null,
   lastResult: null,
   lastStatus: null,
+  lastControlStatus: null,
   lastEvent: null,
   pendingResult: null,
   pendingIceCandidates: [],
@@ -78,11 +89,16 @@ const state = {
     selectedIncidentId: null,
     recentItems: [],
   },
+  alarmIndicator: {
+    currentEventId: null,
+    resetTimer: null,
+    terminalStates: new Map(),
+  },
 };
 window.__VISION_APP_STATE__ = state;
 
 const debugState = window.__VISION_DEBUG__ || {
-  overlayMode: new URLSearchParams(window.location.search).get("overlayMode") || "full",
+  overlayMode: ANNOTATED_OVERLAY_ENABLED ? (new URLSearchParams(window.location.search).get("overlayMode") || "full") : "off",
   showRawJson: new URLSearchParams(window.location.search).get("rawJson") === "1",
   videoSamples: [],
   rtcSamples: [],
@@ -103,6 +119,11 @@ const debugState = window.__VISION_DEBUG__ || {
 window.__VISION_DEBUG__ = debugState;
 
 debugState.setOverlayMode = (mode) => {
+  if (!ANNOTATED_OVERLAY_ENABLED) {
+    debugState.overlayMode = "off";
+    clearOverlayCanvas();
+    return;
+  }
   debugState.overlayMode = mode;
   if (mode === "off") {
     clearOverlayCanvas();
@@ -212,6 +233,14 @@ function wsBase() {
   return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 }
 
+function webrtcIceServers() {
+  const stun = new URLSearchParams(window.location.search).get("stun");
+  if (stun && stun.trim()) {
+    return [{ urls: stun.trim() }];
+  }
+  return WEBRTC_DEFAULT_ICE_SERVERS;
+}
+
 function latestFrameUrl(cameraId) {
   return `${apiBase()}/stream/latest-frame.jpg?camera_id=${encodeURIComponent(cameraId)}&t=${Date.now()}`;
 }
@@ -242,12 +271,24 @@ function isBackendFrameFresh(status, cameraId = currentCameraId()) {
     || (Number.isFinite(frameAgeMs) && frameAgeMs <= FRAME_FALLBACK_RECENT_MS);
 }
 
+function shouldPollFrameFallback() {
+  return state.pc?.connectionState !== "connected" || !isVideoVisiblyHealthy();
+}
+
+function syncFrameFallbackLoop() {
+  if (shouldPollFrameFallback()) {
+    startFrameFallbackLoop();
+  } else {
+    stopFrameFallbackLoop();
+  }
+}
+
 function startFrameFallbackLoop() {
   if (state.frameFallback.timer) {
     return;
   }
-  void refreshFrameFallback();
   state.frameFallback.timer = setInterval(refreshFrameFallback, FRAME_FALLBACK_REFRESH_MS);
+  void refreshFrameFallback();
 }
 
 function stopFrameFallbackLoop() {
@@ -262,6 +303,11 @@ async function refreshFrameFallback() {
   const image = $("frameFallback");
   if (!image || state.frameFallback.loading) {
     updateFrameFallbackVisibility();
+    return;
+  }
+  if (!shouldPollFrameFallback()) {
+    setFrameFallbackVisible(false);
+    stopFrameFallbackLoop();
     return;
   }
   const cameraId = currentCameraId();
@@ -379,6 +425,7 @@ function updateFrameFallbackVisibility(status = state.lastStatus) {
   if (empty) {
     empty.hidden = shouldShowFallback || videoHealthy;
   }
+  syncFrameFallbackLoop();
 }
 
 function maybeAutoConnectFrontend(status = state.lastStatus) {
@@ -517,7 +564,7 @@ async function startStream() {
 
 async function startStreamRequest({ updateUi }) {
   const cameraId = $("cameraId").value.trim() || "camera_01";
-  const rtspUrl = $("rtspUrl").value.trim() || null;
+  const sourceUrl = $("rtspUrl").value.trim() || null;
   const startBtn = $("startBtn");
   if (startBtn) {
     startBtn.disabled = true;
@@ -529,9 +576,10 @@ async function startStreamRequest({ updateUi }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         camera_id: cameraId,
-        rtsp_url: rtspUrl,
-        main_rtsp_url: rtspUrl,
-        analysis_rtsp_url: rtspUrl,
+        source_url: sourceUrl,
+        rtsp_url: sourceUrl,
+        main_rtsp_url: sourceUrl,
+        analysis_rtsp_url: sourceUrl,
       }),
     });
     const payload = await safeJson(response);
@@ -543,6 +591,7 @@ async function startStreamRequest({ updateUi }) {
     }
     state.userEditedRtspUrl = false;
     await refreshStatus();
+    await refreshControlStatus(cameraId);
     return payload;
   } catch (error) {
     if (updateUi) {
@@ -580,9 +629,7 @@ async function connectWebRTC() {
     return;
   }
 
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
+  const pc = new RTCPeerConnection({ iceServers: webrtcIceServers() });
   state.pc = pc;
   state.peerId = null;
   state.pendingIceCandidates = [];
@@ -804,11 +851,15 @@ function connectResults(cameraId) {
     const composedResult = composeOverlayResult(result);
     composedResult.overlay_received_at = Date.now();
     state.lastResult = composedResult;
-    state.pendingResult = composedResult;
+    state.pendingResult = ANNOTATED_OVERLAY_ENABLED ? composedResult : null;
+    if (!ANNOTATED_OVERLAY_ENABLED) {
+      clearOverlayCanvas();
+    }
     $("frameInfo").textContent = `${result.frame_width}x${result.frame_height} #${result.frame_seq}`;
     $("personCount").textContent = `${(result.objects || []).length}`;
     $("latency").textContent = `${result.detector?.latency_ms ?? "-"} ms`;
     updateTargetDetails(composedResult);
+    updateAlarmIndicatorFromResult(composedResult);
     debugState.counters.wsMessages += 1;
     pushLimited(debugState.wsSamples, {
       at: Date.now(),
@@ -1291,6 +1342,7 @@ async function refreshStatus() {
     }
     const rawJsonMs = performance.now() - jsonStartedAt;
     updateStreamState(data);
+    void refreshControlStatus(cameraId);
     updateFrameFallbackVisibility(data);
     maybeAutoConnectFrontend(data);
     updateBackendSource(data);
@@ -1320,7 +1372,7 @@ function syncRtspInputFromStatus(status) {
     return;
   }
   if (!state.userEditedRtspUrl && !input.value.trim()) {
-    input.placeholder = "仅手动输入经批准的摄像头地址";
+    input.placeholder = "HTTP MJPEG 或 RTSP 地址";
   }
 }
 
@@ -1356,7 +1408,9 @@ function updateBackendSource(status) {
   const analysisSource = status.analysis_source || "single";
   const hasConfiguredSource = Boolean(main?.source_url_masked || analysis?.source_url_masked);
   if (hasConfiguredSource) {
-    target.textContent = `受控视频源已连接（显示=${display}，分析=${analysisSource}）`;
+    const protocol = main?.source_protocol || analysis?.source_protocol || "unknown";
+    const rawJpeg = main?.raw_jpeg_available || analysis?.raw_jpeg_available;
+    target.textContent = `受控视频源已连接（协议=${protocol}，显示=${display}，分析=${analysisSource}${rawJpeg ? "，JPEG直出" : ""}）`;
     return;
   }
   target.textContent = "视频源状态未提供连接地址";
@@ -1373,6 +1427,7 @@ function updateStreamState(status) {
   }
 
   const age = camera.frame_age_ms == null ? "-" : `${Math.round(camera.frame_age_ms)}ms`;
+  const protocol = camera.source_protocol || camera.source || "unknown";
   const display = status.display_source_current || status.display_source || "single";
   const suffix = status.display_fallback_active ? " / 显示=分析流" : ` / 显示=${display}`;
   const staleLabel = status.diagnostics?.camera_lost
@@ -1380,10 +1435,280 @@ function updateStreamState(status) {
     : status.diagnostics?.capture_stale
       ? "采集停滞 / 等待新帧"
       : streamStateLabel(camera.stream_state);
-  $("streamState").textContent = `${staleLabel} (${age})${suffix}`;
+  $("streamState").textContent = `${staleLabel} (${age} / ${protocol})${suffix}`;
   maybeReconnectForDisplaySource(status);
   updateFrameFallbackVisibility(status);
   updateRecoveryBanner();
+}
+
+async function refreshControlStatus(cameraId = currentCameraId()) {
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/status?camera_id=${encodeURIComponent(cameraId)}`);
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    state.lastControlStatus = payload;
+    renderControlStatus(payload);
+  } catch (error) {
+    setControlResult("modelControlResult", `状态读取失败：${error}`, "error");
+  }
+}
+
+function renderControlStatus(control) {
+  const test = control?.test || {};
+  const runtime = control?.runtime || {};
+  const streamOn = Boolean(control?.stream_connected);
+  const binaryOn = Boolean(control?.binary_enabled);
+  const qwenOn = Boolean(control?.qwen_enabled);
+  const testRunning = Boolean(test.running);
+  const testState = String(test.state || (testRunning ? "running" : "idle")).toLowerCase();
+  const testActive = testRunning || testState === "draining";
+  setStateText("videoControlState", streamOn ? "ON" : "OFF", streamOn ? "on" : "off");
+  setStateText("binaryControlState", binaryOn ? "ON" : "OFF", binaryOn ? "on" : "off");
+  setStateText("qwenControlState", qwenOn ? "ON" : "OFF", qwenOn ? "on" : "off");
+  setStateText("testControlState", formatTestState(test), testActive ? "running" : "idle");
+  setStateText(
+    "binaryProvider",
+    runtime.binary_provider || "-",
+    runtime.binary_provider_degraded ? "error" : (runtime.binary_provider === "CUDAExecutionProvider" ? "on" : ""),
+  );
+  setText("binarySampleFps", formatFps(runtime.binary_sample_fps ?? runtime.sample_fps));
+  setText("binaryQueue", formatQueueDepth(runtime.queue_depth, runtime.frames_dropped));
+  setText("binaryFrameAge", formatMs(runtime.frame_age_ms));
+  setText("binaryLatency", formatMs(runtime.binary_inference_latency_avg_ms ?? runtime.binary_inference_latency_ms));
+  renderTestMetrics(test, control?.performance || {});
+  if (!binaryOn) {
+    forceIdleAlarmIndicator();
+  }
+
+  const binaryBtn = $("binaryToggleBtn");
+  if (binaryBtn) {
+    binaryBtn.textContent = binaryOn ? "关闭二分类" : "开启二分类";
+    binaryBtn.disabled = !streamOn && !binaryOn;
+  }
+  const qwenBtn = $("qwenToggleBtn");
+  if (qwenBtn) {
+    qwenBtn.textContent = qwenOn ? "关闭千问" : "开启千问";
+    qwenBtn.disabled = (!binaryOn && !qwenOn);
+  }
+  const startTestBtn = $("startTestBtn");
+  const stopTestBtn = $("stopTestBtn");
+  if (startTestBtn) {
+    startTestBtn.disabled = testActive;
+  }
+  if (stopTestBtn) {
+    stopTestBtn.disabled = !testRunning;
+  }
+  setTestInputsDisabled(testActive);
+  if (testRunning) {
+    writeDurationInputs(test.remaining_seconds || 0);
+    setControlResult("testControlResult", `测试中：${formatHms(test.remaining_seconds || 0)}；Session ${test.test_session_id || "-"}`, "pending");
+  } else if (testState === "draining") {
+    setControlResult("testControlResult", `等待千问归档：${test.qwen_unresolved_count || 0} 个事件；Session ${test.test_session_id || "-"}`, "pending");
+  } else if (state.lastControlStatus?.test?.remaining_seconds === 0 && test.test_session_id) {
+    setControlResult("testControlResult", `测试已结束：Session ${test.test_session_id}`, "success");
+  }
+}
+
+function renderTestMetrics(test, runtimePerformance = {}) {
+  const perf = test?.latest_performance || runtimePerformance || {};
+  setText("testSessionId", test?.test_session_id || "-");
+  setText(
+    "testEventCounts",
+    test?.test_session_id
+      ? `FALL ${test.binary_fall_count || 0} / NON ${test.binary_non_fall_count || 0} / 事件 ${test.binary_full_count || 0} / 待复核 ${test.qwen_review_count || 0} / 待归档 ${test.qwen_unresolved_count || 0}`
+      : "-",
+  );
+  setText("testCpuUsage", formatPercent(perf.cpu_percent));
+  setText("testProcessCpuUsage", formatPercent(perf.process_cpu_percent));
+  setText("testGpuUsage", formatPercent(perf.gpu_util_percent));
+  setText("testGpuMemory", formatGpuMemory(perf.gpu_memory_used_mb, perf.gpu_memory_total_mb));
+}
+
+function formatTestState(test) {
+  const stateName = String(test?.state || "").toLowerCase();
+  if (test?.running) {
+    return formatHms(test.remaining_seconds || 0);
+  }
+  if (stateName === "draining") {
+    return "DRAINING";
+  }
+  if (stateName === "completed") {
+    return "COMPLETED";
+  }
+  return "IDLE";
+}
+
+async function toggleBinaryModel() {
+  const control = state.lastControlStatus || {};
+  const enabled = !control.binary_enabled;
+  await postModelToggle("binary", enabled, "binaryToggleBtn", "modelControlResult");
+}
+
+async function toggleQwenModel() {
+  const control = state.lastControlStatus || {};
+  const enabled = !control.qwen_enabled;
+  await postModelToggle("qwen", enabled, "qwenToggleBtn", "modelControlResult");
+}
+
+async function postModelToggle(kind, enabled, buttonId, resultId) {
+  const button = $(buttonId);
+  if (button) {
+    button.disabled = true;
+  }
+  setControlResult(resultId, enabled ? "正在开启..." : "正在关闭...", "pending");
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/${kind}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ camera_id: currentCameraId(), enabled }),
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    state.lastControlStatus = payload;
+    renderControlStatus(payload);
+    setControlResult(resultId, `${kind === "binary" ? "二分类" : "千问"}已${enabled ? "开启" : "关闭"}`, "success");
+  } catch (error) {
+    setControlResult(resultId, `操作失败：${error}`, "error");
+  } finally {
+    await refreshControlStatus();
+  }
+}
+
+async function startTimedTest() {
+  const duration = readDurationInputs();
+  if (duration.totalSeconds <= 0) {
+    setControlResult("testControlResult", "失败：测试时间必须大于 0 秒", "error");
+    return;
+  }
+  setControlResult("testControlResult", "正在开始测试...", "pending");
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/test/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(duration.payload),
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    await refreshControlStatus();
+  } catch (error) {
+    setControlResult("testControlResult", `启动失败：${error}`, "error");
+  }
+}
+
+async function stopTimedTest() {
+  setControlResult("testControlResult", "正在停止测试...", "pending");
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/test/stop`, { method: "POST" });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    renderControlStatus({ ...(state.lastControlStatus || {}), test: payload });
+  } catch (error) {
+    setControlResult("testControlResult", `停止失败：${error}`, "error");
+  } finally {
+    await refreshControlStatus();
+  }
+}
+
+function readDurationInputs() {
+  const hours = clampInteger($("testHours")?.value, 0, 24);
+  const minutes = clampInteger($("testMinutes")?.value, 0, 59);
+  const seconds = clampInteger($("testSeconds")?.value, 0, 59);
+  return {
+    totalSeconds: hours * 3600 + minutes * 60 + seconds,
+    payload: { hours, minutes, seconds },
+  };
+}
+
+function writeDurationInputs(totalSeconds) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if ($("testHours")) $("testHours").value = String(hours);
+  if ($("testMinutes")) $("testMinutes").value = String(minutes);
+  if ($("testSeconds")) $("testSeconds").value = String(seconds);
+}
+
+function setTestInputsDisabled(disabled) {
+  for (const id of ["testHours", "testMinutes", "testSeconds"]) {
+    const input = $(id);
+    if (input) {
+      input.disabled = disabled;
+    }
+  }
+}
+
+function clampInteger(value, min, max) {
+  const numeric = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(numeric)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function setStateText(id, value, stateName) {
+  const element = $(id);
+  if (!element) {
+    return;
+  }
+  element.textContent = value;
+  element.dataset.state = stateName;
+}
+
+function setControlResult(id, message, kind) {
+  const element = $(id);
+  if (!element) {
+    return;
+  }
+  element.textContent = message;
+  element.dataset.state = kind;
+}
+
+function formatHms(totalSeconds) {
+  const safe = Math.max(0, Number(totalSeconds) || 0);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = Math.floor(safe % 60);
+  return [hours, minutes, seconds].map((item) => String(item).padStart(2, "0")).join(":");
+}
+
+function formatMs(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.max(0, Math.round(number))}ms` : "-";
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.max(0, Math.round(number))}%` : "-";
+}
+
+function formatGpuMemory(used, total) {
+  const usedNumber = Number(used);
+  const totalNumber = Number(total);
+  if (!Number.isFinite(usedNumber)) {
+    return "-";
+  }
+  if (!Number.isFinite(totalNumber) || totalNumber <= 0) {
+    return `${Math.round(usedNumber)}MB`;
+  }
+  return `${Math.round(usedNumber)} / ${Math.round(totalNumber)}MB`;
+}
+
+function formatQueueDepth(depth, dropped) {
+  const numericDepth = Number(depth);
+  const numericDropped = Number(dropped);
+  if (!Number.isFinite(numericDepth)) {
+    return "-";
+  }
+  const base = `${Math.max(0, Math.round(numericDepth))}`;
+  return Number.isFinite(numericDropped) && numericDropped > 0 ? `${base} / drop ${Math.round(numericDropped)}` : base;
 }
 
 function maybeReconnectForDisplaySource(status) {
@@ -1530,6 +1855,160 @@ function updateFallPreview(target) {
   $("riskLevel").className = riskClass(risk);
 }
 
+function updateAlarmIndicatorFromResult(result) {
+  const signal = alarmIndicatorSignalFromResult(result);
+  if (!signal) {
+    return;
+  }
+  if (signal.state === "candidate") {
+    setAlarmIndicatorCandidate(signal.eventId);
+    return;
+  }
+  setAlarmIndicatorTerminal(signal.eventId, signal.state);
+}
+
+function alarmIndicatorSignalFromResult(result) {
+  const objects = result?.objects || [];
+  for (const object of objects) {
+    const decision = object?.fall_decision || {};
+    const eventId = normalizedIncidentId(decision.incident_id);
+    if (eventId && decision.event_created === true) {
+      return { state: "candidate", eventId };
+    }
+  }
+
+  const currentEventId = state.alarmIndicator.currentEventId;
+  if (!currentEventId) {
+    return null;
+  }
+  for (const object of objects) {
+    const decision = object?.fall_decision || {};
+    const eventId = normalizedIncidentId(decision.incident_id);
+    if (eventId !== currentEventId) {
+      continue;
+    }
+    if (isFinalAlarmSignal(object)) {
+      return { state: "confirmed", eventId };
+    }
+    if (isFinishedNonAlertSignal(object)) {
+      return { state: "dismissed", eventId };
+    }
+  }
+  return null;
+}
+
+function setAlarmIndicatorCandidate(eventId) {
+  if (!eventId) {
+    return;
+  }
+  clearAlarmIndicatorResetTimer();
+  state.alarmIndicator.currentEventId = eventId;
+  state.alarmIndicator.terminalStates.delete(eventId);
+  renderAlarmIndicator("candidate");
+}
+
+function setAlarmIndicatorTerminal(eventId, terminalState) {
+  if (!eventId || !["dismissed", "confirmed"].includes(terminalState)) {
+    return;
+  }
+  if (state.alarmIndicator.currentEventId !== eventId) {
+    return;
+  }
+  const previousState = state.alarmIndicator.terminalStates.get(eventId);
+  if (previousState === "confirmed" || previousState === terminalState) {
+    return;
+  }
+  clearAlarmIndicatorResetTimer();
+  state.alarmIndicator.terminalStates.set(eventId, terminalState);
+  renderAlarmIndicator(terminalState);
+  state.alarmIndicator.resetTimer = window.setTimeout(() => {
+    if (state.alarmIndicator.currentEventId === eventId) {
+      renderAlarmIndicator("idle");
+    }
+    state.alarmIndicator.resetTimer = null;
+  }, ALARM_INDICATOR_RESET_MS);
+}
+
+function forceIdleAlarmIndicator() {
+  clearAlarmIndicatorResetTimer();
+  state.alarmIndicator.currentEventId = null;
+  state.alarmIndicator.terminalStates.clear();
+  renderAlarmIndicator("idle");
+}
+
+function clearAlarmIndicatorResetTimer() {
+  if (state.alarmIndicator.resetTimer) {
+    window.clearTimeout(state.alarmIndicator.resetTimer);
+    state.alarmIndicator.resetTimer = null;
+  }
+}
+
+function renderAlarmIndicator(indicatorState) {
+  const element = $("alarmIndicator");
+  if (!element) {
+    return;
+  }
+  syncAlarmIndicatorPosition();
+  const nextState = ALARM_INDICATOR_TITLES[indicatorState] ? indicatorState : "idle";
+  const title = ALARM_INDICATOR_TITLES[nextState];
+  element.dataset.state = nextState;
+  element.title = title;
+  element.setAttribute("aria-label", `最终告警测试指示灯：${title}`);
+}
+
+function syncAlarmIndicatorPosition() {
+  const element = $("alarmIndicator");
+  const viewer = document.querySelector(".viewer");
+  if (!element || !viewer) {
+    return;
+  }
+  const viewerRect = viewer.getBoundingClientRect();
+  const visibleBottom = Math.min(viewerRect.bottom, window.innerHeight || document.documentElement.clientHeight || viewerRect.bottom);
+  const visibleTop = Math.max(viewerRect.top, 0);
+  const lampSize = element.offsetWidth || 22;
+  const top = Math.max(visibleTop + ALARM_INDICATOR_MARGIN_PX, visibleBottom - ALARM_INDICATOR_MARGIN_PX - lampSize);
+  const left = viewerRect.left + ALARM_INDICATOR_MARGIN_PX;
+  element.style.setProperty("--alarm-indicator-left", `${Math.round(left)}px`);
+  element.style.setProperty("--alarm-indicator-top", `${Math.round(top)}px`);
+}
+
+function normalizedIncidentId(value) {
+  const text = String(value || "").trim();
+  return text && text !== "-" ? text : null;
+}
+
+function normalizedSafetyOutcome(object) {
+  const decision = object?.fall_decision || {};
+  const alarm = object?.alarm_preview || {};
+  const outcome = (
+    decision.safety_outcome
+    || decision.safety_decision?.outcome
+    || alarm.safety_outcome
+    || ""
+  );
+  return String(outcome).trim().toLowerCase();
+}
+
+function normalizedVlmStatus(object) {
+  const decision = object?.fall_decision || {};
+  return String(decision.vlm_status || object?.vlm_status || "").trim().toLowerCase();
+}
+
+function isFinalAlarmSignal(object) {
+  return normalizedSafetyOutcome(object) === "alert";
+}
+
+function isFinishedNonAlertSignal(object) {
+  const outcome = normalizedSafetyOutcome(object);
+  if (outcome === "alert") {
+    return false;
+  }
+  if (outcome === "dismiss") {
+    return true;
+  }
+  return ["completed", "failed", "timeout", "parse_failed"].includes(normalizedVlmStatus(object));
+}
+
 function fallStateClass(target) {
   return riskClass(displayRiskForFallState(target?.fall_decision?.fall_state, target?.alarm_preview?.confirmed, target?.alarm_preview?.risk_level || target?.fall_decision?.risk_level));
 }
@@ -1582,6 +2061,10 @@ function attachVideoFrameLoop() {
     return;
   }
   stopOverlayLoop();
+  if (!ANNOTATED_OVERLAY_ENABLED) {
+    clearOverlayCanvas();
+    return;
+  }
   if (typeof video.requestVideoFrameCallback !== "function") {
     startOverlayFallbackLoop(video);
     return;
@@ -1611,6 +2094,10 @@ function stopOverlayLoop() {
 }
 
 function startOverlayFallbackLoop(video) {
+  if (!ANNOTATED_OVERLAY_ENABLED) {
+    clearOverlayCanvas();
+    return;
+  }
   if (state.overlayFallbackTimer) {
     return;
   }
@@ -2921,28 +3408,19 @@ async function refreshDeviceDiscoveryStatus() {
 
 async function rescanDevices() {
   return runDeviceConnectionAction({
-    endpoint: "/device-discovery/rescan",
-    pendingText: "正在重新搜索主系统和摄像头...",
-    successPrefix: "搜索完成",
+    endpoint: "/device-discovery/pair-main-system",
+    pendingText: "正在搜索并配对主系统...",
+    successPrefix: "主系统配对完成",
     activeButtonId: "rescanDevicesBtn",
   });
 }
 
 async function autoConnectDevices() {
   return runDeviceConnectionAction({
-    endpoint: "/device-discovery/connect-all",
-    pendingText: "正在自动连接主系统和摄像头...",
-    successPrefix: "一键连接完成",
+    endpoint: "/device-discovery/pair-main-system",
+    pendingText: "正在自动发现主系统并完成告警端口配对...",
+    successPrefix: "一键配对完成",
     activeButtonId: "autoConnectDevicesBtn",
-  });
-}
-
-async function connectMainSystem() {
-  return runDeviceConnectionAction({
-    endpoint: "/device-discovery/connect-main-system",
-    pendingText: "正在连接主系统...",
-    successPrefix: "主系统连接完成",
-    activeButtonId: "connectMainSystemBtn",
   });
 }
 
@@ -2980,7 +3458,7 @@ async function runDeviceConnectionAction({ endpoint, pendingText, successPrefix,
 }
 
 function setDiscoveryButtonsDisabled(disabled) {
-  for (const id of ["rescanDevicesBtn", "autoConnectDevicesBtn", "connectMainSystemBtn"]) {
+  for (const id of ["rescanDevicesBtn", "autoConnectDevicesBtn"]) {
     const button = $(id);
     if (button) {
       button.disabled = disabled;
@@ -2990,21 +3468,24 @@ function setDiscoveryButtonsDisabled(disabled) {
 
 function summarizeDeviceConnectionPayload(prefix, payload) {
   const mainIp = payload?.main_system?.ip || "-";
-  const cameraIp = payload?.camera?.ip || "-";
   const mainStatus = discoveryStatusLabel(payload?.main_system?.status);
-  const cameraStatus = discoveryStatusLabel(payload?.camera?.status);
-  const mode = payload?.applied?.mode || "all";
-  if (mode === "main_system") {
-    return `${prefix}：主系统 ${mainIp}（${mainStatus}）`;
+  const alertEndpoint = payload?.applied?.alert_endpoint || payload?.alert_pairing?.endpoint || "-";
+  const deliveryLabel = payload?.applied?.alert_enabled ? "已启用真实告警" : "未启用真实告警";
+  if (mainStatus === "已连接") {
+    return `${prefix}：主系统 ${mainIp}（${mainStatus}），${deliveryLabel}，端口 ${alertEndpoint}`;
   }
-  return `${prefix}：主系统 ${mainIp}（${mainStatus}），摄像头 ${cameraIp}（${cameraStatus}）`;
+  return `${prefix}：主系统 ${mainIp}（${mainStatus}）`;
 }
 
 function renderDeviceDiscoveryStatus(payload) {
   setText("mainSystemDiscoveryState", discoveryStatusLabel(payload?.main_system?.status));
   setText("mainSystemDiscoveryIp", payload?.main_system?.ip || "-");
-  setText("cameraDiscoveryState", discoveryStatusLabel(payload?.camera?.status));
-  setText("cameraDiscoveryIp", payload?.camera?.ip || "-");
+  setText("mainSystemDiscoveryPort", payload?.main_system?.port || "-");
+  const alertPath = payload?.applied?.alert_path || payload?.main_system?.fall_event_path || payload?.alert_pairing?.path || "-";
+  setText("mainSystemDiscoveryPath", alertPath);
+  const alertEnabled = payload?.applied?.alert_enabled ?? payload?.alert_pairing?.enabled;
+  const alertDryRun = payload?.applied?.alert_dry_run ?? payload?.alert_pairing?.dry_run;
+  setText("mainSystemDeliveryState", formatAlertPairingState(alertEnabled, alertDryRun));
   setText("discoverySubnet", payload?.local_network?.subnet || "-");
   setText("discoveryLastScan", formatDiscoveryTime(payload?.discovery?.last_scan_at));
   const resultBox = $("discoveryResult");
@@ -3026,6 +3507,19 @@ function discoveryStatusLabel(value) {
     unknown: "未知",
   };
   return labels[value] || value || "-";
+}
+
+function formatAlertPairingState(enabled, dryRun) {
+  if (enabled === true && dryRun === false) {
+    return "真实投递";
+  }
+  if (enabled === true && dryRun === true) {
+    return "演练模式";
+  }
+  if (enabled === false) {
+    return "未配对";
+  }
+  return "-";
 }
 
 function formatDiscoveryTime(value) {
@@ -3095,16 +3589,20 @@ function startEventReviewPolling() {
 
 $("startBtn").addEventListener("click", startStream);
 $("connectBtn").addEventListener("click", connectWebRTC);
+$("binaryToggleBtn")?.addEventListener("click", toggleBinaryModel);
+$("qwenToggleBtn")?.addEventListener("click", toggleQwenModel);
+$("startTestBtn")?.addEventListener("click", startTimedTest);
+$("stopTestBtn")?.addEventListener("click", stopTimedTest);
 $("cameraId")?.addEventListener("change", () => {
   state.autoFrontendConnectAttempted = false;
   state.frameFallback.lastOkAt = null;
   setFrameFallbackVisible(false);
   void refreshStatus();
+  void refreshControlStatus();
   void refreshFrameFallback();
 });
 $("rescanDevicesBtn")?.addEventListener("click", rescanDevices);
 $("autoConnectDevicesBtn")?.addEventListener("click", autoConnectDevices);
-$("connectMainSystemBtn")?.addEventListener("click", connectMainSystem);
 $("eventShowLatestBtn")?.addEventListener("click", () => {
   state.eventReview.selectedIncidentId = null;
   void refreshLatestEvent(currentCameraId(), { force: true });
@@ -3121,13 +3619,15 @@ window.addEventListener("beforeunload", () => {
   closeConnections();
 });
 window.addEventListener("resize", () => {
+  syncAlarmIndicatorPosition();
   const video = $("video");
-  if (state.lastResult && video && !isResultExpired(state.lastResult)) {
+  if (ANNOTATED_OVERLAY_ENABLED && state.lastResult && video && !isResultExpired(state.lastResult)) {
     drawOverlay(video, state.lastResult);
   } else if (isResultExpired(state.lastResult)) {
     expireOverlayResult();
   }
 });
+window.addEventListener("scroll", syncAlarmIndicatorPosition, { passive: true });
 window.addEventListener("error", (event) => pushDebugError("error", event));
 window.addEventListener("unhandledrejection", (event) => pushDebugError("unhandledrejection", event));
 if ("PerformanceObserver" in window) {
@@ -3148,9 +3648,12 @@ if ("PerformanceObserver" in window) {
   }
 }
 setInterval(refreshStatus, 2000);
+setInterval(refreshControlStatus, 1000);
 setInterval(sampleVideoQuality, 1000);
 setInterval(sampleRtcStats, 1000);
 startFrameFallbackLoop();
+syncAlarmIndicatorPosition();
 refreshStatus();
+refreshControlStatus();
 refreshDeviceDiscoveryStatus();
 startEventReviewPolling();

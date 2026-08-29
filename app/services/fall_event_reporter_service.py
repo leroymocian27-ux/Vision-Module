@@ -143,6 +143,7 @@ class FallEventReporterService:
             payload = self._build_payload(
                 result,
                 obj,
+                incident_id=self._preferred_incident_id(obj),
                 incident_reuse_debug=self._default_incident_reuse_debug(result, obj),
             )
             self._record_active_alert(result.camera_id, key, payload)
@@ -263,17 +264,28 @@ class FallEventReporterService:
         with self._lock:
             return self._dry_run
 
-    def update_endpoint(self, *, base_url: str, path: str, enabled: bool = True) -> dict[str, Any]:
+    def update_endpoint(
+        self,
+        *,
+        base_url: str,
+        path: str,
+        enabled: bool = True,
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
         normalized_base = base_url.rstrip("/")
         normalized_path = path.strip() or "/video-bridge/fall-events"
         if not normalized_path.startswith("/"):
             normalized_path = f"/{normalized_path}"
         with self._lock:
             self._enabled = enabled
+            if dry_run is not None:
+                self._dry_run = bool(dry_run)
             self._endpoint_base_url = normalized_base
             self._endpoint_path = normalized_path
             endpoint = f"{self._endpoint_base_url}{self._endpoint_path}"
         logger.info("fall_event_reporter_endpoint_updated enabled=%s endpoint=%s", enabled, endpoint)
+        if enabled:
+            self.start()
         return self.status()
 
     def endpoint_url(self) -> str:
@@ -457,7 +469,7 @@ class FallEventReporterService:
                 continue
 
             fall_state = str(incident.get("fall_state") or "").lower()
-            if fall_state not in {"fallen_candidate", "fallen_confirmed", "confirmed_fall", "cooldown"}:
+            if fall_state not in {"fallen_candidate", "fallen_confirmed", "confirmed_fall", "suspected_post_fall", "cooldown"}:
                 continue
 
             previous_bboxes = self._incident_candidate_bboxes(incident)
@@ -516,6 +528,11 @@ class FallEventReporterService:
     def _reporter_confirm_guard_reason(self, obj: DetectedObject) -> str | None:
         fall_decision = obj.fall_decision or {}
         alarm_preview = obj.alarm_preview or {}
+        if str(fall_decision.get("pipeline") or "").strip().lower() == "post_fall_v2":
+            if str(fall_decision.get("decision_authority") or "").strip().lower() != "event_state_machine":
+                return "post_fall_v2_event_state_machine_required"
+            if str(fall_decision.get("safety_outcome") or "").strip().lower() != "alert":
+                return "post_fall_v2_safety_outcome_not_alert"
         temporal = obj.temporal or {}
         field_debug = (
             fall_decision.get("field_rule_debug")
@@ -956,6 +973,21 @@ class FallEventReporterService:
             snapshot_url, snapshot_path = self._save_snapshot(result.camera_id, track_id, timestamp_slug)
         severity = "L3" if risk in {"high", "critical"} or fall_prob >= 0.82 else "L2"
         source = str(temporal.get("source") or temporal.get("model_source") or "")
+        qwen_review = temporal.get("qwen") if isinstance(temporal.get("qwen"), dict) else {}
+        summary_zh = str(
+            fall_decision.get("vlm_summary")
+            or alarm_preview.get("summary")
+            or qwen_review.get("summary")
+            or ""
+        ).strip()
+        suspected_post_fall = str(fall_decision.get("safety_path") or "").strip().lower() == "post_fall_abnormality"
+        event_type = "fall_suspected" if suspected_post_fall else "fall_confirmed"
+        event_state = "suspected_post_fall" if suspected_post_fall else "confirmed_fall"
+        description_zh = summary_zh or (
+            "人员持续处于异常低姿态且没有明确恢复或主动行为证据，请立即查看。"
+            if suspected_post_fall
+            else "事件状态机结合转场证据确认画面中存在真实跌倒风险。"
+        )
         scores = {
             "temporal": fall_prob,
             "mock": temporal.get("mock_fall_probability"),
@@ -966,8 +998,8 @@ class FallEventReporterService:
             "camera_id": result.camera_id,
             "stream_name": "primary",
             "source": "vision_service",
-            "event_type": "fall_confirmed",
-            "state": "confirmed_fall",
+            "event_type": event_type,
+            "state": event_state,
             "status": str(fall_decision.get("fall_state") or "fallen_confirmed"),
             "service_state": "running",
             "severity": severity,
@@ -976,6 +1008,9 @@ class FallEventReporterService:
             "fall_detected": True,
             "fall_prob": fall_prob,
             "fall_score": fall_prob,
+            "description_zh": description_zh,
+            "summary_zh": summary_zh or description_zh,
+            "qwen_review": qwen_review,
             "track_id": track_id,
             "incident_id": resolved_incident_id,
             "bbox": [float(value) for value in obj.bbox],
@@ -985,7 +1020,7 @@ class FallEventReporterService:
             "scores": {key: value for key, value in scores.items() if value is not None},
             "injury": {
                 "level": "I3" if severity == "L3" else "I2",
-                "reason": "vision_service_fallen_confirmed",
+                "reason": "vision_service_suspected_post_fall" if suspected_post_fall else "vision_service_fallen_confirmed",
                 "advice": "Please inspect the live camera view immediately and confirm the elder's condition.",
             },
             "metadata": {
@@ -993,20 +1028,23 @@ class FallEventReporterService:
                     "incident_id": resolved_incident_id,
                     "camera_id": result.camera_id,
                     "stream_name": "primary",
-                    "event_type": "fall_confirmed",
-                    "state": "confirmed_fall",
+                    "event_type": event_type,
+                    "state": event_state,
                     "status": str(fall_decision.get("fall_state") or "fallen_confirmed"),
                     "severity": severity,
                     "risk": risk,
                     "risk_level": risk,
                     "fall_score": fall_prob,
                     "fall_prob": fall_prob,
+                    "description_zh": description_zh,
+                    "summary_zh": summary_zh or description_zh,
+                    "qwen_review": qwen_review,
                     "track_id": track_id,
                     "snapshot_url": snapshot_url,
                     "snapshot_path": snapshot_path,
                     "injury": {
                         "level": "I3" if severity == "L3" else "I2",
-                        "reason": "vision_service_fallen_confirmed",
+                        "reason": "vision_service_suspected_post_fall" if suspected_post_fall else "vision_service_fallen_confirmed",
                         "advice": "Please inspect the live camera view immediately and confirm the elder's condition.",
                     },
                     "multimodal_review": {
@@ -1107,6 +1145,18 @@ class FallEventReporterService:
     def _is_confirmed_fall(obj: DetectedObject) -> bool:
         fall_decision = obj.fall_decision or {}
         alarm_preview = obj.alarm_preview or {}
+        if str(fall_decision.get("pipeline") or "").strip().lower() == "post_fall_v2":
+            return (
+                str(fall_decision.get("decision_authority") or "").strip().lower() == "event_state_machine"
+                and str(fall_decision.get("safety_outcome") or "").strip().lower() == "alert"
+                and str(fall_decision.get("fall_verdict") or "").strip().lower() == "confirmed_fall"
+                and _post_fall_high_risk_gate(fall_decision.get("high_risk_fall"))
+            )
+        if (
+            str(fall_decision.get("decision_authority") or "").strip().lower() == "event_state_machine"
+            and str(fall_decision.get("safety_outcome") or "").strip().lower() == "alert"
+        ):
+            return True
         fall_state = str(fall_decision.get("fall_state") or fall_decision.get("state") or "").lower()
         if fall_state in {"fallen_confirmed", "confirmed_fall"}:
             return True
@@ -1151,12 +1201,23 @@ class FallEventReporterService:
 
     @staticmethod
     def _cooldown_key(result: VisionResult, obj: DetectedObject) -> str:
+        fall_decision = obj.fall_decision or {}
+        confirm_source = str(fall_decision.get("confirm_source") or "").strip().lower()
+        incident_id = str(fall_decision.get("incident_id") or "").strip()
+        if confirm_source.startswith("event_state_") and incident_id:
+            return f"{result.camera_id}:safety:{incident_id}"
         return FallEventReporterService._incident_identity_key(
             result.camera_id,
             obj,
             result.frame_width,
             result.frame_height,
         )
+
+    @staticmethod
+    def _preferred_incident_id(obj: DetectedObject) -> str | None:
+        fall_decision = obj.fall_decision or {}
+        incident_id = str(fall_decision.get("incident_id") or "").strip()
+        return incident_id or None
 
     @staticmethod
     def _incident_identity_key(camera_id: str, obj: DetectedObject, frame_width: int, frame_height: int) -> str:
@@ -1194,3 +1255,13 @@ class FallEventReporterService:
     def _safe_slug(value: Any) -> str:
         cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "unknown")).strip("._")
         return cleaned or "unknown"
+
+
+def _post_fall_high_risk_gate(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip() == "1"
+    return False

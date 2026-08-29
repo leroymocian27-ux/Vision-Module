@@ -15,7 +15,9 @@ class CameraStatus(BaseModel):
     last_frame_at: str | None = None
     received_at: str | None = None
     source: str = "unknown"
+    source_protocol: str = "unknown"
     source_generation: int = 0
+    raw_jpeg_available: bool = False
     frame_status: str = "no_frame"
     is_stale: bool = False
     safe_to_interpret_as_no_fall: bool = False
@@ -41,6 +43,8 @@ class CameraStatus(BaseModel):
     capture_ipc_dropped_frames: int = 0
     capture_output_width: int | None = None
     capture_output_height: int | None = None
+    mjpeg_content_type: str | None = None
+    mjpeg_parsed_frames: int = 0
     last_error: str | None = None
 
 
@@ -68,6 +72,7 @@ class DetectionStatus(BaseModel):
 class StreamingStatus(BaseModel):
     webrtc_clients: int = 0
     ws_clients: int = 0
+    webrtc_target_fps: int | None = None
 
 
 class TrackingStatus(BaseModel):
@@ -263,6 +268,8 @@ class StreamRuntimeAlias(BaseModel):
     frame_width: int | None = None
     frame_height: int | None = None
     capture_fps: float = 0.0
+    source_protocol: str = "unknown"
+    raw_jpeg_available: bool = False
 
 
 class DiagnosticsStatus(BaseModel):

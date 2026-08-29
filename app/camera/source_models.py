@@ -22,6 +22,20 @@ def is_rtsp_source(source_url: str | None) -> bool:
     return lowered.startswith("rtsp://") or lowered.startswith("rtsps://")
 
 
+def is_mjpeg_source(source_url: str | None) -> bool:
+    if not source_url:
+        return False
+    lowered = source_url.lower()
+    if not lowered.startswith(("http://", "https://")):
+        return False
+    return (
+        "mjpg" in lowered
+        or "mjpeg" in lowered
+        or lowered.endswith(".jpg")
+        or lowered.endswith(".jpeg")
+    )
+
+
 def is_local_file_source(source_url: str | None) -> bool:
     if not source_url or is_mock_source(source_url):
         return False

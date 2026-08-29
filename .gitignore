@@ -49,5 +49,8 @@ build/
 
 .idea/
 .vscode/
+.local-tools/
+auto.crt
+auto.key
 Thumbs.db
 Desktop.ini

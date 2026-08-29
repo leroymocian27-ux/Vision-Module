@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 from app.camera.capture_worker import CaptureWorker, CaptureWorkerStatus
 from app.camera.frame_buffer import FrameBuffer, FramePacket
-from app.camera.source_models import CameraSourceConfig, is_local_file_source, is_mock_source, is_rtsp_source
+from app.camera.mjpeg_stream_worker import MJPEGStreamWorker
+from app.camera.source_models import CameraSourceConfig, is_local_file_source, is_mjpeg_source, is_mock_source, is_rtsp_source
 from app.camera.subprocess_capture_worker import SubprocessCaptureWorker
 from app.core.config import Settings
 
@@ -15,7 +16,7 @@ from app.core.config import Settings
 class CameraRuntime:
     config: CameraSourceConfig
     frame_buffer: FrameBuffer
-    worker: CaptureWorker | SubprocessCaptureWorker
+    worker: CaptureWorker | SubprocessCaptureWorker | MJPEGStreamWorker
 
 
 class CameraSourceManager:
@@ -111,7 +112,9 @@ class CameraSourceManager:
         self,
         config: CameraSourceConfig,
         buffer: FrameBuffer,
-    ) -> CaptureWorker | SubprocessCaptureWorker:
+    ) -> CaptureWorker | SubprocessCaptureWorker | MJPEGStreamWorker:
+        if is_mjpeg_source(config.source_url):
+            return MJPEGStreamWorker(config, buffer, self.settings, self._frame_observer)
         if is_local_file_source(config.source_url):
             return CaptureWorker(config, buffer, self.settings, self._frame_observer)
         if (
@@ -127,6 +130,8 @@ def _source_kind(source_url: str | None) -> str:
         return "mock"
     if is_rtsp_source(source_url):
         return "rtsp"
+    if is_mjpeg_source(source_url):
+        return "mjpeg"
     if is_local_file_source(source_url):
         return "file"
     return "unknown"

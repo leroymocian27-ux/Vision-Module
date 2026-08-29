@@ -87,9 +87,12 @@ class Settings:
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     runtime_profile: str = os.getenv("VISION_SERVICE_RUNTIME_PROFILE", "default")
     pipeline_mode: str = os.getenv("PIPELINE_MODE", "legacy").strip().lower()
+    auto_start_stream: bool = _get_bool("AUTO_START_STREAM", False)
 
     default_camera_id: str = os.getenv("DEFAULT_CAMERA_ID", "camera_01")
     default_rtsp_url: str | None = os.getenv("DEFAULT_RTSP_URL") or None
+    video_source_mode: str = os.getenv("VIDEO_SOURCE_MODE", "auto").strip().lower()
+    go2_mjpeg_url: str | None = os.getenv("GO2_MJPEG_URL") or None
     mock_camera_enabled: bool = _get_bool("MOCK_CAMERA_ENABLED", True)
     mock_camera_width: int = _get_int("MOCK_CAMERA_WIDTH", 1280)
     mock_camera_height: int = _get_int("MOCK_CAMERA_HEIGHT", 720)
@@ -129,6 +132,13 @@ class Settings:
     reconnect_initial_delay_sec: float = _get_float("RECONNECT_INITIAL_DELAY_SEC", 1.0)
     reconnect_max_delay_sec: float = _get_float("RECONNECT_MAX_DELAY_SEC", 10.0)
     reconnect_backoff_schedule_sec: str = os.getenv("RECONNECT_BACKOFF_SCHEDULE_SEC", "1,2,5,10,30")
+    mjpeg_connect_timeout_sec: float = _get_float("MJPEG_CONNECT_TIMEOUT_SEC", 3.0)
+    mjpeg_read_timeout_sec: float = _get_float("MJPEG_READ_TIMEOUT_SEC", 10.0)
+    mjpeg_reconnect_initial_sec: float = _get_float("MJPEG_RECONNECT_INITIAL_SEC", 0.5)
+    mjpeg_reconnect_max_sec: float = _get_float("MJPEG_RECONNECT_MAX_SEC", 5.0)
+    mjpeg_stale_frame_ms: int = _get_int("MJPEG_STALE_FRAME_MS", 1500)
+    mjpeg_chunk_bytes: int = _get_int("MJPEG_CHUNK_BYTES", 8192)
+    mjpeg_max_buffer_bytes: int = _get_int("MJPEG_MAX_BUFFER_BYTES", 8388608)
 
     detection_enabled: bool = _get_bool("DETECTION_ENABLED", True)
     yolo_model_path: str = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
@@ -348,6 +358,7 @@ class Settings:
         "e9871cdb4687055fb5d934dd994c2ad883adac0c2acab375c240f8e005ee04cc",
     )
     post_fall_v2_input_policy: str = os.getenv("POST_FALL_V2_INPUT_POLICY", "FULL_FRAME_TRAIN_MATCHED")
+    post_fall_v2_input_mode: str = os.getenv("POST_FALL_V2_INPUT_MODE", "full_frame").strip().lower()
     post_fall_v2_shadow_sample_fps: float = _get_float("POST_FALL_V2_SHADOW_SAMPLE_FPS", 2.0)
     post_fall_v2_shadow_max_frame_age_ms: int = _get_int("POST_FALL_V2_SHADOW_MAX_FRAME_AGE_MS", 1000)
     post_fall_v2_shadow_queue_size: int = _get_int("POST_FALL_V2_SHADOW_QUEUE_SIZE", 2)
@@ -360,15 +371,26 @@ class Settings:
         "POST_FALL_V2_BINARY_THRESHOLD",
         _get_float("POST_FALL_V2_BINARY_CANDIDATE_THRESHOLD", 0.3979087471961975),
     )
-    post_fall_v2_sample_fps: float = _get_float("POST_FALL_V2_SAMPLE_FPS", 5.0)
+    post_fall_v2_sample_fps: float = _get_float("POST_FALL_V2_SAMPLE_FPS", 3.0)
     post_fall_v2_max_frame_age_ms: int = _get_int("POST_FALL_V2_MAX_FRAME_AGE_MS", 1000)
-    post_fall_v2_queue_size: int = _get_int("POST_FALL_V2_QUEUE_SIZE", 2)
+    post_fall_v2_queue_size: int = _get_int("POST_FALL_V2_QUEUE_SIZE", 1)
+    follow_target_enabled: bool = _get_bool("FOLLOW_TARGET_ENABLED", False)
+    follow_target_udp_host: str = os.getenv("FOLLOW_TARGET_UDP_HOST", "0.0.0.0")
+    follow_target_udp_port: int = _get_int("FOLLOW_TARGET_UDP_PORT", 8766)
+    follow_target_fresh_ms: int = _get_int("FOLLOW_TARGET_FRESH_MS", 300)
+    follow_target_grace_ms: int = _get_int("FOLLOW_TARGET_GRACE_MS", 700)
+    follow_target_camera_hfov_deg: float = _get_float("FOLLOW_TARGET_CAMERA_HFOV_DEG", 90.0)
+    follow_target_camera_yaw_offset_deg: float = _get_float("FOLLOW_TARGET_CAMERA_YAW_OFFSET_DEG", 0.0)
+    follow_target_roi_width_ratio: float = _get_float("FOLLOW_TARGET_ROI_WIDTH_RATIO", 0.50)
+    follow_target_grace_roi_width_ratio: float = _get_float("FOLLOW_TARGET_GRACE_ROI_WIDTH_RATIO", 0.70)
+    follow_target_calibration_log_enabled: bool = _get_bool("FOLLOW_TARGET_CALIBRATION_LOG_ENABLED", False)
     post_fall_v2_window_size: int = _get_int("POST_FALL_V2_WINDOW_SIZE", 8)
     post_fall_v2_min_positive_frames: int = _get_int("POST_FALL_V2_MIN_POSITIVE_FRAMES", 4)
     post_fall_v2_min_consecutive_frames: int = _get_int("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES", 3)
     post_fall_v2_candidate_min_ms: int = _get_int("POST_FALL_V2_CANDIDATE_MIN_MS", 800)
     post_fall_v2_recovery_min_ms: int = _get_int("POST_FALL_V2_RECOVERY_MIN_MS", 1500)
     post_fall_v2_cooldown_ms: int = _get_int("POST_FALL_V2_COOLDOWN_MS", 3000)
+    post_fall_v2_post_fall_alert_min_ms: int = _get_int("POST_FALL_V2_POST_FALL_ALERT_MIN_MS", 10000)
     post_fall_v2_event_buffer_seconds: float = _get_float("POST_FALL_V2_EVENT_BUFFER_SECONDS", 8.0)
     post_fall_v2_vlm_enabled: bool = _get_bool("POST_FALL_V2_VLM_ENABLED", False)
     post_fall_v2_vlm_timeout_seconds: float = _get_float("POST_FALL_V2_VLM_TIMEOUT_SECONDS", 8.0)
@@ -383,11 +405,22 @@ class Settings:
         "POST_FALL_V2_QWEN_TIMEOUT_SECONDS",
         _get_float("EVENT_QWEN_KEYFRAME_TIMEOUT_SECONDS", 90.0),
     )
-    post_fall_v2_qwen_max_images: int = _get_int("POST_FALL_V2_QWEN_MAX_IMAGES", 6)
+    post_fall_v2_qwen_max_images: int = _get_int("POST_FALL_V2_QWEN_MAX_IMAGES", 3)
     post_fall_v2_qwen_max_image_bytes: int = _get_int("POST_FALL_V2_QWEN_MAX_IMAGE_BYTES", 5242880)
     post_fall_v2_qwen_image_max_edge: int = _get_int("POST_FALL_V2_QWEN_IMAGE_MAX_EDGE", 1280)
     post_fall_v2_qwen_jpeg_quality: int = _get_int("POST_FALL_V2_QWEN_JPEG_QUALITY", 85)
     post_fall_v2_qwen_queue_capacity: int = _get_int("POST_FALL_V2_QWEN_QUEUE_CAPACITY", 2)
+    post_fall_v2_qwen_num_ctx: int = _get_int("POST_FALL_V2_QWEN_NUM_CTX", 8192)
+    post_fall_v2_qwen_temperature: float = _get_float("POST_FALL_V2_QWEN_TEMPERATURE", 0.1)
+    post_fall_v2_qwen_context_retry_enabled: bool = _get_bool("POST_FALL_V2_QWEN_CONTEXT_RETRY_ENABLED", True)
+    post_fall_v2_evidence_export_enabled: bool = _get_bool("POST_FALL_V2_EVIDENCE_EXPORT_ENABLED", False)
+    post_fall_v2_binary_evidence_dir: str = os.getenv("POST_FALL_V2_BINARY_EVIDENCE_DIR", "")
+    post_fall_v2_qwen_evidence_dir: str = os.getenv("POST_FALL_V2_QWEN_EVIDENCE_DIR", "")
+    test_event_root: str = os.getenv(
+        "TEST_EVENT_ROOT",
+        str(Path(__file__).resolve().parents[2].parent / "event"),
+    )
+    test_drain_timeout_seconds: float = _get_float("TEST_DRAIN_TIMEOUT_SECONDS", 120.0)
     post_fall_v2_keyframe_post_collection_enabled: bool = _get_bool(
         "POST_FALL_V2_KEYFRAME_POST_COLLECTION_ENABLED",
         post_fall_v2_qwen_enabled and post_fall_v2_qwen_provider == "qwen_keyframe",
@@ -395,13 +428,15 @@ class Settings:
     post_fall_v2_keyframe_tolerance_ms: int = _get_int("POST_FALL_V2_KEYFRAME_TOLERANCE_MS", 750)
     post_fall_v2_keyframe_collection_timeout_seconds: float = _get_float(
         "POST_FALL_V2_KEYFRAME_COLLECTION_TIMEOUT_SECONDS",
-        5.0,
+        3.5,
     )
     post_fall_v2_aux_person_detection_enabled: bool = _get_bool("POST_FALL_V2_AUX_PERSON_DETECTION_ENABLED", False)
     post_fall_v2_binary_onnx_providers: str = os.getenv(
         "POST_FALL_V2_BINARY_ONNX_PROVIDERS",
-        "CPUExecutionProvider",
+        "CUDAExecutionProvider,CPUExecutionProvider",
     )
+    post_fall_v2_binary_warmup_runs: int = _get_int("POST_FALL_V2_BINARY_WARMUP_RUNS", 3)
+    post_fall_v2_binary_preload: bool = _get_bool("POST_FALL_V2_BINARY_PRELOAD", True)
     post_fall_v2_shadow_save_results: bool = _get_bool("POST_FALL_V2_SHADOW_SAVE_RESULTS", True)
     post_fall_v2_shadow_output_dir: str = os.getenv(
         "POST_FALL_V2_SHADOW_OUTPUT_DIR",
@@ -421,7 +456,7 @@ class Settings:
         "WEBRTC_STUN_SERVER",
         "stun:stun.l.google.com:19302",
     )
-    webrtc_video_fps: int = _get_int("WEBRTC_VIDEO_FPS", 25)
+    webrtc_video_fps: int = _get_int("WEBRTC_VIDEO_FPS", 15)
 
     main_system_alert_enabled: bool = _get_bool("MAIN_SYSTEM_ALERT_ENABLED", False)
     main_system_report_dry_run: bool = _get_bool("MAIN_SYSTEM_REPORT_DRY_RUN", False)
@@ -579,10 +614,26 @@ class Settings:
             raise ValueError("EVENT_DELIVERY_MODE must be dry_run or post")
         if self.event_delivery_backend not in {"memory", "sqlite"}:
             raise ValueError("EVENT_DELIVERY_BACKEND must be memory or sqlite")
+        if self.video_source_mode not in {"auto", "mjpeg", "rtsp", "mock"}:
+            raise ValueError("VIDEO_SOURCE_MODE must be auto, mjpeg, rtsp, or mock")
+        if self.mjpeg_connect_timeout_sec <= 0:
+            raise ValueError("MJPEG_CONNECT_TIMEOUT_SEC must be positive")
+        if self.mjpeg_read_timeout_sec <= 0:
+            raise ValueError("MJPEG_READ_TIMEOUT_SEC must be positive")
+        if self.mjpeg_reconnect_initial_sec <= 0 or self.mjpeg_reconnect_max_sec <= 0:
+            raise ValueError("MJPEG reconnect delays must be positive")
+        if self.mjpeg_stale_frame_ms <= 0:
+            raise ValueError("MJPEG_STALE_FRAME_MS must be positive")
+        if self.mjpeg_chunk_bytes < 1024:
+            raise ValueError("MJPEG_CHUNK_BYTES must be at least 1024")
+        if self.mjpeg_max_buffer_bytes < self.mjpeg_chunk_bytes:
+            raise ValueError("MJPEG_MAX_BUFFER_BYTES must be at least MJPEG_CHUNK_BYTES")
         if self.robot_assist_mode not in {"mock", "go2"}:
             raise ValueError("ROBOT_ASSIST_MODE must be mock or go2")
         if self.post_fall_v2_input_policy not in {"FULL_FRAME_TRAIN_MATCHED", "EXPERIMENTAL_PERSON_ROI"}:
             raise ValueError("POST_FALL_V2_INPUT_POLICY must be FULL_FRAME_TRAIN_MATCHED or EXPERIMENTAL_PERSON_ROI")
+        if self.post_fall_v2_input_mode not in {"full_frame", "follow_target_roi", "auto"}:
+            raise ValueError("POST_FALL_V2_INPUT_MODE must be full_frame, follow_target_roi, or auto")
         if self.post_fall_v2_shadow_sample_fps <= 0:
             raise ValueError("POST_FALL_V2_SHADOW_SAMPLE_FPS must be positive")
         if self.post_fall_v2_shadow_queue_size < 1:
@@ -595,6 +646,18 @@ class Settings:
             raise ValueError("POST_FALL_V2_SAMPLE_FPS must be positive")
         if self.post_fall_v2_queue_size < 1:
             raise ValueError("POST_FALL_V2_QUEUE_SIZE must be at least 1")
+        if self.follow_target_udp_port < 1 or self.follow_target_udp_port > 65535:
+            raise ValueError("FOLLOW_TARGET_UDP_PORT must be between 1 and 65535")
+        if self.follow_target_fresh_ms < 0:
+            raise ValueError("FOLLOW_TARGET_FRESH_MS must be non-negative")
+        if self.follow_target_grace_ms < self.follow_target_fresh_ms:
+            raise ValueError("FOLLOW_TARGET_GRACE_MS must be greater than or equal to FOLLOW_TARGET_FRESH_MS")
+        if self.follow_target_camera_hfov_deg <= 0 or self.follow_target_camera_hfov_deg >= 180:
+            raise ValueError("FOLLOW_TARGET_CAMERA_HFOV_DEG must be between 0 and 180")
+        if self.follow_target_roi_width_ratio <= 0 or self.follow_target_roi_width_ratio > 1:
+            raise ValueError("FOLLOW_TARGET_ROI_WIDTH_RATIO must be in (0, 1]")
+        if self.follow_target_grace_roi_width_ratio <= 0 or self.follow_target_grace_roi_width_ratio > 1:
+            raise ValueError("FOLLOW_TARGET_GRACE_ROI_WIDTH_RATIO must be in (0, 1]")
         if self.post_fall_v2_window_size < 1:
             raise ValueError("POST_FALL_V2_WINDOW_SIZE must be at least 1")
         if self.post_fall_v2_min_positive_frames < 1:
@@ -603,6 +666,8 @@ class Settings:
             raise ValueError("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES must be at least 1")
         if self.post_fall_v2_event_buffer_seconds <= 0:
             raise ValueError("POST_FALL_V2_EVENT_BUFFER_SECONDS must be positive")
+        if self.post_fall_v2_post_fall_alert_min_ms < self.post_fall_v2_candidate_min_ms:
+            raise ValueError("POST_FALL_V2_POST_FALL_ALERT_MIN_MS must not be shorter than candidate confirmation")
         if self.post_fall_v2_qwen_provider not in {"dummy", "qwen_keyframe"}:
             raise ValueError("POST_FALL_V2_QWEN_PROVIDER must be dummy or qwen_keyframe")
         if self.post_fall_v2_qwen_max_images < 1 or self.post_fall_v2_qwen_max_images > 6:
@@ -615,6 +680,12 @@ class Settings:
             raise ValueError("POST_FALL_V2_QWEN_JPEG_QUALITY must be between 40 and 95")
         if self.post_fall_v2_qwen_queue_capacity < 1:
             raise ValueError("POST_FALL_V2_QWEN_QUEUE_CAPACITY must be at least 1")
+        if self.post_fall_v2_qwen_num_ctx < 4096:
+            raise ValueError("POST_FALL_V2_QWEN_NUM_CTX must be at least 4096")
+        if self.post_fall_v2_qwen_temperature < 0:
+            raise ValueError("POST_FALL_V2_QWEN_TEMPERATURE must be non-negative")
+        if self.test_drain_timeout_seconds <= 0:
+            raise ValueError("TEST_DRAIN_TIMEOUT_SECONDS must be positive")
         if self.post_fall_v2_keyframe_tolerance_ms < 0:
             raise ValueError("POST_FALL_V2_KEYFRAME_TOLERANCE_MS must be non-negative")
         if self.post_fall_v2_keyframe_collection_timeout_seconds <= 0:
@@ -687,6 +758,8 @@ class Settings:
 
 _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
     "pipeline_mode": ("PIPELINE_MODE", "pipeline_mode"),
+    "auto_start_stream": ("AUTO_START_STREAM", "auto_start_stream"),
+    "video_source_mode": ("VIDEO_SOURCE_MODE", "video_source_mode"),
     "main_system_alert_enabled": ("MAIN_SYSTEM_ALERT_ENABLED", "main_system_alert_enabled"),
     "event_pipeline_enabled": ("EVENT_PIPELINE_ENABLED", "event_pipeline_enabled"),
     "event_ring_buffer_enabled": ("EVENT_RING_BUFFER_ENABLED", "event_ring_buffer_enabled"),
@@ -707,13 +780,23 @@ _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
     "post_fall_v2_window_size": ("POST_FALL_V2_WINDOW_SIZE", "post_fall_v2_window_size"),
     "post_fall_v2_min_positive_frames": ("POST_FALL_V2_MIN_POSITIVE_FRAMES", "post_fall_v2_min_positive_frames"),
     "post_fall_v2_min_consecutive_frames": ("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES", "post_fall_v2_min_consecutive_frames"),
+    "post_fall_v2_post_fall_alert_min_ms": ("POST_FALL_V2_POST_FALL_ALERT_MIN_MS", "post_fall_v2_post_fall_alert_min_ms"),
     "post_fall_v2_vlm_enabled": ("POST_FALL_V2_VLM_ENABLED", "post_fall_v2_vlm_enabled"),
     "post_fall_v2_qwen_enabled": ("POST_FALL_V2_QWEN_ENABLED", "post_fall_v2_qwen_enabled"),
     "post_fall_v2_qwen_provider": ("POST_FALL_V2_QWEN_PROVIDER", "post_fall_v2_qwen_provider"),
     "post_fall_v2_qwen_model": ("POST_FALL_V2_QWEN_MODEL", "post_fall_v2_qwen_model"),
     "post_fall_v2_shadow_enabled": ("POST_FALL_V2_SHADOW_ENABLED", "post_fall_v2_shadow_enabled"),
     "post_fall_v2_input_policy": ("POST_FALL_V2_INPUT_POLICY", "post_fall_v2_input_policy"),
+    "post_fall_v2_input_mode": ("POST_FALL_V2_INPUT_MODE", "post_fall_v2_input_mode"),
     "post_fall_v2_shadow_sample_fps": ("POST_FALL_V2_SHADOW_SAMPLE_FPS", "post_fall_v2_shadow_sample_fps"),
+    "follow_target_enabled": ("FOLLOW_TARGET_ENABLED", "follow_target_enabled"),
+    "follow_target_udp_port": ("FOLLOW_TARGET_UDP_PORT", "follow_target_udp_port"),
+    "follow_target_fresh_ms": ("FOLLOW_TARGET_FRESH_MS", "follow_target_fresh_ms"),
+    "follow_target_grace_ms": ("FOLLOW_TARGET_GRACE_MS", "follow_target_grace_ms"),
+    "follow_target_camera_hfov_deg": ("FOLLOW_TARGET_CAMERA_HFOV_DEG", "follow_target_camera_hfov_deg"),
+    "follow_target_camera_yaw_offset_deg": ("FOLLOW_TARGET_CAMERA_YAW_OFFSET_DEG", "follow_target_camera_yaw_offset_deg"),
+    "follow_target_roi_width_ratio": ("FOLLOW_TARGET_ROI_WIDTH_RATIO", "follow_target_roi_width_ratio"),
+    "follow_target_grace_roi_width_ratio": ("FOLLOW_TARGET_GRACE_ROI_WIDTH_RATIO", "follow_target_grace_roi_width_ratio"),
     "robot_assist_enabled": ("ROBOT_ASSIST_ENABLED", "robot_assist_enabled"),
     "robot_assist_mode": ("ROBOT_ASSIST_MODE", "robot_assist_mode"),
     "robot_auto_dispatch_enabled": ("ROBOT_AUTO_DISPATCH_ENABLED", "robot_auto_dispatch_enabled"),
@@ -744,6 +827,7 @@ def safe_configuration_snapshot(settings: Settings) -> dict[str, Any]:
             "post_fall_v2_shadow_enabled",
             "post_fall_v2_vlm_enabled",
             "post_fall_v2_qwen_enabled",
+            "follow_target_enabled",
             "robot_assist_enabled",
             "robot_auto_dispatch_enabled",
             "go2_read_only_enabled",

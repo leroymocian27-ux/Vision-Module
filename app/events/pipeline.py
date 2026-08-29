@@ -21,7 +21,7 @@ from app.events.vlm_adapter import EventVLMAdapter
 from app.schemas.vision_result import VisionResult
 
 logger = get_logger(__name__)
-_EVENT_STATES = {"fallen_candidate", "fallen_confirmed", "confirmed_fall"}
+_EVENT_STATES = {"fallen_candidate", "fallen_confirmed", "confirmed_fall", "suspected_post_fall"}
 _RISK_LEVELS = {"low", "medium", "high", "critical"}
 
 
@@ -104,6 +104,13 @@ class EventPipelineService:
         for obj in result.objects:
             decision = obj.fall_decision if isinstance(obj.fall_decision, dict) else {}
             fall_state = str(decision.get("fall_state") or "").lower()
+            if (
+                str(decision.get("pipeline") or "").lower() == "post_fall_v2"
+                and str(decision.get("safety_outcome") or "").lower() != "alert"
+            ):
+                # PFV2 delivery is authorized by the deterministic safety state
+                # machine, not directly by either binary or Qwen output.
+                continue
             if obj.label != "person" or obj.track_id is None or fall_state not in _EVENT_STATES:
                 continue
             risk_level = str(decision.get("risk_level") or "medium").lower()

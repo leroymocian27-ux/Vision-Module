@@ -68,6 +68,7 @@ def main() -> int:
                 host=args.host,
                 port=args.port,
                 output_dir=output_dir,
+                expect_latest_frame=_env_file_bool(profile_path, "AUTO_START_STREAM", default=False),
             )
             report["cycles"].append(cycle_result)
             if cycle_result["status"] != "PASS":
@@ -105,7 +106,7 @@ def add_step(report: dict[str, Any], name: str, fn) -> dict[str, Any]:
     return step
 
 
-def run_cycle(*, index: int, profile_path: Path, host: str, port: int, output_dir: Path) -> dict[str, Any]:
+def run_cycle(*, index: int, profile_path: Path, host: str, port: int, output_dir: Path, expect_latest_frame: bool) -> dict[str, Any]:
     cycle_dir = output_dir / f"cycle_{index:02d}"
     cycle_dir.mkdir(parents=True, exist_ok=True)
     cycle: dict[str, Any] = {
@@ -127,7 +128,10 @@ def run_cycle(*, index: int, profile_path: Path, host: str, port: int, output_di
         base_url = f"http://{host}:{port}"
         cycle_step(cycle, "wait_healthz", lambda: wait_for_json(f"{base_url}/healthz", timeout_seconds=60))
         cycle_step(cycle, "get_status", lambda: _check_status(fetch_json(f"{base_url}/status"), cycle_dir / "status.json"))
-        cycle_step(cycle, "get_latest_frame", lambda: check_latest_frame(f"{base_url}/stream/latest-frame.jpg", cycle_dir / "latest-frame.jpg"))
+        if expect_latest_frame:
+            cycle_step(cycle, "get_latest_frame", lambda: check_latest_frame(f"{base_url}/stream/latest-frame.jpg", cycle_dir / "latest-frame.jpg"))
+        else:
+            cycle_step(cycle, "skip_latest_frame", lambda: {"reason": "AUTO_START_STREAM=false"})
         cycle_step(cycle, "stop_service", lambda: stop_process(proc))
         cycle_step(
             cycle,
@@ -210,6 +214,19 @@ def _cleanup_or_raise(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("status") != "PASS":
         raise RuntimeError(json.dumps(result, ensure_ascii=False))
     return result
+
+
+def _env_file_bool(path: Path, key: str, *, default: bool) -> bool:
+    if not path.exists():
+        return default
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        env_key, value = line.split("=", 1)
+        if env_key.strip() == key:
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+    return default
 
 
 def finish(report: dict[str, Any], output_dir: Path, exit_code: int) -> int:

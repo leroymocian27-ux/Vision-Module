@@ -74,6 +74,8 @@ def _capture_loop_opencv(
 
     seq = 0
     last_ok_at = time.monotonic()
+    last_emit_at = 0.0
+    min_emit_interval = 1.0 / config.write_fps if config.write_fps > 0 else 0.0
     consecutive_failures = 0
     try:
         while not stop_event.is_set():
@@ -89,7 +91,13 @@ def _capture_loop_opencv(
                 continue
             consecutive_failures = 0
             last_ok_at = time.monotonic()
-            seq = _encode_and_enqueue(config, latest_queue, frame, seq)
+            now = time.monotonic()
+            if min_emit_interval and now - last_emit_at < min_emit_interval:
+                continue
+            next_seq = _encode_and_enqueue(config, latest_queue, frame, seq)
+            if next_seq != seq:
+                last_emit_at = time.monotonic()
+            seq = next_seq
     finally:
         cap.release()
 
@@ -104,6 +112,8 @@ def _capture_loop_pyav(
     container = None
     stream = None
     seq = 0
+    last_emit_at = 0.0
+    min_emit_interval = 1.0 / config.write_fps if config.write_fps > 0 else 0.0
     has_frame = False
     stage = "open"
     try:
@@ -130,8 +140,14 @@ def _capture_loop_pyav(
         for frame in container.decode(stream):
             if stop_event.is_set():
                 return
+            now = time.monotonic()
+            if min_emit_interval and now - last_emit_at < min_emit_interval:
+                continue
             image = frame.to_ndarray(format="bgr24")
-            seq = _encode_and_enqueue(config, latest_queue, image, seq)
+            next_seq = _encode_and_enqueue(config, latest_queue, image, seq)
+            if next_seq != seq:
+                last_emit_at = time.monotonic()
+            seq = next_seq
             has_frame = True
         _log("stream_closed")
         stop_event.set()

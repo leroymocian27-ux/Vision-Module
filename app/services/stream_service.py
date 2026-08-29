@@ -93,7 +93,10 @@ class StreamService:
             CameraSourceConfig(camera_id=camera_id, source_url=resolved_url)
         )
         if self.settings.pipeline_mode == "post_fall_v2":
-            if self.post_fall_v2_runtime_service is not None:
+            if (
+                self.post_fall_v2_runtime_service is not None
+                and getattr(self.post_fall_v2_runtime_service, "binary_control_enabled", True)
+            ):
                 self.post_fall_v2_runtime_service.start_for_camera(runtime.config.camera_id)
             if existing is not None:
                 return True, "stream restarted"
@@ -157,11 +160,15 @@ class StreamService:
     def _resolve_source_url(self, source_url: str | None) -> str:
         if source_url:
             return source_url
+        if self.settings.video_source_mode == "mjpeg" and self.settings.go2_mjpeg_url:
+            return self.settings.go2_mjpeg_url
         if self.settings.default_rtsp_url:
             return self.settings.default_rtsp_url
+        if self.settings.video_source_mode == "mock":
+            return "mock://colorbars"
         if self.settings.mock_camera_enabled:
             return "mock://colorbars"
-        raise ValueError("rtsp_url is required when mock camera is disabled")
+        raise ValueError("source_url is required when mock camera is disabled")
 
     @staticmethod
     def _select_authoritative_source_url(

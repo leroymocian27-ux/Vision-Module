@@ -5,9 +5,13 @@ from pydantic import BaseModel, Field
 
 class StreamStartRequest(BaseModel):
     camera_id: str = Field(default="camera_01")
+    source_url: str | None = Field(
+        default=None,
+        description="Preferred generic video source URL. Supports HTTP MJPEG, RTSP, mock, and local files.",
+    )
     rtsp_url: str | None = Field(
         default=None,
-        description="Authoritative single source URL for all video consumers: capture, WebRTC, detection, tracking, and snapshots.",
+        description="Compatibility field for the authoritative single source URL.",
     )
     main_rtsp_url: str | None = Field(
         default=None,
@@ -32,6 +36,7 @@ class StreamControlResponse(BaseModel):
     camera_id: str
     status: str
     message: str
+    source_url: str | None = None
     main_rtsp_url: str | None = None
     analysis_rtsp_url: str | None = None
 
@@ -44,6 +49,8 @@ class StreamRuntimeSourceResponse(BaseModel):
     display_fallback_active: bool
     main_rtsp_url_masked: str | None = None
     analysis_rtsp_url_masked: str | None = None
+    source_url_masked: str | None = None
+    source_protocol: str = "unknown"
     main_stream_state: str | None = None
     analysis_stream_state: str | None = None
     main_connected: bool | None = None

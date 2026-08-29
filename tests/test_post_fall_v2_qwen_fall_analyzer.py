@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.events.qwen_keyframe import QwenImageInput, QwenKeyframeAnalyzer
+from app.events.qwen_keyframe import QwenImageInput, QwenKeyframeAnalyzer, QwenKeyframeContextExceeded
 from app.post_fall_v2.qwen_fall_analyzer import PFV2QwenFallAnalyzer
 from app.post_fall_v2.schemas import FallEvent, KeyframePackage
 
@@ -43,10 +43,74 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
     assert detail.confidence == 0.65
     assert len(received) == 1
     assert len(received[0]["messages"][1]["images"]) == 3
+    assert received[0]["format"]["required"] == [
+        "schema_version", "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
+        "positive_evidence", "negative_evidence", "activity", "posture_state",
+        "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
+        "persistent_ground_state", "posture", "summary", "confidence",
+    ]
+    assert set(received[0]["format"]["properties"]) == {
+        "schema_version", "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
+        "positive_evidence", "negative_evidence", "activity", "posture_state",
+        "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
+        "persistent_ground_state", "posture", "summary", "confidence",
+    }
+    assert received[0]["format"]["properties"]["high_risk_fall"]["enum"] == [0, 1]
+    assert received[0]["format"]["properties"]["posture"]["maxLength"] == 80
+    assert received[0]["format"]["properties"]["summary"]["maxLength"] == 160
+    assert received[0]["options"]["num_ctx"] == 8192
+    assert received[0]["options"]["temperature"] == 0.1
     request_text = json.dumps(received[0], ensure_ascii=False)
+    assert "最终是否告警由确定性事件状态机决定" in request_text
+    assert "示例 1 主动坐下看书或玩手机" in request_text
+    assert "示例 3 真实跌倒" in request_text
+    assert "示例 4 触发帧已在翻倒过程" in request_text
+    assert "若没有看到人物怎样进入低位，必须诚实输出 unclear" in request_text
+    assert "high_risk_fall" in request_text
+    assert "坐在椅子上休息" in request_text
+    assert "以下开始分析当前真实事件" in request_text
+    request_context = json.loads(received[0]["messages"][1]["content"])
+    assert request_context["keyframe_timeline"] == [
+        "图片 1：T0，候选事件触发附近，角色 trigger",
+        "图片 2：T+1000ms，事件触发后，角色 trigger",
+        "图片 3：T+3000ms，事件触发后，角色 trigger",
+    ]
     assert "incident_id" not in request_text
     assert "camera_id" not in request_text
     assert "rtsp://" not in request_text.lower()
+
+
+def test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_same_images() -> None:
+    received: list[dict] = []
+
+    def transport(payload: dict, timeout: float) -> dict:
+        received.append(payload)
+        if len(received) == 1:
+            raise QwenKeyframeContextExceeded("request exceeds the available context size")
+        return {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "fall_verdict": "unclear",
+            "posture": "人员处于低位姿态。",
+            "summary": "现有关键帧不足以可靠确认真实跌倒。",
+            "confidence": 0.5,
+        }, ensure_ascii=False)}}
+
+    analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "unclear"
+    assert len(received) == 2
+    assert len(received[0]["messages"][1]["images"]) == 3
+    assert len(received[1]["messages"][1]["images"]) == 3
+    first_context = json.loads(received[0]["messages"][1]["content"])
+    retry_context = json.loads(received[1]["messages"][1]["content"])
+    assert first_context["profile"] == "full"
+    assert retry_context["profile"] == "compact_retry"
+    assert "示例 1 主动坐下看书或玩手机" in first_context["task"]
+    assert "示例 1 主动坐下看书或玩手机" not in retry_context["task"]
+    assert received[1]["options"]["num_ctx"] == 8192
 
 
 def test_qwen_fall_analyzer_parse_failure_keeps_event_context() -> None:
@@ -71,7 +135,97 @@ def test_qwen_fall_analyzer_recovers_missing_detail_fields() -> None:
     assert detail.incident_id == "incident-1"
     assert detail.analysis_status == "completed"
     assert detail.posture == "unknown"
+    assert detail.high_risk_fall == 0
     assert detail.review_points == ["建议人工复核事件关键帧。"]
+
+
+def test_qwen_fall_analyzer_maps_non_fall_seated_rest_to_safe_internal_result() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "high_risk_fall": 0,
+            "fall_verdict": "non_fall",
+            "scene_type": "seated_rest",
+            "recommended_action": "no_alert",
+            "positive_evidence": [],
+            "negative_evidence": ["身体受到椅子稳定支撑", "未见突然失衡或倒地"],
+            "activity": "坐在椅子上休息",
+            "posture_state": "seated",
+            "fall_transition_visible": False,
+            "intentional_action_evidence": True,
+            "recovery_observed": None,
+            "persistent_ground_state": "not_observed",
+            "posture": "人物稳定坐在椅子上休息。",
+            "summary": "人物坐姿稳定且有椅子支撑，不属于跌倒。",
+            "confidence": 0.96,
+        }, ensure_ascii=False)}} ,
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.high_risk_fall == 0
+    assert detail.fall_verdict == "non_fall"
+    assert detail.scene_type == "seated_rest"
+    assert detail.recommended_action == "no_alert"
+
+
+def test_qwen_fall_analyzer_downgrades_confirmed_fall_when_high_risk_gate_is_zero() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "high_risk_fall": 0,
+            "fall_verdict": "confirmed_fall",
+            "scene_type": "fall",
+            "recommended_action": "manual_review",
+            "positive_evidence": ["疑似低位"],
+            "negative_evidence": ["未见明确失衡倒地"],
+            **_transition_evidence(high_risk_fall=0, recommended_action="manual_review"),
+            "posture": "人物处于低位。",
+            "summary": "可见失衡倒地过程。",
+            "confidence": 0.8,
+        }, ensure_ascii=False)}} ,
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.high_risk_fall == 0
+    assert detail.fall_verdict == "unclear"
+    assert detail.consistency_status == "corrected"
+    assert "high_risk_fall=1" in (detail.consistency_reason or "")
+
+
+def test_qwen_fall_analyzer_downgrades_high_risk_non_fall_contradiction() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "high_risk_fall": 1,
+            "fall_verdict": "non_fall",
+            "scene_type": "seated_rest",
+            "recommended_action": "emergency_alert",
+            "positive_evidence": [],
+            "negative_evidence": ["坐在椅子上休息"],
+            "activity": "坐在椅子上休息",
+            "posture_state": "seated",
+            "fall_transition_visible": False,
+            "intentional_action_evidence": True,
+            "recovery_observed": None,
+            "persistent_ground_state": "not_observed",
+            "posture": "人物稳定坐在椅子上。",
+            "summary": "人物坐在椅子上休息，未见跌倒。",
+            "confidence": 0.9,
+        }, ensure_ascii=False)}} ,
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.high_risk_fall == 0
+    assert detail.fall_verdict == "non_fall"
+    assert detail.recommended_action == "no_alert"
+    assert detail.consistency_status == "corrected"
 
 
 @pytest.mark.parametrize(
@@ -149,6 +303,358 @@ def test_qwen_fall_analyzer_removes_medical_diagnosis_from_recovered_text() -> N
     assert detail.review_points == ["仅可依据画面描述，建议人工复核。"]
 
 
+def test_qwen_fall_analyzer_preserves_intentional_low_posture_verdict() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "intentional_low_posture",
+            **_intentional_evidence(),
+            "posture": "人员稳定躺在垫子上阅读。",
+            "movement_level": "slight",
+            "attempt_to_stand": "not_observed",
+            "persistent_ground_state": "not_observed",
+            "possible_help_gesture": "not_observed",
+            "visibility": "good",
+            "occlusion": "none",
+            "scene_risks": [],
+            "summary": "画面显示自主躺卧阅读，未见失稳跌倒。",
+            "review_points": ["关键帧中姿态稳定。"],
+            "confidence": 0.9,
+        }, ensure_ascii=False)}},
+        images=[_image(0)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "intentional_low_posture"
+
+
+def test_qwen_fall_analyzer_preserves_unclear_ground_evidence_without_fabricating_transition() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "fall_verdict": "unclear",
+            "activity": "低位状态不明",
+            "posture_state": "ground_low",
+            "fall_transition_visible": False,
+            "intentional_action_evidence": None,
+            "recovery_observed": False,
+            "persistent_ground_state": "observed",
+            "posture": "人物在所给关键帧中持续处于地面低位。",
+            "summary": "未看到进入低位的过程，无法判断是否发生跌倒。",
+            "confidence": 0.55,
+        }, ensure_ascii=False)}},
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.fall_verdict == "unclear"
+    assert detail.posture_state == "ground_low"
+    assert detail.fall_transition_visible is False
+    assert detail.persistent_ground_state == "observed"
+
+
+def test_qwen_fall_analyzer_rejects_confirmed_fall_without_visible_transition() -> None:
+    calls = 0
+
+    def transport(*_) -> dict:
+        nonlocal calls
+        calls += 1
+        return {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "fall_verdict": "confirmed_fall",
+            "activity": "低位状态不明",
+            "posture_state": "ground_low",
+            "fall_transition_visible": False,
+            "intentional_action_evidence": None,
+            "recovery_observed": False,
+            "persistent_ground_state": "observed",
+            "posture": "人物持续处于地面低位。",
+            "summary": "没有看到人物如何进入低位。",
+            "confidence": 0.7,
+        }, ensure_ascii=False)}}
+
+    analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.fall_verdict == "unclear"
+    assert detail.raw_fall_verdict == "confirmed_fall"
+    assert detail.consistency_status == "corrected"
+    assert detail.fall_transition_visible is False
+    assert calls == 1
+
+
+def test_qwen_fall_analyzer_allows_high_risk_post_fall_abnormal_state_without_transition() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "schema_version": "pfv2_post_fall_detail.v1",
+            "high_risk_fall": 1,
+            "fall_verdict": "confirmed_fall",
+            "scene_type": "fall",
+            "recommended_action": "emergency_alert",
+            "positive_evidence": ["人物明显异常倒地", "连续关键帧未恢复"],
+            "negative_evidence": [],
+            "activity": "高危跌倒后异常倒地",
+            "posture_state": "ground_low",
+            "fall_transition_visible": False,
+            "intentional_action_evidence": False,
+            "recovery_observed": False,
+            "persistent_ground_state": "observed",
+            "posture": "人物处于明显异常倒地低位。",
+            "summary": "虽未见完整下落过程，但人物持续异常倒地且无主动行为证据。",
+            "confidence": 0.88,
+        }, ensure_ascii=False)}} ,
+        images=[_image(0), _image(1000), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.high_risk_fall == 1
+    assert detail.fall_verdict == "confirmed_fall"
+    assert detail.fall_transition_visible is False
+
+
+def test_qwen_fall_analyzer_downgrades_contradictory_active_reading_false_positive() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "confirmed_fall",
+            "posture": "人物由站立姿态失衡倒地，随即坐在垫子上阅读书籍，属主动恢复低位而非失稳。",
+            "movement_level": "unknown",
+            "attempt_to_stand": "unknown",
+            "persistent_ground_state": "unknown",
+            "possible_help_gesture": "unknown",
+            "visibility": "unknown",
+            "occlusion": "unknown",
+            "scene_risks": [],
+            "summary": "结合多帧画面判断：后帧为自主坐下读书，更符合主动低位行为。",
+            "review_points": ["建议人工复核事件关键帧。"],
+            "confidence": 0.9,
+        }, ensure_ascii=False)}},
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "unclear"
+
+
+def test_qwen_fall_analyzer_downgrades_controlled_sitting_even_when_enum_is_wrong() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "confirmed_fall",
+            "posture": "人物主动受控地坐下后阅读。",
+            "summary": "连续画面显示人物主动弯腰并受控坐在地垫上，随后稳定坐姿低头看书，未见突然失衡或失控下坠过程。",
+            "review_points": ["建议人工复核事件关键帧。"],
+            "confidence": 0.92,
+        }, ensure_ascii=False)}} ,
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "unclear"
+
+
+def test_qwen_fall_analyzer_downgrades_walking_motion_blur_false_positive() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "confirmed_fall",
+            "posture": "人物处于站立或行走状态。",
+            "summary": "画面只是正常行走经过镜头并存在运动模糊，未见明确失衡倒地过程。",
+            "confidence": 0.82,
+        }, ensure_ascii=False)}} ,
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "unclear"
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "人物主动坐下看书，过程受控，未见失衡。",
+        "人物主动坐下玩手机，后续保持稳定坐姿。",
+        "人物主动躺下玩手机，未看到失控下落。",
+        "人物主动躺下睡觉，姿态自然稳定。",
+        "人物主动躺下看书，没有发生跌倒。",
+    ],
+)
+def test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases(summary: str) -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "confirmed_fall",
+            "posture": "人员处于低位姿态。",
+            "summary": summary,
+            "confidence": 0.88,
+        }, ensure_ascii=False)}},
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "unclear"
+
+
+def test_qwen_fall_analyzer_keeps_true_fall_when_summary_denies_active_lie_down() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "confirmed_fall",
+            **_transition_evidence(),
+            "posture": "人物从直立位置迅速倒下并躺在地上。",
+            "movement_level": "none_observed",
+            "attempt_to_stand": "not_observed",
+            "persistent_ground_state": "observed",
+            "possible_help_gesture": "not_observed",
+            "visibility": "good",
+            "occlusion": "none",
+            "scene_risks": [],
+            "summary": "画面显示人物从直立位置迅速倒下并躺在地上，没有自主躺下的迹象。",
+            "review_points": ["关键帧显示突然倒地过程。"],
+            "confidence": 0.94,
+        }, ensure_ascii=False)}},
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "confirmed_fall"
+
+
+def test_qwen_fall_analyzer_keeps_true_fall_before_later_phone_use() -> None:
+    analyzer = _analyzer(
+        lambda *_: {"message": {"content": json.dumps({
+            "fall_verdict": "confirmed_fall",
+            **_transition_evidence(
+                posture_state="seated",
+                recovery_observed=True,
+                persistent_ground_state="not_observed",
+            ),
+            "posture": "人物先发生明显非自主跌倒，之后坐起玩手机。",
+            "summary": "此前已有清楚失衡倒地过程，后续玩手机不能推翻真实跌倒。",
+            "review_points": ["关键帧显示失衡后倒地。"],
+            "confidence": 0.94,
+        }, ensure_ascii=False)}},
+        images=[_image(-1000), _image(0), _image(3000)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "confirmed_fall"
+
+
+def test_qwen_fall_analyzer_accepts_single_confirmed_fall_verdict() -> None:
+    calls = 0
+
+    response = {
+        "fall_verdict": "confirmed_fall",
+        **_transition_evidence(),
+        "posture": "人员失衡后倒地。",
+        "movement_level": "none_observed",
+        "attempt_to_stand": "not_observed",
+        "persistent_ground_state": "observed",
+        "possible_help_gesture": "not_observed",
+        "visibility": "good",
+        "occlusion": "none",
+        "scene_risks": [],
+        "summary": "可见失衡倒地过程。",
+        "review_points": ["关键帧显示失衡后倒地。"],
+        "confidence": 0.9,
+    }
+
+    def transport(*_) -> dict:
+        nonlocal calls
+        calls += 1
+        return {"message": {"content": json.dumps(response, ensure_ascii=False)}}
+
+    analyzer = _analyzer(
+        transport,
+        images=[_image(0)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "confirmed_fall"
+    assert calls == 2
+
+
+def test_qwen_fall_analyzer_counterchecks_confirmed_fall_and_keeps_deny() -> None:
+    calls = 0
+    review_modes: list[str] = []
+    responses = [
+        {
+            "fall_verdict": "confirmed_fall",
+            **_transition_evidence(),
+            "posture": "人物突然失衡后倒地。",
+            "summary": "关键帧显示非自主失衡倒地过程。",
+            "confidence": 0.9,
+        },
+        {
+            "fall_verdict": "unclear",
+            "posture": "人物处于站立或行走状态。",
+            "summary": "反证复核未见明确失控倒地过程，可能只是行走或运动模糊。",
+            "confidence": 0.8,
+        },
+    ]
+
+    def transport(payload, _timeout):
+        nonlocal calls
+        calls += 1
+        context = json.loads(payload["messages"][1]["content"])
+        review_modes.append(context["review_mode"])
+        return {"message": {"content": json.dumps(responses[calls - 1], ensure_ascii=False)}}
+
+    analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.fall_verdict == "unclear"
+    assert calls == 2
+    assert review_modes == ["首次复核", "反证复核"]
+
+
+def test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl() -> None:
+    calls = 0
+    responses = [
+        {
+            "fall_verdict": "confirmed_fall",
+            **_transition_evidence(),
+            "posture": "人物突然失衡后倒地。",
+            "summary": "可见明显非自主倒地过程。",
+            "confidence": 0.92,
+        },
+        {
+            "fall_verdict": "intentional_low_posture",
+            "posture": "人物受控躺在垫子上。",
+            "summary": "人物进入低位姿态，动作看起来较为受控。",
+            "confidence": 0.7,
+        },
+    ]
+
+    def transport(*_args):
+        nonlocal calls
+        calls += 1
+        return {"message": {"content": json.dumps(responses[calls - 1], ensure_ascii=False)}}
+
+    analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.fall_verdict == "confirmed_fall"
+    assert calls == 2
+
+
 def test_qwen_fall_analyzer_extracts_json_from_outer_markdown_response() -> None:
     analyzer = _analyzer(
         lambda *_: """返回如下：
@@ -224,6 +730,42 @@ def test_qwen_fall_analyzer_rejects_non_local_endpoint() -> None:
             timeout_seconds=1,
             image_provider=lambda _: ([], []),
         )
+
+
+def _transition_evidence(**updates) -> dict:
+    evidence = {
+        "high_risk_fall": 1,
+        "scene_type": "fall",
+        "recommended_action": "emergency_alert",
+        "positive_evidence": ["明显失衡倒地"],
+        "negative_evidence": [],
+        "activity": "非自主失衡倒地",
+        "posture_state": "ground_low",
+        "fall_transition_visible": True,
+        "intentional_action_evidence": False,
+        "recovery_observed": False,
+        "persistent_ground_state": "observed",
+    }
+    evidence.update(updates)
+    return evidence
+
+
+def _intentional_evidence(**updates) -> dict:
+    evidence = {
+        "high_risk_fall": 0,
+        "scene_type": "intentional_low_posture",
+        "recommended_action": "no_alert",
+        "positive_evidence": [],
+        "negative_evidence": ["主动低姿态"],
+        "activity": "主动躺卧阅读",
+        "posture_state": "lying",
+        "fall_transition_visible": False,
+        "intentional_action_evidence": True,
+        "recovery_observed": False,
+        "persistent_ground_state": "observed",
+    }
+    evidence.update(updates)
+    return evidence
 
 
 def _analyzer(transport, *, images: list[QwenImageInput]) -> PFV2QwenFallAnalyzer:

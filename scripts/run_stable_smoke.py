@@ -74,7 +74,10 @@ def main() -> int:
         base_url = f"http://{args.host}:{args.port}"
         run_step(report, "wait_healthz", lambda: wait_for_json(f"{base_url}/healthz", timeout_seconds=60))
         run_step(report, "get_status", lambda: save_json(fetch_json(f"{base_url}/status"), output_dir / "status.json"))
-        run_step(report, "get_latest_frame", lambda: check_latest_frame(f"{base_url}/stream/latest-frame.jpg", output_dir / "latest-frame.jpg"))
+        if env_file_bool(profile_path, "AUTO_START_STREAM", default=False):
+            run_step(report, "get_latest_frame", lambda: check_latest_frame(f"{base_url}/stream/latest-frame.jpg", output_dir / "latest-frame.jpg"))
+        else:
+            run_step(report, "skip_latest_frame", lambda: {"reason": "AUTO_START_STREAM=false"})
         run_step(report, "get_integration_latest", lambda: check_optional_json(f"{base_url}/integration/results/camera_01/latest", output_dir / "integration_latest.json"))
 
         failed = [step for step in report["steps"] if not step["ok"] and step.get("required", True)]
@@ -192,6 +195,19 @@ def check_optional_json(url: str, path: Path) -> dict[str, Any]:
     return {"status": "OK", "path": str(path.resolve())}
 
 
+def env_file_bool(path: Path, key: str, *, default: bool) -> bool:
+    if not path.exists():
+        return default
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        env_key, value = line.split("=", 1)
+        if env_key.strip() == key:
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
 def is_port_open(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
@@ -246,4 +262,3 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

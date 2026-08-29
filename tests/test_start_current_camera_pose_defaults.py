@@ -24,13 +24,18 @@ def test_start_current_camera_keeps_pose_runtime_defaults_less_brittle() -> None
     assert '"POSE_RESULT_TTL_MS": "500"' not in source
 
 
-def test_env_example_uses_current_pose_baseline_and_guard_defaults() -> None:
+def test_env_example_uses_current_safe_post_fall_v2_baseline_and_guard_defaults() -> None:
     source = (Path(__file__).resolve().parents[1] / ".env.example").read_text(encoding="utf-8")
 
-    assert "POSE_PROVIDER=yolo11_legacy" in source
+    assert "ENABLE_POSE=false" in source
+    assert "POSE_PROVIDER=disabled_placeholder" in source
+    assert "POST_FALL_V2_ENABLED=true" in source
+    assert "POST_FALL_V2_BINARY_MODEL_PATH=models/post_fall_v2/efficientnet_b0/fall_candidate_efficientnet_b0.onnx" in source
+    assert "POST_FALL_V2_BINARY_MODEL_SHA256=e9871cdb4687055fb5d934dd994c2ad883adac0c2acab375c240f8e005ee04cc" in source
     assert "YOLO11_POSE_MODEL_PATH=yolo11n-pose.pt" in source
     assert "POSE_DEPLOYMENT_GUARD_ENABLED=true" in source
     assert "POSE_EVIDENCE_PACKAGE=evaluations/pose_evidence_package_check_20260705.json" in source
+    assert "POSE_PROVIDER=yolo11_legacy" not in source
     assert "POSE_PROVIDER=yolo\n" not in source
     assert "POSE_RESULT_TTL_MS=500" not in source
     assert "POSE_MAX_FRAME_AGE_MS=500" not in source
@@ -141,7 +146,12 @@ def test_main_blocks_service_start_when_pose_deployment_guard_fails(tmp_path: Pa
         result = start_current_camera.main()
 
     assert result == 3
-    popen.assert_not_called()
+    service_start_calls = [
+        call
+        for call in popen.call_args_list
+        if len(call.args) >= 1 and "-m" in call.args[0] and "uvicorn" in call.args[0]
+    ]
+    assert service_start_calls == []
     written = json.loads(guard_output.read_text(encoding="utf-8"))
     assert written["summary"]["deployment_allowed"] is False
     assert written["checks"]["evidence_package"]["blockers"] == ["pose_enabled_without_handoff_ready_evidence"]
@@ -175,5 +185,10 @@ def test_main_skip_pose_deployment_guard_allows_debug_start(tmp_path: Path, monk
         result = start_current_camera.main()
 
     assert result == 0
-    popen.assert_called_once()
+    service_start_calls = [
+        call
+        for call in popen.call_args_list
+        if len(call.args) >= 1 and "-m" in call.args[0] and "uvicorn" in call.args[0]
+    ]
+    assert len(service_start_calls) == 1
     assert not guard_output.exists()

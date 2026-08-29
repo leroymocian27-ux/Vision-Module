@@ -117,7 +117,9 @@ class StatusService:
                     last_frame_at=worker_status.last_frame_at,
                     received_at=worker_status.received_at,
                     source=worker_status.source,
+                    source_protocol=worker_status.source_protocol,
                     source_generation=worker_status.source_generation,
+                    raw_jpeg_available=worker_status.raw_jpeg_available,
                     frame_status=worker_status.frame_status,
                     is_stale=worker_status.is_stale,
                     safe_to_interpret_as_no_fall=worker_status.safe_to_interpret_as_no_fall,
@@ -143,6 +145,8 @@ class StatusService:
                     capture_ipc_dropped_frames=worker_status.capture_ipc_dropped_frames,
                     capture_output_width=worker_status.capture_output_width,
                     capture_output_height=worker_status.capture_output_height,
+                    mjpeg_content_type=worker_status.mjpeg_content_type,
+                    mjpeg_parsed_frames=worker_status.mjpeg_parsed_frames,
                     last_error=worker_status.last_error,
                 )
             )
@@ -407,6 +411,8 @@ class StatusService:
                 frame_width=worker_status.frame_width,
                 frame_height=worker_status.frame_height,
                 capture_fps=worker_status.capture_fps,
+                source_protocol=worker_status.source_protocol,
+                raw_jpeg_available=worker_status.raw_jpeg_available,
             )
             main_stream = alias
             analysis_stream = alias
@@ -422,6 +428,7 @@ class StatusService:
             streaming=StreamingStatus(
                 webrtc_clients=self.peer_manager.client_count,
                 ws_clients=self.result_channels.subscriber_count,
+                webrtc_target_fps=self.settings.webrtc_video_fps,
             ),
             tracking=tracking_status,
             identity=identity_status,

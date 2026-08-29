@@ -11,9 +11,29 @@ import numpy as np
 FULL_FRAME_TRAIN_MATCHED = "FULL_FRAME_TRAIN_MATCHED"
 EXPERIMENTAL_PERSON_ROI = "EXPERIMENTAL_PERSON_ROI"
 BINARY_CANDIDATE_THRESHOLD_OOF = "BINARY_CANDIDATE_THRESHOLD_OOF"
+POST_FALL_V2_INPUT_MODE_FULL_FRAME = "full_frame"
+POST_FALL_V2_INPUT_MODE_FOLLOW_TARGET_ROI = "follow_target_roi"
+POST_FALL_V2_INPUT_MODE_AUTO = "auto"
 
 InputPolicy = Literal["FULL_FRAME_TRAIN_MATCHED", "EXPERIMENTAL_PERSON_ROI"]
+PostFallV2InputMode = Literal["full_frame", "follow_target_roi", "auto"]
 BinaryDecisionLabel = Literal["FALL", "NON_FALL", "UNKNOWN"]
+FallVerdict = Literal[
+    "normal_activity",
+    "intentional_low_posture",
+    "non_fall",
+    "confirmed_fall",
+    "unclear",
+    "uncertain",
+    "insufficient_visual_evidence",
+]
+SafetyOutcome = Literal["alert", "observe", "dismiss"]
+SafetyPath = Literal[
+    "transition_fall",
+    "post_fall_abnormality",
+    "explicit_non_fall",
+    "uncertain_evidence",
+]
 BinaryAggregateState = Literal[
     "NORMAL",
     "FALL_CANDIDATE",
@@ -57,6 +77,7 @@ class SampledFrame:
     source_height: int
     source_generation: int
     frame: np.ndarray = field(repr=False)
+    target_binding: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +156,7 @@ class BinaryFrameResult:
     valid: bool
     source_width: int
     source_height: int
+    target_binding: dict[str, Any] | None = None
     error_code: str | None = None
     error_message: str | None = None
 
@@ -160,6 +182,7 @@ class BinaryFrameResult:
             valid=result.valid,
             source_width=result.input.source_width,
             source_height=result.input.source_height,
+            target_binding=result.analysis_only.get("target_binding") if result.analysis_only else None,
             error_code=result.error_code,
             error_message=result.error_message,
         )
@@ -219,6 +242,7 @@ class BufferedFrame:
     source_width: int
     source_height: int
     frame: np.ndarray = field(repr=False)
+    target_binding: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +256,7 @@ class KeyframeItem:
     missing_reason: str | None = None
     actual_offset_ms: int | None = None
     timing_error_ms: int | None = None
+    target_binding: dict[str, Any] | None = None
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)
@@ -251,6 +276,7 @@ class KeyframePackage:
     resolved_offsets_ms: list[int] = field(default_factory=list)
     missing_offsets_ms: list[int] = field(default_factory=list)
     max_offset_error_ms: int | None = None
+    target_binding: dict[str, Any] | None = None
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)
@@ -260,6 +286,12 @@ class KeyframePackage:
 class FallDetailResult:
     incident_id: str
     analysis_status: VLMAnalysisStatus
+    fall_verdict: FallVerdict = "unclear"
+    high_risk_fall: int = 0
+    scene_type: str = "unknown"
+    recommended_action: str = "manual_review"
+    positive_evidence: list[str] = field(default_factory=list)
+    negative_evidence: list[str] = field(default_factory=list)
     posture: str = "unknown"
     movement_level: str = "unknown"
     attempt_to_stand: str = "unknown"
@@ -274,6 +306,29 @@ class FallDetailResult:
     latency_ms: float | None = None
     model_name: str | None = None
     error_message: str | None = None
+    raw_fall_verdict: str | None = None
+    consistency_status: str = "unchanged"
+    consistency_reason: str | None = None
+    activity: str = "unknown"
+    posture_state: str = "unknown"
+    fall_transition_visible: bool | None = None
+    intentional_action_evidence: bool | None = None
+    recovery_observed: bool | None = None
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FallSafetyDecision:
+    outcome: SafetyOutcome
+    path: SafetyPath
+    alert_level: str
+    reason: str
+    observation_elapsed_ms: int
+    qwen_verdict: str | None = None
+    review_required: bool = False
+    updated_at: str = field(default_factory=utc_now_iso)
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)
@@ -283,6 +338,7 @@ class FallDetailResult:
 class FallEvent:
     incident_id: str
     camera_id: str
+    # This is a binary-model candidate, not a confirmed fall.
     state: str
     started_at: str
     confirmed_at: str
@@ -290,6 +346,9 @@ class FallEvent:
     keyframes: KeyframePackage | None = None
     vlm_status: VLMAnalysisStatus = "disabled"
     vlm_analysis: FallDetailResult | None = None
+    vlm_reviews: list[FallDetailResult] = field(default_factory=list)
+    safety_decision: FallSafetyDecision | None = None
+    target_binding: dict[str, Any] | None = None
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 

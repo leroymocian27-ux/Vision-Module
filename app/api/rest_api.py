@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.deps import get_runtime
 from app.camera.frame_freshness import FreshnessThresholds, frame_freshness
-from app.camera.source_models import is_mock_source, mask_source_url
+from app.camera.source_models import is_mjpeg_source, is_mock_source, is_rtsp_source, mask_source_url
 from app.core.runtime import Runtime
 from app.schemas.stream import (
     StreamControlResponse,
@@ -32,7 +32,7 @@ def start_stream(
     try:
         created, message = runtime.stream_service.start(
             request.camera_id,
-            request.rtsp_url,
+            request.source_url or request.rtsp_url,
             main_source_url=request.main_rtsp_url,
             analysis_source_url=request.analysis_rtsp_url,
         )
@@ -49,6 +49,7 @@ def start_stream(
         camera_id=request.camera_id,
         status=status,
         message=message,
+        source_url=mask_source_url(source_url),
         main_rtsp_url=mask_source_url(source_url),
         analysis_rtsp_url=mask_source_url(source_url),
     )
@@ -79,6 +80,8 @@ def stream_source(
         display_fallback_active=False,
         main_rtsp_url_masked=mask_source_url(stream_runtime.config.source_url),
         analysis_rtsp_url_masked=mask_source_url(stream_runtime.config.source_url),
+        source_url_masked=mask_source_url(stream_runtime.config.source_url),
+        source_protocol=_source_protocol(stream_runtime.config.source_url),
         main_stream_state=worker_status.stream_state if worker_status else None,
         analysis_stream_state=worker_status.stream_state if worker_status else None,
         main_connected=worker_status.connected if worker_status else None,
@@ -116,11 +119,14 @@ def latest_stream_frame(
         stale_ms=runtime.settings.stream_stale_threshold_ms,
     )
     freshness = frame_freshness(packet.age_ms, thresholds)
-    ok, encoded = cv2.imencode(".jpg", packet.frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-    if not ok:
-        raise HTTPException(status_code=500, detail="LATEST_FRAME_ENCODE_FAILED")
+    content = packet.jpeg_bytes
+    if content is None:
+        ok, encoded = cv2.imencode(".jpg", packet.frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            raise HTTPException(status_code=500, detail="LATEST_FRAME_ENCODE_FAILED")
+        content = encoded.tobytes()
     return Response(
-        content=encoded.tobytes(),
+        content=content,
         media_type="image/jpeg",
         headers={
             "X-Camera-Id": camera_id,
@@ -132,6 +138,8 @@ def latest_stream_frame(
             "X-Frame-Is-Stale": "true" if freshness.is_stale else "false",
             "X-Frame-Captured-At": packet.captured_at_iso,
             "X-Frame-Received-At": packet.received_at_iso,
+            "X-Source-Protocol": _source_protocol(packet.source),
+            "X-Raw-Jpeg-Reused": "true" if packet.jpeg_bytes is not None else "false",
         },
     )
 
@@ -247,3 +255,15 @@ def _build_rtsp_url(
 ) -> str:
     normalized_path = path if path.startswith("/") else f"/{path}"
     return f"{scheme}://{username}:{password}@{host}:{port}{normalized_path}"
+
+
+def _source_protocol(source_url_or_kind: str | None) -> str:
+    if source_url_or_kind == "mjpeg" or is_mjpeg_source(source_url_or_kind):
+        return "mjpeg"
+    if source_url_or_kind == "rtsp" or is_rtsp_source(source_url_or_kind):
+        return "rtsp"
+    if source_url_or_kind == "mock" or is_mock_source(source_url_or_kind):
+        return "mock"
+    if source_url_or_kind == "file":
+        return "file"
+    return "unknown"

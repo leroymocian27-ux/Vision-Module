@@ -64,6 +64,7 @@ class EventPostKeyframeCollectionTest(unittest.TestCase):
             event_archive_enabled=True, event_archive_dir=directory,
             event_post_keyframe_collection_enabled=True,
             event_post_keyframe_window_seconds=60,
+            event_keyframe_offsets_ms=(-3000, -1000, 0, 1000, 3000, 5000),
         ))
 
     @staticmethod

@@ -29,7 +29,9 @@ from app.services.fusion_worker_service import FusionWorkerService
 from app.services.device_connection_service import DeviceConnectionService
 from app.fall.fusion import FallFusionService
 from app.post_fall_v2.fall_binary_shadow_service import FallBinaryShadowService
+from app.post_fall_v2.follow_target import FollowTargetReceiver
 from app.post_fall_v2.post_fall_runtime_service import PostFallV2RuntimeService
+from app.post_fall_v2.test_archive_service import PostFallTestArchiveService
 from app.streaming.peer_manager import PeerManager
 from app.streaming.result_channel_manager import ResultChannelManager
 
@@ -66,6 +68,8 @@ class Runtime:
     fusion_worker_service: FusionWorkerService | None = None
     post_fall_v2_shadow_service: FallBinaryShadowService | None = None
     post_fall_v2_runtime_service: PostFallV2RuntimeService | None = None
+    follow_target_receiver: FollowTargetReceiver | None = None
+    post_fall_test_archive_service: PostFallTestArchiveService | None = None
 
     async def shutdown(self) -> None:
         if self.event_delivery_worker is not None:
@@ -76,6 +80,8 @@ class Runtime:
             self.post_fall_v2_shadow_service.stop_all()
         if self.post_fall_v2_runtime_service is not None:
             self.post_fall_v2_runtime_service.stop_all()
+        if self.follow_target_receiver is not None:
+            self.follow_target_receiver.stop()
         self.result_publisher_service.stop_all()
         if self.fusion_worker_service is not None:
             self.fusion_worker_service.stop_all()

@@ -96,6 +96,7 @@ class FallBinaryShadowService:
                     for part in self.settings.post_fall_v2_binary_onnx_providers.split(",")
                     if part.strip()
                 ],
+                warmup_runs=self.settings.post_fall_v2_binary_warmup_runs,
             )
             self._startup_error = None
         except Exception as exc:
@@ -288,4 +289,3 @@ class FallBinaryShadowService:
         if candidate.is_absolute():
             return candidate
         return Path(__file__).resolve().parents[2] / candidate
-

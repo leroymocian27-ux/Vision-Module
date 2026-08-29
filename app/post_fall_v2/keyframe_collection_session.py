@@ -61,9 +61,9 @@ class KeyframeCollectionSession:
         camera_id: str,
         confirmed_monotonic: float,
         confirmed_at: str | None = None,
-        required_offsets_ms: tuple[int, ...] = (-3000, -1000, 0, 1000, 3000, 5000),
+        required_offsets_ms: tuple[int, ...] = (-1000, 0, 3000),
         tolerance_ms: int = 750,
-        collection_window_seconds: float = 5.0,
+        collection_window_seconds: float = 3.5,
         max_observations: int = 128,
     ) -> None:
         self.incident_id = incident_id
@@ -97,6 +97,7 @@ class KeyframeCollectionSession:
             source_width=sampled.source_width,
             source_height=sampled.source_height,
             frame=sampled.frame.copy(),
+            target_binding=getattr(sampled, "target_binding", None),
         )
         return self.observe_buffered_frame(frame)
 
@@ -169,6 +170,10 @@ class KeyframeCollectionSession:
         resolved_offsets = [item.item.offset_ms for item in resolved if item.item.frame_id]
         source_width = max((item.frame.source_width for item in resolved if item.frame is not None), default=0)
         source_height = max((item.frame.source_height for item in resolved if item.frame is not None), default=0)
+        target_binding = next(
+            (item.frame.target_binding for item in resolved if item.frame is not None and item.frame.target_binding),
+            None,
+        )
         status = "ready" if not missing and not self._cancelled else "degraded"
         if self._cancelled:
             status = "cancelled"  # type: ignore[assignment]
@@ -189,6 +194,7 @@ class KeyframeCollectionSession:
             resolved_offsets_ms=resolved_offsets,
             missing_offsets_ms=missing,
             max_offset_error_ms=self.tolerance_ms,
+            target_binding=target_binding,
         )
 
     def export_qwen_images(
@@ -264,6 +270,7 @@ class KeyframeCollectionSession:
                         timestamp=best.timestamp,
                         actual_offset_ms=actual_offset_ms,
                         timing_error_ms=timing_error_ms,
+                        target_binding=best.target_binding,
                     ),
                     frame=best,
                 )

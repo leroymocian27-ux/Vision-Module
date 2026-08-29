@@ -408,6 +408,47 @@ class FallEventReporterServiceTest(unittest.TestCase):
         self.assertIsNotNone(second_alert)
         self.assertEqual(second_alert["incident_id"], first_alert["incident_id"])
 
+    def test_qwen_confirmed_payload_keeps_incident_id_and_chinese_summary(self) -> None:
+        reporter = self._reporter()
+        result = self._confirmed_result(
+            track_id=0,
+            temporal={
+                "source": "post_fall_v2_qwen",
+                "qwen": {
+                    "fall_verdict": "confirmed_fall",
+                    "summary": "画面显示人员失衡后倒地，建议立即查看现场。",
+                },
+            },
+        )
+        obj = result.objects[0]
+        result.objects[0] = obj.model_copy(
+            update={
+                "fall_decision": {
+                    **(obj.fall_decision or {}),
+                    "pipeline": "post_fall_v2",
+                    "decision_authority": "event_state_machine",
+                    "safety_outcome": "alert",
+                    "fall_verdict": "confirmed_fall",
+                    "high_risk_fall": 1,
+                    "incident_id": "pfv2-go2-front-001",
+                    "confirm_source": "qwen_confirmed_fall",
+                    "vlm_summary": "画面显示人员失衡后倒地，建议立即查看现场。",
+                },
+                "alarm_preview": {
+                    **(obj.alarm_preview or {}),
+                    "source": "post_fall_v2_qwen",
+                },
+            }
+        )
+
+        reporter.inspect_result(result)
+
+        latest = reporter.latest_alert("camera_01")
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["incident_id"], "pfv2-go2-front-001")
+        self.assertEqual(latest["description_zh"], "画面显示人员失衡后倒地，建议立即查看现场。")
+        self.assertEqual(latest["qwen_review"]["fall_verdict"], "confirmed_fall")
+
     def _reporter(self) -> FallEventReporterService:
         settings = replace(
             Settings(),

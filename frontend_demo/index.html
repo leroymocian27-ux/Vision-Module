@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI 视觉监护控制台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=alarm-indicator-visible-20260829" />
   </head>
   <body>
     <main class="app-shell">
@@ -52,6 +52,13 @@
             <video id="video" autoplay playsinline muted></video>
             <img id="frameFallback" class="frame-fallback" alt="" hidden />
             <canvas id="overlay"></canvas>
+            <div
+              id="alarmIndicator"
+              class="alarm-indicator"
+              data-state="idle"
+              title="等待事件"
+              aria-label="最终告警测试指示灯：等待事件"
+            ></div>
             <div class="viewer-empty" aria-hidden="true">
               <strong>等待视频连接</strong>
               <span>点击右侧 Connect 后显示实时分析画面</span>
@@ -68,15 +75,15 @@
                 <p class="eyebrow">Source</p>
                 <h2>视频源配置</h2>
               </div>
-              <span class="soft-tag">camera_79</span>
+              <span class="soft-tag">go2_front_camera</span>
             </div>
             <label>
               <span>Camera ID</span>
-              <input id="cameraId" value="camera_01" autocomplete="off" />
+              <input id="cameraId" value="go2_front_camera" autocomplete="off" />
             </label>
             <label>
-              <span>RTSP URL</span>
-              <input id="rtspUrl" value="" placeholder="仅手动输入经批准的摄像头地址" autocomplete="off" />
+              <span>视频流地址</span>
+              <input id="rtspUrl" value="http://192.168.8.254:8093/stream.mjpg" placeholder="HTTP MJPEG 或 RTSP 地址" autocomplete="off" />
               <span class="hint">连接信息不会从服务状态回填到页面；演示时请勿输入或展示真实凭据。</span>
             </label>
             <div class="actions">
@@ -85,27 +92,88 @@
             </div>
           </section>
 
+          <section class="panel model-control-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Model Control</p>
+                <h2>模型控制</h2>
+              </div>
+            </div>
+            <dl class="detail-grid dense control-state-grid">
+              <dt>Video Stream</dt><dd id="videoControlState">OFF</dd>
+              <dt>Binary Model</dt><dd id="binaryControlState">OFF</dd>
+              <dt>Qwen Review</dt><dd id="qwenControlState">OFF</dd>
+              <dt>Test</dt><dd id="testControlState">IDLE</dd>
+              <dt>Provider</dt><dd id="binaryProvider">-</dd>
+              <dt>Sample FPS</dt><dd id="binarySampleFps">-</dd>
+              <dt>Queue</dt><dd id="binaryQueue">-</dd>
+              <dt>AI Age</dt><dd id="binaryFrameAge">-</dd>
+              <dt>Latency</dt><dd id="binaryLatency">-</dd>
+            </dl>
+            <div class="actions">
+              <button id="binaryToggleBtn" class="ghost-btn" type="button" disabled>开启二分类</button>
+              <button id="qwenToggleBtn" class="ghost-btn" type="button" disabled>开启千问</button>
+            </div>
+            <div id="modelControlResult" class="manual-alert-result">模型默认关闭</div>
+          </section>
+
+          <section class="panel test-control-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Test Control</p>
+                <h2>测试控制</h2>
+              </div>
+            </div>
+            <div class="time-input-grid">
+              <label>
+                <span>小时</span>
+                <input id="testHours" type="number" min="0" max="24" step="1" value="0" inputmode="numeric" />
+              </label>
+              <label>
+                <span>分钟</span>
+                <input id="testMinutes" type="number" min="0" max="59" step="1" value="0" inputmode="numeric" />
+              </label>
+              <label>
+                <span>秒</span>
+                <input id="testSeconds" type="number" min="0" max="59" step="1" value="10" inputmode="numeric" />
+              </label>
+            </div>
+            <div class="actions">
+              <button id="startTestBtn" class="primary-btn" type="button">开始测试</button>
+              <button id="stopTestBtn" class="ghost-btn" type="button" disabled>停止测试</button>
+            </div>
+            <dl class="detail-grid dense test-metrics-grid">
+              <dt>Session</dt><dd id="testSessionId">-</dd>
+              <dt>事件</dt><dd id="testEventCounts">-</dd>
+              <dt>CPU</dt><dd id="testCpuUsage">-</dd>
+              <dt>进程 CPU</dt><dd id="testProcessCpuUsage">-</dd>
+              <dt>GPU</dt><dd id="testGpuUsage">-</dd>
+              <dt>显存</dt><dd id="testGpuMemory">-</dd>
+            </dl>
+            <div id="testControlResult" class="manual-alert-result">测试未开始</div>
+          </section>
+
           <section class="panel discovery-panel">
             <div class="panel-head compact">
               <div>
-                <p class="eyebrow">Network Discovery</p>
-                <h2>网络发现</h2>
+                <p class="eyebrow">Main Pairing</p>
+                <h2>主系统配对</h2>
               </div>
               <button id="rescanDevicesBtn" class="ghost-btn compact-btn" type="button">重新搜索</button>
             </div>
             <div class="discovery-actions">
-              <button id="autoConnectDevicesBtn" class="primary-btn" type="button">一键连接</button>
-              <button id="connectMainSystemBtn" class="ghost-btn" type="button">连接主系统</button>
+              <button id="autoConnectDevicesBtn" class="primary-btn" type="button">一键配对</button>
             </div>
             <dl class="detail-grid">
               <dt>主系统</dt><dd id="mainSystemDiscoveryState">-</dd>
               <dt>主系统 IP</dt><dd id="mainSystemDiscoveryIp">-</dd>
-              <dt>摄像头</dt><dd id="cameraDiscoveryState">-</dd>
-              <dt>摄像头 IP</dt><dd id="cameraDiscoveryIp">-</dd>
+              <dt>告警端口</dt><dd id="mainSystemDiscoveryPort">-</dd>
+              <dt>告警路径</dt><dd id="mainSystemDiscoveryPath">-</dd>
+              <dt>投递状态</dt><dd id="mainSystemDeliveryState">-</dd>
               <dt>当前网段</dt><dd id="discoverySubnet">-</dd>
               <dt>最近发现</dt><dd id="discoveryLastScan">-</dd>
             </dl>
-            <div id="discoveryResult" class="manual-alert-result">等待状态刷新</div>
+            <div id="discoveryResult" class="manual-alert-result">等待主系统配对</div>
           </section>
 
           <section class="panel manual-alert">
@@ -318,6 +386,6 @@
       </section>
     </main>
     <script src="./overlay.js?v=hide-skeleton-20260708"></script>
-    <script src="./app.js?v=live-frame-fallback-20260728"></script>
+    <script src="./app.js?v=alarm-indicator-visible-20260829"></script>
   </body>
 </html>

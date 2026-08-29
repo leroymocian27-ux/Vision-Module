@@ -107,9 +107,12 @@ class SubprocessCaptureWorker:
             status.last_frame_at = packet.captured_at_iso
             status.received_at = packet.received_at_iso
             status.source = packet.source
+            status.source_protocol = packet.source
             status.source_generation = packet.source_generation
+            status.raw_jpeg_available = packet.jpeg_bytes is not None
         else:
             status.source = self.frame_buffer.source
+            status.source_protocol = self.frame_buffer.source
             status.source_generation = self.frame_buffer.source_generation
         thresholds = FreshnessThresholds(
             delayed_ms=self.settings.frame_delayed_threshold_ms,

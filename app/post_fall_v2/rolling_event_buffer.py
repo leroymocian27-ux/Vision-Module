@@ -23,6 +23,7 @@ class RollingEventBuffer:
             source_width=sampled.source_width,
             source_height=sampled.source_height,
             frame=sampled.frame.copy(),
+            target_binding=sampled.target_binding,
         )
         with self._lock:
             frames = self._frames[sampled.camera_id]

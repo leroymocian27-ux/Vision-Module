@@ -259,16 +259,28 @@ class DeviceDiscoveryApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["main_system"]["ip"], "192.168.8.254")
 
-    def test_rescan_endpoint_applies_runtime_settings_and_restarts_stream(self) -> None:
+    def test_rescan_endpoint_pairs_main_system_without_restarting_stream(self) -> None:
         runtime = _RuntimeStub()
         client = self._client(runtime)
 
         response = client.post("/device-discovery/rescan")
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.254:8000/api/v1")
-        self.assertEqual(runtime.stream_service.started, [("camera_01", "rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1")])
-        self.assertEqual(runtime.fall_event_reporter.endpoint_updates, ["http://192.168.8.254:8000/api/v1"])
+        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000/api/v1")
+        self.assertEqual(runtime.stream_service.started, [])
+        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000/api/v1"])
+        self.assertEqual(
+            runtime.fall_event_reporter.endpoint_updates,
+            [
+                {
+                    "base_url": "http://192.168.8.252:8000/api/v1",
+                    "path": "/video-bridge/fall-events",
+                    "enabled": True,
+                    "dry_run": False,
+                }
+            ],
+        )
+        self.assertTrue(response.json()["applied"]["paired"])
 
     def test_connect_main_system_endpoint_does_not_restart_stream(self) -> None:
         runtime = _RuntimeStub()
@@ -279,7 +291,16 @@ class DeviceDiscoveryApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000/api/v1")
         self.assertEqual(runtime.stream_service.started, [])
-        self.assertEqual(runtime.fall_event_reporter.endpoint_updates, ["http://192.168.8.252:8000/api/v1"])
+        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000/api/v1"])
+        self.assertEqual(runtime.fall_event_reporter.endpoint_updates[0]["dry_run"], False)
+
+    def test_connect_camera_endpoint_is_removed(self) -> None:
+        runtime = _RuntimeStub()
+        client = self._client(runtime)
+
+        response = client.post("/device-discovery/connect-camera")
+
+        self.assertEqual(response.status_code, 410)
 
     @staticmethod
     def _client(runtime) -> TestClient:
@@ -316,10 +337,42 @@ class _StreamServiceStub(_SettingsStub):
 class _ReporterStub(_SettingsStub):
     def __init__(self, settings: Settings) -> None:
         super().__init__(settings)
-        self.endpoint_updates: list[str] = []
+        self.base_updates: list[str] = []
+        self.endpoint_updates: list[dict] = []
+        self._status = {
+            "enabled": False,
+            "dry_run": True,
+            "endpoint": f"{settings.main_system_base_url}{settings.main_system_fall_event_path}",
+            "endpoint_base_url": settings.main_system_base_url,
+            "endpoint_path": settings.main_system_fall_event_path,
+        }
 
     def update_main_system_base_url(self, base_url: str) -> None:
-        self.endpoint_updates.append(base_url)
+        self.base_updates.append(base_url)
+        self._status["endpoint_base_url"] = base_url
+        self._status["endpoint"] = f"{base_url}{self._status['endpoint_path']}"
+
+    def update_endpoint(self, *, base_url: str, path: str, enabled: bool = True, dry_run: bool | None = None) -> dict:
+        payload = {
+            "base_url": base_url,
+            "path": path,
+            "enabled": enabled,
+            "dry_run": dry_run,
+        }
+        self.endpoint_updates.append(payload)
+        self._status.update(
+            {
+                "enabled": enabled,
+                "dry_run": bool(dry_run),
+                "endpoint": f"{base_url}{path}",
+                "endpoint_base_url": base_url,
+                "endpoint_path": path,
+            }
+        )
+        return self.status()
+
+    def status(self) -> dict:
+        return dict(self._status)
 
 
 class _DeviceConnectionServiceStub:

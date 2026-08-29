@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import TextIO
+from typing import BinaryIO, TextIO
 
 
 def is_process_alive(proc: subprocess.Popen | None) -> bool:
@@ -28,14 +28,20 @@ def terminate_process(proc: subprocess.Popen | None, timeout_sec: float = 2.0) -
             return proc.poll()
 
 
-def drain_stderr(stream: TextIO | None, on_line) -> None:
+def drain_stderr(stream: BinaryIO | TextIO | None, on_line) -> None:
     if stream is None:
         return
     try:
-        for line in iter(stream.readline, ""):
-            line = line.strip()
-            if line:
-                on_line(line)
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            if isinstance(line, bytes):
+                text = line.decode("utf-8", errors="replace").strip()
+            else:
+                text = line.strip()
+            if text:
+                on_line(text)
     except Exception as exc:
         on_line(f"capture_process_stderr_reader_failed: {exc}")
 

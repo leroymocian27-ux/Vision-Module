@@ -58,6 +58,6 @@ class FrameSamplerService:
             source_width=packet.width,
             source_height=packet.height,
             source_generation=packet.source_generation,
-            frame=packet.frame.copy(),
+            frame=packet.frame,
         )
         return FrameSamplerDecision(sampled, "sampled")

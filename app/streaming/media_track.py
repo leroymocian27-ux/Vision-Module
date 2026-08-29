@@ -19,6 +19,9 @@ class LatestFrameVideoTrack:
                 self._buffer = frame_buffer
                 self._settings = settings
                 self._last_seq = 0
+                self._last_sent_at: float | None = None
+                target_fps = max(1, int(getattr(settings, "webrtc_video_fps", 15) or 15))
+                self._target_interval = 1.0 / target_fps
                 self._fallback_frame = np.zeros(
                     (
                         settings.mock_camera_height,
@@ -32,6 +35,7 @@ class LatestFrameVideoTrack:
                 from av import VideoFrame
 
                 pts, time_base = await self.next_timestamp()
+                await self._pace()
                 packet = self._buffer.latest()
                 if packet is None:
                     await asyncio.sleep(0.02)
@@ -44,5 +48,14 @@ class LatestFrameVideoTrack:
                 video_frame.time_base = time_base
                 return video_frame
 
-        self.track = _Track()
+            async def _pace(self) -> None:
+                now = time.monotonic()
+                if self._last_sent_at is None:
+                    self._last_sent_at = now
+                    return
+                wait_for = self._target_interval - (now - self._last_sent_at)
+                if wait_for > 0:
+                    await asyncio.sleep(wait_for)
+                self._last_sent_at = time.monotonic()
 
+        self.track = _Track()

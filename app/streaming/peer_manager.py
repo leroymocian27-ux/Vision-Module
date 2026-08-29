@@ -29,17 +29,13 @@ class PeerManager:
         if deps is None:
             raise ValueError(f"webrtc unavailable: {self._dependency_error}")
         RTCConfiguration = deps["RTCConfiguration"]
-        RTCIceServer = deps["RTCIceServer"]
         RTCPeerConnection = deps["RTCPeerConnection"]
         RTCSessionDescription = deps["RTCSessionDescription"]
         LatestFrameVideoTrack = deps["LatestFrameVideoTrack"]
 
         peer_id = uuid.uuid4().hex
-        pc = RTCPeerConnection(
-            configuration=RTCConfiguration(
-                iceServers=[RTCIceServer(urls=[self.settings.webrtc_stun_server])]
-            )
-        )
+        ice_servers = self._ice_servers(deps)
+        pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
         self._peers[peer_id] = pc
 
         @pc.on("connectionstatechange")
@@ -123,3 +119,10 @@ class PeerManager:
             self._dependency_error = str(exc)
             logger.warning("webrtc_dependencies_unavailable error=%s", exc)
             return None
+
+    def _ice_servers(self, deps: dict[str, object]) -> list[object]:
+        stun_server = str(self.settings.webrtc_stun_server or "").strip()
+        if not stun_server:
+            return []
+        RTCIceServer = deps["RTCIceServer"]
+        return [RTCIceServer(urls=[stun_server])]  # type: ignore[operator]

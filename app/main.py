@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import alerting_api, device_discovery_api, event_api, fall_events_api, identity_api, integration_api, rest_api, status_api, webrtc_api, ws_api
+from app.api import alerting_api, device_discovery_api, event_api, fall_events_api, identity_api, integration_api, rest_api, runtime_control_api, status_api, webrtc_api, ws_api
 from app.camera.source_manager import CameraSourceManager
 from app.core.config import get_settings, safe_configuration_snapshot
 from app.core.logger import configure_logging, get_logger
@@ -41,9 +41,12 @@ from app.services.tracking_service import TrackingService
 from app.services.tracking_worker_service import TrackingWorkerService
 from app.fall.fusion import FallFusionService
 from app.post_fall_v2.fall_binary_shadow_service import FallBinaryShadowService
+from app.post_fall_v2.follow_target import FollowTargetReceiver
 from app.post_fall_v2.post_fall_runtime_service import PostFallV2RuntimeService
 from app.post_fall_v2.qwen_fall_analyzer import PFV2QwenFallAnalyzer
 from app.post_fall_v2.vlm_review_service import VLMReviewService
+from app.post_fall_v2.evidence_exporter import PostFallEvidenceExporter
+from app.post_fall_v2.test_archive_service import PostFallTestArchiveService
 from app.integration.identity_client import IdentityClient
 from app.streaming.peer_manager import PeerManager
 from app.streaming.result_channel_manager import ResultChannelManager
@@ -144,6 +147,12 @@ async def lifespan(app: FastAPI):
         settings=settings,
         source_manager=source_manager,
     )
+    follow_target_receiver = FollowTargetReceiver(
+        enabled=settings.follow_target_enabled,
+        host=settings.follow_target_udp_host,
+        port=settings.follow_target_udp_port,
+    )
+    follow_target_receiver.start()
     post_fall_v2_vlm_review_service = VLMReviewService(
         enabled=settings.post_fall_v2_vlm_enabled,
         timeout_seconds=(
@@ -153,6 +162,15 @@ async def lifespan(app: FastAPI):
         ),
         queue_capacity=settings.post_fall_v2_qwen_queue_capacity,
     )
+    post_fall_v2_evidence_exporter = PostFallEvidenceExporter(
+        enabled=settings.post_fall_v2_evidence_export_enabled,
+        binary_output_dir=settings.post_fall_v2_binary_evidence_dir,
+        qwen_output_dir=settings.post_fall_v2_qwen_evidence_dir,
+    )
+    post_fall_test_archive_service = PostFallTestArchiveService(
+        settings.test_event_root,
+        drain_timeout_seconds=settings.test_drain_timeout_seconds,
+    )
     post_fall_v2_runtime_service = PostFallV2RuntimeService(
         settings=settings,
         source_manager=source_manager,
@@ -160,12 +178,20 @@ async def lifespan(app: FastAPI):
         result_channels=result_channels,
         event_pipeline=event_pipeline,
         vlm_review_service=post_fall_v2_vlm_review_service,
+        evidence_exporter=post_fall_v2_evidence_exporter,
+        test_archive_service=post_fall_test_archive_service,
+        fall_event_reporter=fall_event_reporter,
+        follow_target_receiver=follow_target_receiver,
+        manual_control_enabled=True,
     )
     if settings.post_fall_v2_qwen_enabled and settings.post_fall_v2_qwen_provider == "qwen_keyframe":
         post_fall_v2_vlm_review_service.analyzer = PFV2QwenFallAnalyzer.from_config(
             endpoint_url=settings.post_fall_v2_qwen_base_url,
             model_name=settings.post_fall_v2_qwen_model,
             timeout_seconds=settings.post_fall_v2_qwen_timeout_seconds,
+            num_ctx=settings.post_fall_v2_qwen_num_ctx,
+            temperature=settings.post_fall_v2_qwen_temperature,
+            context_retry_enabled=settings.post_fall_v2_qwen_context_retry_enabled,
             image_provider=post_fall_v2_runtime_service.qwen_images_for_incident,
         )
     stream_service = StreamService(
@@ -231,6 +257,7 @@ async def lifespan(app: FastAPI):
         fusion_worker_service=fusion_worker_service,
         post_fall_v2_shadow_service=post_fall_v2_shadow_service,
         post_fall_v2_runtime_service=post_fall_v2_runtime_service,
+        follow_target_receiver=follow_target_receiver,
         fall_fusion_service=fall_fusion_service,
         fall_event_reporter=fall_event_reporter,
         alert_simulator_service=alert_simulator_service,
@@ -243,14 +270,19 @@ async def lifespan(app: FastAPI):
         device_connection_service=device_connection_service,
         event_pipeline=event_pipeline,
         event_delivery_worker=event_delivery_worker,
+        post_fall_test_archive_service=post_fall_test_archive_service,
     )
     app.state.runtime = runtime
     event_pipeline.start()
     event_delivery_worker.start()
 
-    if settings.default_rtsp_url or settings.mock_camera_enabled:
+    auto_start_source = (
+        settings.default_rtsp_url
+        or (settings.go2_mjpeg_url if settings.video_source_mode == "mjpeg" else None)
+    )
+    if settings.auto_start_stream and (auto_start_source or settings.mock_camera_enabled):
         try:
-            runtime.stream_service.start(settings.default_camera_id, settings.default_rtsp_url)
+            runtime.stream_service.start(settings.default_camera_id, auto_start_source)
             logger.info("default_stream_started camera_id=%s", settings.default_camera_id)
         except Exception:
             logger.exception("default_stream_start_failed")
@@ -272,6 +304,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(status_api.router)
     app.include_router(rest_api.router)
+    app.include_router(runtime_control_api.router)
     app.include_router(webrtc_api.router)
     app.include_router(ws_api.router)
     app.include_router(identity_api.router)

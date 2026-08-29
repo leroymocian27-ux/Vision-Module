@@ -44,13 +44,13 @@ class DeviceConnectionService:
         self._last_status: dict[str, Any] | None = None
 
     def startup_resolve(self) -> DeviceResolutionResult:
-        return self.resolve(force_scan=False, scan_main=True, scan_camera=True)
+        return self.resolve(force_scan=False, scan_main=True, scan_camera=False)
 
     def manual_rescan(self) -> DeviceResolutionResult:
-        return self.resolve(force_scan=True, scan_main=True, scan_camera=True)
+        return self.resolve(force_scan=True, scan_main=True, scan_camera=False)
 
     def connect_camera(self) -> DeviceResolutionResult:
-        return self.resolve(force_scan=True, scan_main=False, scan_camera=True)
+        return self.resolve(force_scan=False, scan_main=False, scan_camera=False)
 
     def connect_main_system(self) -> DeviceResolutionResult:
         return self.resolve(force_scan=True, scan_main=True, scan_camera=False)
@@ -236,9 +236,7 @@ class DeviceConnectionService:
     def _prioritized_candidates(self, candidates: list[str], *, config: dict[str, Any]) -> list[str]:
         priority = [
             _host_from_url(self.settings.main_system_base_url),
-            _host_from_url(self.settings.default_rtsp_url),
             str(config.get("main_system", {}).get("ip") or "").strip(),
-            str(config.get("camera", {}).get("ip") or "").strip(),
         ]
         ordered: list[str] = []
         seen: set[str] = set()

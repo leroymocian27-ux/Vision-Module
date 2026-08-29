@@ -10,6 +10,7 @@ from app.camera.frame_buffer import FrameBuffer
 from app.core.config import Settings
 from app.detection.realtime_result_store import RealtimeResultStore
 from app.post_fall_v2.post_fall_runtime_service import PostFallV2RuntimeService
+from app.post_fall_v2.test_archive_service import PostFallTestArchiveService
 from app.post_fall_v2.schemas import (
     FULL_FRAME_TRAIN_MATCHED,
     BinaryFallResult,
@@ -77,9 +78,10 @@ class _Classifier:
 
 
 class _Analyzer:
-    def __init__(self, delay: float = 0.0) -> None:
+    def __init__(self, delay: float = 0.0, fall_verdict: str = "confirmed_fall") -> None:
         self.calls = 0
         self.delay = delay
+        self.fall_verdict = fall_verdict
 
     def analyze_fall_event(self, event, keyframes):
         self.calls += 1
@@ -90,16 +92,28 @@ class _Analyzer:
         return FallDetailResult(
             incident_id=event.incident_id,
             analysis_status="completed",
+            fall_verdict=self.fall_verdict,
+            high_risk_fall=1 if self.fall_verdict == "confirmed_fall" else 0,
+            scene_type="fall" if self.fall_verdict == "confirmed_fall" else "unknown",
+            recommended_action="emergency_alert" if self.fall_verdict == "confirmed_fall" else "manual_review",
+            activity="非自主失衡倒地",
+            posture_state="ground_low",
+            fall_transition_visible=self.fall_verdict == "confirmed_fall",
+            intentional_action_evidence=False,
+            recovery_observed=False,
+            persistent_ground_state="observed",
             summary="mock detail",
             model_name="mock",
         )
 
 
-def test_confirmed_event_is_created_immediately_and_qwen_waits_for_future_keyframes() -> None:
+def test_confirmed_event_is_created_immediately_and_qwen_waits_for_future_keyframes(tmp_path) -> None:
     buffer = FrameBuffer("camera_01")
     store = RealtimeResultStore()
     analyzer = _Analyzer()
     outbox = _Outbox()
+    archive = PostFallTestArchiveService(str(tmp_path / "event"), performance_sample_interval_seconds=60)
+    archive.start_test(60)
     service = PostFallV2RuntimeService(
         settings=_settings(),
         source_manager=_SourceManager(buffer),
@@ -107,6 +121,7 @@ def test_confirmed_event_is_created_immediately_and_qwen_waits_for_future_keyfra
         result_channels=_NoopChannels(),
         event_pipeline=SimpleNamespace(outbox=outbox),
         vlm_review_service=_vlm(analyzer),
+        test_archive_service=archive,
         classifier=_Classifier([0.9] * 30),
     )
 
@@ -116,6 +131,9 @@ def test_confirmed_event_is_created_immediately_and_qwen_waits_for_future_keyfra
         time.sleep(0.03)
 
     wait_for(lambda: len(service.events()) == 1 and service.events()[0].vlm_status == "collecting_keyframes")
+    incident_id = service.events()[0].incident_id
+    assert (tmp_path / "event" / "binary-classification" / "full" / incident_id / "binary_event.json").exists()
+    assert (tmp_path / "event" / "camera_01" / incident_id / "event.json").exists()
     assert analyzer.calls == 0
 
     deadline = time.monotonic() + 2
@@ -134,7 +152,7 @@ def test_confirmed_event_is_created_immediately_and_qwen_waits_for_future_keyfra
     assert outbox.records
     assert outbox.records[-1].metadata["keyframes"]["status"] == "ready"
     decision = store.latest_published("camera_01").objects[0].fall_decision
-    assert decision["fall_state"] == "confirmed"
+    assert decision["fall_state"] == "fallen_confirmed"
     assert decision["keyframe_status"] == "ready"
     assert decision["vlm_status"] == "completed"
 
@@ -214,6 +232,7 @@ def _settings() -> Settings:
         post_fall_v2_keyframe_tolerance_ms=80,
         post_fall_v2_keyframe_collection_timeout_seconds=1.0,
         event_keyframe_offsets_ms=(0, 1000),
+        follow_target_enabled=False,
     )
 
 
