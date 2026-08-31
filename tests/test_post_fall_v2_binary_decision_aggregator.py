@@ -38,6 +38,33 @@ def aggregator() -> BinaryDecisionAggregator:
     )
 
 
+def immediate_aggregator() -> BinaryDecisionAggregator:
+    return BinaryDecisionAggregator(
+        BinaryDecisionAggregatorConfig(
+            threshold=0.4,
+            window_size=10,
+            min_positive_frames=1,
+            min_consecutive_frames=1,
+            candidate_min_ms=0,
+            recovery_min_ms=1000,
+            cooldown_ms=1000,
+        )
+    )
+
+
+def test_single_threshold_hit_immediately_creates_candidate_event() -> None:
+    agg = immediate_aggregator()
+    decision = agg.update(frame(1, 0.9), now=1.0)
+
+    assert decision.state == "EVENT_ACTIVE"
+    assert decision.event_created is True
+    assert decision.incident_id is not None
+    assert decision.reason == "fall_confirmed"
+    assert decision.evidence.positive_count == 1
+    assert decision.evidence.consecutive_positive_count == 1
+    assert decision.evidence.candidate_duration_ms == 0
+
+
 def test_single_fall_frame_does_not_confirm() -> None:
     agg = aggregator()
     decision = agg.update(frame(1, 0.9), now=1.0)

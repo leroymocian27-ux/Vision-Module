@@ -59,8 +59,9 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
     assert received[0]["format"]["properties"]["posture"]["maxLength"] == 80
     assert received[0]["format"]["properties"]["summary"]["maxLength"] == 160
     assert received[0]["options"]["num_ctx"] == 8192
-    assert received[0]["options"]["num_predict"] == 192
-    assert received[0]["options"]["temperature"] == 0.1
+    assert received[0]["keep_alive"] == -1
+    assert received[0]["options"]["num_predict"] == 96
+    assert received[0]["options"]["temperature"] == 0.0
     request_text = json.dumps(received[0], ensure_ascii=False)
     assert "最终是否告警由确定性事件状态机决定" in request_text
     assert "示例 1 主动坐下看书或玩手机" in request_text
@@ -115,6 +116,7 @@ def test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_sam
     assert "示例 1 主动坐下看书或玩手机" in first_context["task"]
     assert "示例 1 主动坐下看书或玩手机" not in retry_context["task"]
     assert received[1]["options"]["num_ctx"] == 8192
+    assert received[1]["keep_alive"] == -1
 
 
 def test_qwen_fall_analyzer_parse_failure_keeps_event_context() -> None:

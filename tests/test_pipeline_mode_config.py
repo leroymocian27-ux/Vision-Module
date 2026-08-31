@@ -66,6 +66,22 @@ class PipelineModeConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             replace(settings, post_fall_v2_enabled=False)
 
+    def test_post_fall_v2_low_latency_vlm_flow_defaults(self) -> None:
+        settings = Settings()
+
+        self.assertEqual(settings.post_fall_v2_sample_fps, 10)
+        self.assertEqual(settings.post_fall_v2_event_buffer_seconds, 1)
+        self.assertEqual(settings.post_fall_v2_min_positive_frames, 1)
+        self.assertEqual(settings.post_fall_v2_min_consecutive_frames, 1)
+        self.assertEqual(settings.post_fall_v2_candidate_min_ms, 0)
+        self.assertEqual(settings.event_keyframe_offsets_ms, (-1000, -500, 0))
+        self.assertEqual(settings.post_fall_v2_qwen_max_images, 3)
+        self.assertEqual(settings.post_fall_v2_qwen_image_max_edge, 384)
+        self.assertEqual(settings.post_fall_v2_qwen_jpeg_quality, 86)
+        self.assertEqual(settings.post_fall_v2_qwen_max_output_tokens, 96)
+        self.assertEqual(settings.post_fall_v2_qwen_temperature, 0)
+        self.assertFalse(settings.post_fall_v2_keyframe_post_collection_enabled)
+
 
 if __name__ == "__main__":
     unittest.main()

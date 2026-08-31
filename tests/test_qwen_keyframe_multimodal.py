@@ -54,8 +54,9 @@ class QwenKeyframeMultimodalTest(unittest.TestCase):
             request_context = json.loads(request["messages"][1]["content"])
             self.assertEqual(
                 [item["offset_ms"] for item in request_context["context"]["keyframe_slots"]],
-                [-1000, 0, 3000],
+                [-1000, -500, 0],
             )
+            self.assertEqual(request["keep_alive"], -1)
             request_text = json.dumps(request, ensure_ascii=False)
             self.assertIn("所有描述值必须使用简体中文", request_text)
             for forbidden in ("incident_id", "track_id", "camera_id", "image_path", "keyframe_url", "archive_path", "rtsp", "token", str(Path(directory))):

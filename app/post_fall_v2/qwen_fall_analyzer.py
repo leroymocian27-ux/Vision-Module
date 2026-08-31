@@ -46,8 +46,8 @@ class PFV2QwenFallAnalyzer:
         timeout_seconds: float,
         image_provider: QwenImageProvider,
         num_ctx: int = 8192,
-        max_output_tokens: int = 192,
-        temperature: float = 0.1,
+        max_output_tokens: int = 96,
+        temperature: float = 0.0,
         context_retry_enabled: bool = True,
     ) -> "PFV2QwenFallAnalyzer":
         endpoint = urlsplit(endpoint_url)
