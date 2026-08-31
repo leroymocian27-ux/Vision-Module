@@ -24,7 +24,7 @@ def alerting_status(runtime: Runtime = Depends(get_runtime)) -> AlertControlStat
     return AlertControlStatus(
         endpoint=AlertEndpointConfig(
             base_url=str(reporter.get("endpoint_base_url") or ""),
-            path=str(reporter.get("endpoint_path") or "/video-bridge/fall-events"),
+            path=str(reporter.get("endpoint_path") or "/api/integrations/fall-detection/alerts"),
             enabled=bool(reporter.get("enabled")),
             dry_run=bool(reporter.get("dry_run")),
             token_header=str(reporter.get("token_header") or ""),
@@ -47,13 +47,23 @@ def update_alert_endpoint(
     return AlertControlStatus(
         endpoint=AlertEndpointConfig(
             base_url=str(reporter.get("endpoint_base_url") or ""),
-            path=str(reporter.get("endpoint_path") or "/video-bridge/fall-events"),
+            path=str(reporter.get("endpoint_path") or "/api/integrations/fall-detection/alerts"),
             enabled=bool(reporter.get("enabled")),
             dry_run=bool(reporter.get("dry_run")),
             token_header=str(reporter.get("token_header") or ""),
         ),
         simulation=AlertSimulationStatus(**simulation),
     )
+
+
+@router.get("/main-system/health")
+def test_main_system_connection(runtime: Runtime = Depends(get_runtime)) -> dict:
+    return runtime.fall_event_reporter.check_health()
+
+
+@router.post("/main-system/retry-pending")
+def retry_pending_main_system_alerts(runtime: Runtime = Depends(get_runtime)) -> dict:
+    return runtime.fall_event_reporter.retry_pending_alerts(include_failed=True)
 
 
 @router.post("/simulation/start", response_model=AlertSimulationStatus)
@@ -64,16 +74,13 @@ def start_alert_simulation(
     if request.base_url:
         base_url = request.base_url
     elif request.target_ip:
-        prefix = runtime.settings.main_system_base_prefix.strip() or "/api/v1"
-        if not prefix.startswith("/"):
-            prefix = f"/{prefix}"
-        base_url = f"http://{request.target_ip}:{runtime.settings.main_system_default_port}{prefix}"
+        base_url = f"http://{request.target_ip}:{runtime.settings.main_system_default_port}"
     else:
         reporter = runtime.fall_event_reporter.status()
         base_url = str(reporter.get("endpoint_base_url") or "").strip()
         if not base_url:
             raise HTTPException(status_code=400, detail="target_ip or base_url is required")
-    path = request.path or runtime.fall_event_reporter.status().get("endpoint_path") or "/video-bridge/fall-events"
+    path = request.path or runtime.fall_event_reporter.status().get("endpoint_path") or "/api/integrations/fall-detection/alerts"
     runtime.fall_event_reporter.update_endpoint(base_url=base_url, path=str(path), enabled=True)
     status = runtime.alert_simulator_service.start(
         interval_seconds=request.interval_seconds,
@@ -91,6 +98,8 @@ def send_alert_simulation_once(
 ) -> AlertSimulationSendOnceResult:
     result = runtime.alert_simulator_service.send_once(
         target_ip=request.target_ip,
+        base_url=request.base_url,
+        event_id=request.event_id,
         camera_id=request.camera_id,
         track_id=request.track_id,
         fall_prob=request.fall_prob,

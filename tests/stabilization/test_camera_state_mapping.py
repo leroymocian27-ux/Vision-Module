@@ -32,6 +32,16 @@ def test_errors_map_to_specific_public_states():
     ) == "decode_error"
 
 
+def test_mjpeg_stream_closed_is_not_reported_as_decode_error():
+    assert normalize_camera_state(
+        running=True,
+        connected=False,
+        internal_state="reconnecting",
+        frame_status="no_frame",
+        last_error="mjpeg stream closed",
+    ) == "unreachable"
+
+
 def test_stopped_is_not_disconnected():
     assert normalize_camera_state(
         running=False,

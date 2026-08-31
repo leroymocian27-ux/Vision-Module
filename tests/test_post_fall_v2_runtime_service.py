@@ -90,7 +90,7 @@ class _Analyzer:
             "activity": "低位状态不明",
             "posture_state": "ground_low",
             "fall_transition_visible": False,
-            "intentional_action_evidence": None,
+            "intentional_action_evidence": False,
             "recovery_observed": False,
             "persistent_ground_state": "observed",
         }
@@ -213,6 +213,26 @@ def test_confirmed_fall_creates_one_event_and_one_vlm_call() -> None:
     assert published.objects[0].alarm_preview["confirmed"] is False
 
 
+def test_status_filters_active_incident_by_requested_camera() -> None:
+    service, buffer, analyzer, _store = build_service([0.9, 0.9, 0.9, 0.9, 0.9])
+    service.start_for_camera("camera_01")
+    for _ in range(6):
+        buffer.update(np.zeros((48, 64, 3), dtype=np.uint8))
+        time.sleep(0.03)
+    wait_for(lambda: analyzer.calls == 1 and service.events())
+
+    camera_01_status = service.status("camera_01")
+    camera_02_status = service.status("camera_02")
+    service.stop_all()
+
+    assert camera_01_status["event_count"] == 1
+    assert camera_01_status["active_incident_id"] is not None
+    assert camera_02_status["camera_id"] == "camera_02"
+    assert camera_02_status["event_count"] == 0
+    assert camera_02_status["active_incident_id"] is None
+    assert camera_02_status["keyframe_collection_status"] == {}
+
+
 def test_vlm_completion_republishes_enriched_result_after_confirmed_event() -> None:
     service, buffer, analyzer, store = build_service([0.9, 0.9, 0.9, 0.9, 0.9])
     service.start_for_camera("camera_01")
@@ -262,7 +282,7 @@ def test_qwen_confirmed_fall_reports_to_main_system_reporter() -> None:
     assert outbox_records[0].metadata["qwen_review"]["high_risk_fall"] == 1
 
 
-def test_unclear_qwen_persistent_post_fall_stays_observe_without_high_risk_gate() -> None:
+def test_unclear_qwen_persistent_post_fall_alerts_without_high_risk_gate() -> None:
     reporter = _Reporter()
     outbox_records = []
     service, buffer, _analyzer, store = build_service(
@@ -276,15 +296,17 @@ def test_unclear_qwen_persistent_post_fall_stays_observe_without_high_risk_gate(
     for _ in range(12):
         buffer.update(np.zeros((48, 64, 3), dtype=np.uint8))
         time.sleep(0.03)
-    wait_for(lambda: len(service.events()) == 1 and service.events()[0].safety_decision is not None)
+    wait_for(lambda: len(reporter.results) == 1 and len(outbox_records) == 1)
     service.stop_all()
 
-    assert reporter.results == []
-    assert outbox_records == []
+    assert len(reporter.results) == 1
+    assert len(outbox_records) == 1
     latest = store.latest_published("camera_01")
     assert latest is not None
-    assert latest.objects[0].fall_decision["safety_outcome"] == "observe"
-    assert latest.objects[0].fall_decision["safety_path"] == "uncertain_evidence"
+    assert latest.objects[0].fall_decision["safety_outcome"] == "alert"
+    assert latest.objects[0].fall_decision["safety_path"] == "post_fall_persistent_abnormality"
+    assert latest.objects[0].fall_decision["fall_state"] == "fallen_confirmed"
+    assert latest.objects[0].alarm_preview["requires_attention"] is True
 
 
 def test_running_qwen_prevents_premature_persistent_post_fall_alert() -> None:
@@ -303,9 +325,10 @@ def test_running_qwen_prevents_premature_persistent_post_fall_alert() -> None:
     wait_for(lambda: len(service.events()) == 1)
 
     assert reporter.results == []
+    wait_for(lambda: len(reporter.results) == 1)
     service.stop_all()
 
-    assert reporter.results == []
+    assert len(reporter.results) == 1
 
 
 def test_vlm_failure_does_not_remove_fall_event() -> None:

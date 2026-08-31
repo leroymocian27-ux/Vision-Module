@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -82,37 +83,40 @@ class AlertSimulatorService:
     def send_once(
         self,
         *,
-        target_ip: str,
+        target_ip: str | None = None,
+        base_url: str | None = None,
+        event_id: str | None = None,
         camera_id: str,
         track_id: str,
         fall_prob: float,
     ) -> dict[str, Any]:
-        target_url = self._manual_target_url(target_ip)
-        payload = self._build_payload(camera_id=camera_id, track_id=track_id, fall_prob=fall_prob)
-        sent_at = utc_now_iso()
-        status_code: int | None = None
-        response_body: str | None = None
-        error: str | None = None
         try:
-            response = requests.post(
-                target_url,
-                json=payload,
-                headers=self._alert_headers(),
-                timeout=self.reporter.request_timeout_seconds(),
-            )
-            status_code = response.status_code
-            response_body = response.text[:1000]
-            ok = response.status_code < 400
-            if not ok:
-                error = response_body
-            logger.info("alert_simulator_send_once status=%s url=%s", response.status_code, target_url)
-        except requests.RequestException as exc:
-            ok = False
-            error = str(exc)
-            logger.warning("alert_simulator_send_once_error url=%s error=%s", target_url, exc)
+            target_url = self._manual_target_url(target_ip=target_ip, base_url=base_url)
+        except ValueError as exc:
+            sent_at = utc_now_iso()
+            return {
+                "ok": False,
+                "target_url": "",
+                "status_code": None,
+                "response_body": None,
+                "error": str(exc),
+                "sent_at": sent_at,
+                "incident_id": "",
+            }
+        self._apply_manual_endpoint(target_ip=target_ip, base_url=base_url)
+        payload = self._build_payload(camera_id=camera_id, track_id=track_id, fall_prob=fall_prob, incident_id=event_id)
+        sent_at = utc_now_iso()
+        delivery_result = self.reporter.send_external_alert_once(payload)
+        delivery = delivery_result.get("delivery") if isinstance(delivery_result.get("delivery"), dict) else {}
+        status_code = delivery.get("last_http_status")
+        ack = delivery.get("ack") if isinstance(delivery.get("ack"), dict) else None
+        response_body = json.dumps(ack, ensure_ascii=False, sort_keys=True) if ack is not None else None
+        error = delivery.get("last_error")
+        ok = str(delivery.get("status") or "").strip() == "delivered"
+        logger.info("alert_simulator_send_once status=%s url=%s event_id=%s", delivery.get("status"), target_url, payload.get("event_id"))
         with self._lock:
             self._sent_count += 1
-            self._last_status = f"http_{status_code}" if status_code is not None else "request_error"
+            self._last_status = str(delivery.get("status") or ("http_" + str(status_code) if status_code is not None else "request_error"))
             self._last_error = error
             self._last_sent_at = sent_at
             self._last_payload = dict(payload)
@@ -155,14 +159,16 @@ class AlertSimulatorService:
                 self._last_payload = dict(payload)
             self._stop.wait(self._interval_seconds)
 
-    def _build_payload(self, *, camera_id: str, track_id: str, fall_prob: float) -> dict[str, Any]:
+    def _build_payload(self, *, camera_id: str, track_id: str, fall_prob: float, incident_id: str | None = None) -> dict[str, Any]:
         timestamp = utc_now_iso()
-        incident_id = (
-            f"vision-fall-smoke-{camera_id}-{track_id}-"
-            f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
-        )
+        normalized_incident_id = str(incident_id or "").strip()
+        if not normalized_incident_id:
+            normalized_incident_id = (
+                f"vision-fall-smoke-{camera_id}-{track_id}-"
+                f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
+            )
         probability = max(0.0, min(1.0, float(fall_prob)))
-        return {
+        legacy_payload = {
             "camera_id": camera_id,
             "stream_name": "primary",
             "source": "vision_service_simulator",
@@ -177,7 +183,7 @@ class AlertSimulatorService:
             "fall_prob": probability,
             "fall_score": probability,
             "track_id": track_id,
-            "incident_id": incident_id,
+            "incident_id": normalized_incident_id,
             "bbox": [80.0, 60.0, 380.0, 330.0],
             "snapshot_url": None,
             "snapshot_path": None,
@@ -193,7 +199,7 @@ class AlertSimulatorService:
             },
             "metadata": {
                 "event": {
-                    "incident_id": incident_id,
+                    "incident_id": normalized_incident_id,
                     "camera_id": camera_id,
                     "stream_name": "primary",
                     "event_type": "fall_confirmed",
@@ -225,17 +231,70 @@ class AlertSimulatorService:
                 "provider": "simulator",
             },
         }
+        return {
+            "schema_version": "1.0",
+            "event_id": normalized_incident_id,
+            "incident_id": normalized_incident_id,
+            "source": "camera-service",
+            "camera_id": camera_id,
+            "track_id": track_id,
+            "event_time": timestamp,
+            "sent_at": timestamp,
+            "alert_type": "fall",
+            "alert_level": "high",
+            "safety_outcome": "alert",
+            "fall_verdict": "confirmed_fall",
+            "confidence": probability,
+            "summary": "Simulated fall alert for LAN integration verification.",
+            "recommended_action": "emergency_alert",
+            "analysis_status": "completed",
+            "binary_result": {"fall_probability": probability, "source": "simulator"},
+            "qwen_review": {
+                "analysis_status": "completed",
+                "fall_verdict": "confirmed_fall",
+                "high_risk_fall": 1,
+                "recommended_action": "emergency_alert",
+                "summary": "Simulated fall alert for LAN integration verification.",
+                "confidence": probability,
+            },
+            "evidence": [{"type": "simulator", "track_id": track_id}],
+            "test_event": True,
+            "legacy_payload": legacy_payload,
+        }
 
-    def _manual_target_url(self, target_ip: str) -> str:
+    def _manual_target_url(self, *, target_ip: str | None = None, base_url: str | None = None) -> str:
         settings = self.reporter.settings
-        ip = target_ip.strip()
-        base_prefix = str(settings.main_system_base_prefix or "/api/v1").strip()
-        if base_prefix and not base_prefix.startswith("/"):
-            base_prefix = f"/{base_prefix}"
-        path = str(settings.main_system_fall_event_path or "/video-bridge/fall-events").strip()
+        alert_path = str(getattr(settings, "main_system_alert_path", "") or "").strip()
+        legacy_path = str(getattr(settings, "main_system_fall_event_path", "") or "").strip()
+        default_path = "/api/integrations/fall-detection/alerts"
+        path = legacy_path if legacy_path and legacy_path != alert_path and legacy_path != default_path else (alert_path or legacy_path or default_path)
         if path and not path.startswith("/"):
             path = f"/{path}"
-        return f"http://{ip}:{settings.main_system_default_port}{base_prefix}{path}"
+        if base_url:
+            return f"{base_url.strip().rstrip('/')}{path}"
+        if target_ip:
+            return f"http://{target_ip.strip()}:{settings.main_system_default_port}{path}"
+        endpoint = self.reporter.endpoint_url()
+        if not endpoint:
+            raise ValueError("target_ip, base_url, or configured MAIN_SYSTEM_BASE_URL is required")
+        return endpoint
+
+    def _apply_manual_endpoint(self, *, target_ip: str | None = None, base_url: str | None = None) -> None:
+        if base_url:
+            self.reporter.update_endpoint(
+                base_url=base_url.strip().rstrip("/"),
+                path=self.reporter.status().get("endpoint_path") or "/api/integrations/fall-detection/alerts",
+                enabled=True,
+                start_worker=False,
+            )
+            return
+        if target_ip:
+            self.reporter.update_endpoint(
+                base_url=f"http://{target_ip.strip()}:{self.reporter.settings.main_system_default_port}",
+                path=self.reporter.status().get("endpoint_path") or "/api/integrations/fall-detection/alerts",
+                enabled=True,
+                start_worker=False,
+            )
 
     def _alert_headers(self) -> dict[str, str]:
         settings = self.reporter.settings

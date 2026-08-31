@@ -13,6 +13,7 @@ from app.schemas.status import (
     ConfigurationStatus,
     DetectionStatus,
     DiagnosticsStatus,
+    DisplayStreamStatus,
     FallEventReporterStatus,
     LatestResultStatus,
     IdentityStatus,
@@ -43,6 +44,7 @@ from app.fall.fusion import FallFusionService
 from app.post_fall_v2.fall_binary_shadow_service import FallBinaryShadowService
 from app.post_fall_v2.post_fall_runtime_service import PostFallV2RuntimeService
 from app.streaming.peer_manager import PeerManager
+from app.streaming.display_frame_cache import get_display_frame_cache
 from app.streaming.result_channel_manager import ResultChannelManager
 
 
@@ -147,6 +149,15 @@ class StatusService:
                     capture_output_height=worker_status.capture_output_height,
                     mjpeg_content_type=worker_status.mjpeg_content_type,
                     mjpeg_parsed_frames=worker_status.mjpeg_parsed_frames,
+                    mjpeg_received_frames=worker_status.mjpeg_received_frames,
+                    mjpeg_published_frames=worker_status.mjpeg_published_frames,
+                    mjpeg_dropped_frames=worker_status.mjpeg_dropped_frames,
+                    mjpeg_receive_fps=worker_status.mjpeg_receive_fps,
+                    mjpeg_publish_fps=worker_status.mjpeg_publish_fps,
+                    mjpeg_inter_frame_ms=worker_status.mjpeg_inter_frame_ms,
+                    mjpeg_inter_frame_max_ms=worker_status.mjpeg_inter_frame_max_ms,
+                    mjpeg_publish_latency_ms=worker_status.mjpeg_publish_latency_ms,
+                    mjpeg_publish_latency_max_ms=worker_status.mjpeg_publish_latency_max_ms,
                     last_error=worker_status.last_error,
                 )
             )
@@ -430,6 +441,7 @@ class StatusService:
                 ws_clients=self.result_channels.subscriber_count,
                 webrtc_target_fps=self.settings.webrtc_video_fps,
             ),
+            display_stream=DisplayStreamStatus(**get_display_frame_cache().status(camera_id=pipeline_camera_id)),
             tracking=tracking_status,
             identity=identity_status,
             pose=pose_status,

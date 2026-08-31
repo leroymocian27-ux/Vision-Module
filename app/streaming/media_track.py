@@ -41,7 +41,7 @@ class LatestFrameVideoTrack:
                     await asyncio.sleep(0.02)
                     frame = self._fallback_frame
                 else:
-                    frame = packet.frame
+                    frame = self._display_frame(packet.frame)
                     self._last_seq = packet.seq
                 video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
                 video_frame.pts = pts
@@ -57,5 +57,14 @@ class LatestFrameVideoTrack:
                 if wait_for > 0:
                     await asyncio.sleep(wait_for)
                 self._last_sent_at = time.monotonic()
+
+            def _display_frame(self, frame):
+                target_height = int(getattr(self._settings, "display_frame_height", 0) or 0)
+                if target_height <= 0 or frame.shape[0] <= target_height:
+                    return frame
+                import cv2
+
+                target_width = max(1, round(frame.shape[1] * target_height / frame.shape[0]))
+                return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
 
         self.track = _Track()

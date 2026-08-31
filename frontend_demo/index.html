@@ -1,103 +1,109 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI 视觉监护控制台</title>
+    <title>跌倒检测大屏</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=alarm-indicator-visible-20260829" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #04101f;
+        color: #f3f8fc;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css?v=minimal-header-v49-20260831" />
   </head>
   <body>
     <main class="app-shell">
       <header class="global-header" aria-label="页面概览">
         <div class="brand-block">
-          <div class="brand-icon" aria-hidden="true">AI</div>
+          <div class="brand-icon" aria-hidden="true">Go2</div>
           <div>
-            <p class="eyebrow">AIoT Care Console</p>
-            <h1>视觉跌倒监护工作台</h1>
-            <p class="header-copy">实时视频、目标识别、跌倒风险与链路诊断统一查看。</p>
+            <h1>跌倒检测大屏</h1>
           </div>
         </div>
-        <div class="header-status" aria-label="链路摘要">
-          <span class="status-pill"><strong>WebRTC</strong><em id="webrtcState">idle</em></span>
-          <span class="status-pill"><strong>WebSocket</strong><em id="wsState">idle</em></span>
-          <span class="status-pill"><strong>Stream</strong><em id="streamState">idle</em></span>
+        <div class="clock-panel" aria-label="系统时间">
+          <strong id="dashboardClock">--:--:--</strong>
+          <span id="dashboardDate">---- -- --</span>
         </div>
       </header>
 
-      <section class="workspace">
-        <section class="monitor-area" aria-label="实时视频监护">
-          <div class="monitor-toolbar">
-            <div>
-              <p class="eyebrow">Live Monitor</p>
-              <h2>实时画面</h2>
+      <section class="dashboard-grid" aria-label="跌倒检测数据大屏">
+        <aside class="left-column" aria-label="设备链路与控制">
+          <section class="panel link-panel">
+            <div class="panel-head compact">
+              <div><p class="eyebrow">Device Link</p><h2>设备与链路状态</h2></div>
+              <span class="soft-tag" id="eventPipelineState">inactive</span>
             </div>
-            <dl class="quick-metrics" aria-label="实时指标">
-              <div>
-                <dt>Frame</dt>
-                <dd id="frameInfo">-</dd>
-              </div>
-              <div>
-                <dt>Persons</dt>
-                <dd id="personCount">0</dd>
-              </div>
-              <div>
-                <dt>Latency</dt>
-                <dd id="latency">-</dd>
-              </div>
+            <dl class="detail-grid">
+              <dt>Go2 状态</dt><dd id="dashboardGo2Status">--</dd>
+              <dt>视频源地址</dt><dd id="dashboardVideoSource" title="">--</dd>
+              <dt>主系统</dt><dd id="dashboardMainSystemStatus">--</dd>
+              <dt>Ollama 状态</dt><dd id="dashboardOllamaStatus">--</dd>
+              <dt>事件服务</dt><dd id="dashboardEventServiceStatus">--</dd>
+              <dt>当前 Provider</dt><dd id="dashboardProviderLine">--</dd>
             </dl>
-          </div>
+          </section>
 
-          <div class="viewer">
-            <video id="video" autoplay playsinline muted></video>
-            <img id="frameFallback" class="frame-fallback" alt="" hidden />
-            <canvas id="overlay"></canvas>
-            <div
-              id="alarmIndicator"
-              class="alarm-indicator"
-              data-state="idle"
-              title="等待事件"
-              aria-label="最终告警测试指示灯：等待事件"
-            ></div>
-            <div class="viewer-empty" aria-hidden="true">
-              <strong>等待视频连接</strong>
-              <span>点击右侧 Connect 后显示实时分析画面</span>
-            </div>
-          </div>
-
-          <div id="recoveryBanner" class="recovery-banner" hidden></div>
-        </section>
-
-        <aside class="side-rail" aria-label="监护操作与诊断">
-          <section class="panel source-panel">
-            <div class="panel-head">
-              <div>
-                <p class="eyebrow">Source</p>
-                <h2>视频源配置</h2>
+          <section class="panel performance-panel" id="performancePanel">
+            <div class="panel-head compact"><div><p class="eyebrow">Performance</p><h2>性能监测</h2></div></div>
+            <div class="performance-shell">
+              <div class="performance-hero">
+                <article class="hex-metric" id="cpuMetric" data-state="idle">
+                  <div class="hex-gauge" id="cpuGauge">
+                    <span id="testCpuUsage">-</span>
+                    <em>CPU</em>
+                  </div>
+                  <strong id="testProcessCpuUsage">-</strong>
+                  <div class="sparkline" id="cpuSparkline"></div>
+                </article>
+                <article class="hex-metric" id="gpuMetric" data-state="idle">
+                  <div class="hex-gauge" id="gpuGauge">
+                    <span id="testGpuUsage">-</span>
+                    <em>GPU</em>
+                  </div>
+                  <strong id="testGpuMemory">-</strong>
+                  <div class="sparkline" id="gpuSparkline"></div>
+                </article>
               </div>
-              <span class="soft-tag">go2_front_camera</span>
-            </div>
-            <label>
-              <span>Camera ID</span>
-              <input id="cameraId" value="go2_front_camera" autocomplete="off" />
-            </label>
-            <label>
-              <span>视频流地址</span>
-              <input id="rtspUrl" value="http://192.168.8.254:8093/stream.mjpg" placeholder="HTTP MJPEG 或 RTSP 地址" autocomplete="off" />
-              <span class="hint">连接信息不会从服务状态回填到页面；演示时请勿输入或展示真实凭据。</span>
-            </label>
-            <div class="actions">
-              <button id="startBtn" class="ghost-btn" type="button">启动流</button>
-              <button id="connectBtn" class="primary-btn" type="button">连接画面</button>
+              <div class="performance-rack">
+                <div class="trend-metric">
+                  <div class="trend-head"><span>视频 FPS</span><strong id="videoFps">-</strong></div>
+                  <div class="sparkline" id="videoFpsSparkline"></div>
+                </div>
+                <div class="trend-metric">
+                  <div class="trend-head"><span>采集 FPS</span><strong id="dashboardCaptureFps">-</strong></div>
+                  <div class="sparkline" id="captureFpsSparkline"></div>
+                </div>
+                <div class="trend-metric">
+                  <div class="trend-head"><span>显示 FPS</span><strong id="dashboardDisplayFps">-</strong></div>
+                  <div class="sparkline" id="displayFpsSparkline"></div>
+                </div>
+                <div class="trend-metric">
+                  <div class="trend-head"><span>二分类耗时</span><strong id="dashboardBinaryLatency">-</strong></div>
+                  <div class="sparkline" id="binaryLatencySparkline"></div>
+                </div>
+                <div class="trend-metric">
+                  <div class="trend-head"><span>Qwen 队列</span><strong id="dashboardQwenQueue">-</strong></div>
+                  <div class="sparkline" id="qwenQueueSparkline"></div>
+                </div>
+              </div>
             </div>
           </section>
 
           <section class="panel model-control-panel">
             <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Model Control</p>
-                <h2>模型控制</h2>
-              </div>
+              <div><p class="eyebrow">Control Center</p><h2>系统控制中心</h2></div>
+              <span class="soft-tag">真实接口</span>
+            </div>
+            <label><span>Camera ID</span><input id="cameraId" value="go2_front_camera" autocomplete="off" /></label>
+            <label><span>视频流地址</span><input id="rtspUrl" value="http://192.168.8.254:8093/stream.mjpg" placeholder="HTTP MJPEG 或 RTSP 地址" autocomplete="off" /></label>
+            <div class="actions">
+              <button id="startBtn" class="ghost-btn" type="button">启动流</button>
+              <button id="connectBtn" class="primary-btn" type="button">连接画面</button>
             </div>
             <dl class="detail-grid dense control-state-grid">
               <dt>Video Stream</dt><dd id="videoControlState">OFF</dd>
@@ -118,25 +124,11 @@
           </section>
 
           <section class="panel test-control-panel">
-            <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Test Control</p>
-                <h2>测试控制</h2>
-              </div>
-            </div>
+            <div class="panel-head compact"><div><p class="eyebrow">Test</p><h2>本次测试</h2></div></div>
             <div class="time-input-grid">
-              <label>
-                <span>小时</span>
-                <input id="testHours" type="number" min="0" max="24" step="1" value="0" inputmode="numeric" />
-              </label>
-              <label>
-                <span>分钟</span>
-                <input id="testMinutes" type="number" min="0" max="59" step="1" value="0" inputmode="numeric" />
-              </label>
-              <label>
-                <span>秒</span>
-                <input id="testSeconds" type="number" min="0" max="59" step="1" value="10" inputmode="numeric" />
-              </label>
+              <label><span>小时</span><input id="testHours" type="number" min="0" max="24" step="1" value="0" inputmode="numeric" /></label>
+              <label><span>分钟</span><input id="testMinutes" type="number" min="0" max="59" step="1" value="0" inputmode="numeric" /></label>
+              <label><span>秒</span><input id="testSeconds" type="number" min="0" max="59" step="1" value="10" inputmode="numeric" /></label>
             </div>
             <div class="actions">
               <button id="startTestBtn" class="primary-btn" type="button">开始测试</button>
@@ -145,111 +137,131 @@
             <dl class="detail-grid dense test-metrics-grid">
               <dt>Session</dt><dd id="testSessionId">-</dd>
               <dt>事件</dt><dd id="testEventCounts">-</dd>
-              <dt>CPU</dt><dd id="testCpuUsage">-</dd>
-              <dt>进程 CPU</dt><dd id="testProcessCpuUsage">-</dd>
-              <dt>GPU</dt><dd id="testGpuUsage">-</dd>
-              <dt>显存</dt><dd id="testGpuMemory">-</dd>
             </dl>
             <div id="testControlResult" class="manual-alert-result">测试未开始</div>
           </section>
+        </aside>
 
-          <section class="panel discovery-panel">
-            <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Main Pairing</p>
-                <h2>主系统配对</h2>
+        <section class="center-column" aria-label="实时视频与检测链路">
+          <section class="monitor-area" aria-label="Go2实时视频">
+            <div class="monitor-toolbar">
+              <div><p class="eyebrow">Live Monitor</p><h2>Go2实时画面</h2></div>
+              <dl class="quick-metrics" aria-label="实时指标">
+                <div><dt>Frame</dt><dd id="frameInfo">-</dd></div>
+                <div><dt>Persons</dt><dd id="personCount">0</dd></div>
+                <div><dt>Latency</dt><dd id="latency">-</dd></div>
+              </dl>
+            </div>
+            <div class="viewer" data-alert-state="idle">
+              <video id="video" autoplay playsinline muted></video>
+              <img id="frameFallback" class="frame-fallback" alt="" hidden />
+              <canvas id="overlay"></canvas>
+              <div class="viewer-alert-layer" aria-hidden="true">
+                <div class="viewer-alert-banner">
+                  <span class="viewer-alert-icon">!</span>
+                  <div>
+                    <strong id="viewerAlertTitle">检测到疑似跌倒</strong>
+                    <em id="viewerAlertMeta">二分类模型已触发，正在等待千问复核</em>
+                  </div>
+                </div>
               </div>
-              <button id="rescanDevicesBtn" class="ghost-btn compact-btn" type="button">重新搜索</button>
+              <div class="video-top-overlay" aria-hidden="true">
+                <span class="live-chip"><i></i>LIVE</span>
+                <span id="videoCameraMeta">Go2 Front Camera</span>
+                <span id="videoConnectedMeta">等待视频</span>
+              </div>
+              <div class="video-status-overlay" aria-hidden="true">
+                <span id="videoOverlayBinary">Binary: --</span>
+                <span id="videoOverlayQwen">Qwen: --</span>
+                <span id="videoOverlayIncident">Event: --</span>
+              </div>
+              <div class="model-sentinel-layer" aria-label="模型状态">
+                <article class="model-sentinel" id="binaryModelNode" data-state="idle">
+                  <span class="model-sentinel-icon">B</span>
+                  <div><strong id="binaryModelState">默认监测</strong><em id="binaryModelMeta">跌倒检测模型</em></div>
+                </article>
+                <article class="model-sentinel" id="qwenModelNode" data-state="idle">
+                  <span class="model-sentinel-icon">Q</span>
+                  <div><strong id="qwenModelState">默认待机</strong><em id="qwenModelMeta">千问大模型</em></div>
+                </article>
+              </div>
+              <div id="alarmIndicator" class="alarm-indicator" data-state="idle" title="等待事件" aria-label="最终告警测试指示灯：等待事件"></div>
+              <div class="viewer-empty" aria-hidden="true"><strong>等待视频连接</strong><span>连接后显示真实实时画面</span></div>
             </div>
-            <div class="discovery-actions">
-              <button id="autoConnectDevicesBtn" class="primary-btn" type="button">一键配对</button>
-            </div>
-            <dl class="detail-grid">
-              <dt>主系统</dt><dd id="mainSystemDiscoveryState">-</dd>
-              <dt>主系统 IP</dt><dd id="mainSystemDiscoveryIp">-</dd>
-              <dt>告警端口</dt><dd id="mainSystemDiscoveryPort">-</dd>
-              <dt>告警路径</dt><dd id="mainSystemDiscoveryPath">-</dd>
-              <dt>投递状态</dt><dd id="mainSystemDeliveryState">-</dd>
-              <dt>当前网段</dt><dd id="discoverySubnet">-</dd>
-              <dt>最近发现</dt><dd id="discoveryLastScan">-</dd>
-            </dl>
-            <div id="discoveryResult" class="manual-alert-result">等待主系统配对</div>
+            <div id="recoveryBanner" class="recovery-banner" hidden></div>
           </section>
 
-          <section class="panel manual-alert">
-            <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Alarm Probe</p>
-                <h2>模拟告警发送</h2>
-              </div>
-            </div>
-            <label>
-              <span>接收服务器 IP</span>
-              <input id="manualAlertIp" value="192.168.8.253" placeholder="192.168.8.253" inputmode="decimal" />
-            </label>
-            <button id="sendManualAlertBtn" class="warning-btn" type="button">发送模拟告警</button>
-            <div id="manualAlertResult" class="manual-alert-result">尚未发送</div>
-          </section>
+        </section>
 
-          <section class="panel inspector target-panel">
+        <aside class="presentation-column" aria-label="跌倒判定展示">
+          <section class="panel result-panel" id="presentationResultPanel" data-result-state="idle" aria-live="polite">
             <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Target</p>
-                <h2>目标状态</h2>
+              <div><p class="eyebrow">Fall Verdict</p><h2>跌倒判定结果</h2></div>
+              <div class="verdict-actions">
+                <span class="soft-tag" id="presentationAnalysisStatus">持续监测</span>
+                <button id="acknowledgeFallBtn" class="acknowledge-fall-btn" type="button" hidden>确认收到并解除告警</button>
               </div>
             </div>
-            <dl class="detail-grid">
-              <dt>当前 Pipeline</dt><dd id="pipelineMode">-</dd>
-              <dt>二分类</dt><dd id="binaryLabel">-</dd>
-              <dt>Track ID</dt><dd id="targetTrackId">-</dd>
-              <dt>目标人物</dt><dd id="targetFlag">-</dd>
-              <dt>身份</dt><dd id="targetPerson">-</dd>
-              <dt>跟踪</dt><dd id="trackingState">-</dd>
-              <dt>识别</dt><dd id="identityState">-</dd>
-              <dt>行为</dt><dd id="behaviorState">-</dd>
-              <dt>姿态</dt><dd id="poseState">-</dd>
-              <dt>跌倒状态</dt><dd id="fallState">-</dd>
-              <dt>风险等级</dt><dd id="riskLevel">-</dd>
-              <dt>跌倒概率</dt><dd id="fallProbability">-</dd>
-              <dt>倒计时</dt><dd id="fallCountdown">-</dd>
-              <dt>影子概率</dt><dd id="shadowProbability">-</dd>
-              <dt>时间窗口</dt><dd id="temporalWindow">-</dd>
-              <dt>keyframe status</dt><dd id="keyframeStatus">-</dd>
-              <dt>vlm status</dt><dd id="vlmStatus">-</dd>
-              <dt>Incident ID</dt><dd id="incidentId">-</dd>
-              <dt>上报器</dt><dd id="reporterStatus">-</dd>
-            </dl>
-            <div class="event-review-copy pfv2-summary">
-              <div>
-                <strong>千问事件后分析摘要</strong>
-                <p id="vlmSummary">-</p>
-              </div>
+            <div class="verdict-hero">
+              <span>当前状态</span>
+              <strong id="realFallVerdict">持续监测中</strong>
+              <em id="realFallVerdictMeta">暂无跌倒事件</em>
             </div>
           </section>
 
-          <section class="panel event-panel" id="eventPanel" aria-live="polite">
-            <div class="panel-head compact">
+          <section class="panel qwen-description-panel" id="qwenDescriptionPanel" aria-label="中文事件描述">
+            <div class="panel-head compact"><div><p class="eyebrow">Qwen Scene Description</p><h2>中文事件描述</h2></div></div>
+            <p id="timeDescriptionZh" class="qwen-description-text" aria-live="polite"></p>
+          </section>
+
+          <section class="panel live-metrics-panel" aria-label="实时数据指标">
+            <div class="panel-head compact"><div><p class="eyebrow">Live Metrics</p><h2>实时运行指标</h2></div></div>
+            <div class="hex-kpi-grid">
+              <article class="hex-kpi" data-state="idle"><strong id="hexVideoFps">--</strong><span>视频FPS</span></article>
+              <article class="hex-kpi" data-state="idle"><strong id="hexSampleFps">--</strong><span>采样FPS</span></article>
+              <article class="hex-kpi" data-state="idle"><strong id="hexFrameAge">--</strong><span>帧延迟</span></article>
+              <article class="hex-kpi" data-state="idle"><strong id="hexBinaryLatency">--</strong><span>推理耗时</span></article>
+              <article class="hex-kpi" data-state="idle"><strong id="hexQwenQueue">--</strong><span>Qwen队列</span></article>
+              <article class="hex-kpi" data-state="idle"><strong id="hexSessionTime">00:00</strong><span>会话时长</span></article>
+            </div>
+          </section>
+
+          <section class="panel session-panel" aria-label="完整检测控制">
+            <div class="session-status-row">
               <div>
-                <p class="eyebrow">Evidence Chain</p>
-                <h2>Event Semantic Review</h2>
+                <p class="eyebrow">Detection Session</p>
+                <h2 id="sessionStateLabel">未开始</h2>
               </div>
-              <span class="soft-tag" id="eventPipelineState">inactive</span>
+              <strong id="sessionElapsed">00:00:00</strong>
             </div>
-            <div class="event-health-strip" aria-label="Event pipeline health">
-              <span><strong>Pipeline</strong><em id="eventHealthPipeline">inactive</em></span>
-              <span><strong>Worker</strong><em id="eventHealthWorker">-</em></span>
-              <span><strong>Outbox</strong><em id="eventHealthOutbox">0 / 0 / 0 / 0</em></span>
+            <div class="session-mini-line">
+              <span>Session</span><strong id="sessionIdDisplay">-</strong>
+              <span>保存</span><strong id="sessionSaveState">等待开始</strong>
             </div>
-            <div class="event-recent">
-              <div class="event-recent-head">
-                <strong>Recent Events</strong>
-                <button id="eventShowLatestBtn" class="ghost-btn compact-btn" type="button">Latest</button>
-              </div>
-              <div class="event-recent-list" id="eventRecentList">事件语义链路未启用</div>
+            <div class="session-action-row">
+              <button id="sessionToggleBtn" class="primary-btn session-toggle" type="button">开始完整检测</button>
+              <span class="hotkey-hint">F8 开始 / 结束</span>
             </div>
-            <div class="event-empty-state" id="eventEmptyState">事件语义链路未启用</div>
+            <div id="sessionControlResult" class="manual-alert-result">点击按钮或按 F8 启动完整检测链路。</div>
+          </section>
+
+        </aside>
+
+        <aside class="right-column" aria-label="事件分析">
+          <section class="panel event-analysis-card">
+            <div class="panel-head compact">
+              <div><p class="eyebrow">Event Analysis</p><h2>事件分析</h2></div>
+              <button id="eventShowLatestBtn" class="ghost-btn compact-btn" type="button">Latest</button>
+            </div>
+            <div class="event-empty-state" id="eventEmptyState">暂无事件归档</div>
+            <div class="event-focus-strip" aria-label="当前事件重点指标">
+              <strong id="eventPrimaryBadge">NO ACTIVE EVENT</strong>
+              <span><em>Risk</em><b id="eventRiskMini">-</b></span>
+              <span><em>Confidence</em><b id="eventConfidenceMini">-</b></span>
+              <span><em>Stage</em><b id="eventStageMini">LISTENING</b></span>
+            </div>
             <dl class="detail-grid dense event-summary-grid">
-              <dt>Incident</dt><dd id="eventIncidentId">-</dd>
+              <dt>Event ID</dt><dd id="eventIncidentId">-</dd>
               <dt>Camera</dt><dd id="eventCameraId">-</dd>
               <dt>Track</dt><dd id="eventTrackId">-</dd>
               <dt>Event</dt><dd id="eventType">-</dd>
@@ -260,68 +272,32 @@
               <dt>Source</dt><dd id="eventResultSource">-</dd>
               <dt>Archive</dt><dd id="eventArchiveStatus">-</dd>
             </dl>
+          </section>
+
+          <section class="panel qwen-card">
+            <div class="panel-head compact"><div><p class="eyebrow">Qwen Review</p><h2>千问复核结果</h2></div></div>
             <div class="event-review-copy">
-              <div>
-                <strong>Review Result</strong>
-                <p id="eventReviewResult">-</p>
-              </div>
-              <div>
-                <strong>Explanation</strong>
-                <p id="eventExplanation">事件语义链路未启用</p>
-              </div>
-              <div>
-                <strong>Recommended Action</strong>
-                <p id="eventRecommendedAction">-</p>
-              </div>
-              <div>
-                <strong>Uncertainty</strong>
-                <p id="eventUncertainty">-</p>
-              </div>
-              <div>
-                <strong>Degradation</strong>
-                <p id="eventDegradation" class="event-tag-list">-</p>
-              </div>
-              <div>
-                <strong>Observed Process</strong>
-                <p id="eventObservedProcess">-</p>
-              </div>
-              <div>
-                <strong>Risk Interpretation</strong>
-                <p id="eventRiskInterpretation">-</p>
-              </div>
-              <div>
-                <strong>ADL Likelihood</strong>
-                <p id="eventAdlLikelihood">-</p>
-              </div>
-              <div>
-                <strong>VLM Advisory</strong>
-                <p id="eventVlmStatus">-</p>
-              </div>
+              <div><strong>Qwen Keyframe Analysis</strong><p id="eventQwenStatus">未启用</p></div>
+              <div><strong>Scene Summary</strong><p id="eventQwenSceneSummary">-</p></div>
+              <div><strong>Posture / Movement</strong><p id="eventQwenPostureMovement">-</p></div>
+              <div><strong>Care Advice</strong><p id="eventQwenCareAdvice">-</p></div>
+              <div><strong>Uncertainty</strong><p id="eventQwenUncertainty">-</p></div>
             </div>
-            <div class="event-review-copy" aria-label="本地千问关键帧辅助描述">
-              <div>
-                <strong>Qwen Keyframe Analysis</strong>
-                <p id="eventQwenStatus">未启用</p>
-              </div>
-              <div>
-                <strong>Scene Summary</strong>
-                <p id="eventQwenSceneSummary">-</p>
-              </div>
-              <div>
-                <strong>Posture / Movement</strong>
-                <p id="eventQwenPostureMovement">-</p>
-              </div>
-              <div>
-                <strong>Care Advice</strong>
-                <p id="eventQwenCareAdvice">-</p>
-              </div>
-              <div>
-                <strong>Uncertainty</strong>
-                <p id="eventQwenUncertainty">-</p>
-              </div>
-            </div>
+            <details class="json-fold">
+              <summary>结构化 JSON</summary>
+              <pre id="qwenJsonBox">--</pre>
+            </details>
+          </section>
+
+          <section class="panel alarm-card">
+            <div class="panel-head compact"><div><p class="eyebrow">Delivery</p><h2>告警推送状态</h2></div></div>
             <div class="event-delivery-copy">
-              <strong>Delivery Status</strong>
+              <div class="delivery-track" aria-label="告警投递链路">
+                <span id="deliveryStepEvent" data-state="idle"><b>EVENT</b><em>idle</em></span>
+                <span id="deliveryStepPost" data-state="idle"><b>POST</b><em>idle</em></span>
+                <span id="deliveryStepAck" data-state="idle"><b>ACK</b><em>idle</em></span>
+                <span id="deliveryStepDelivered" data-state="idle"><b>DELIVERED</b><em>idle</em></span>
+              </div>
               <dl class="detail-grid dense event-delivery-grid">
                 <dt>Status</dt><dd id="eventDeliveryStatus">暂无投递状态</dd>
                 <dt>Mode</dt><dd id="eventDeliveryMode">not configured</dd>
@@ -333,59 +309,137 @@
                 <dt>Last Error</dt><dd id="eventDeliveryLastError">-</dd>
               </dl>
             </div>
-            <div class="event-timeline-image" id="eventTimelineImagePanel">
-              <strong>Timeline Image</strong>
-              <div id="eventTimelineImage">不提供事件过程图</div>
-            </div>
-            <div class="event-timeline-head">
-              <strong>Keyframe Timeline</strong>
-              <span>pre-fall / trigger / post-fall evidence</span>
-            </div>
-            <div class="event-timeline" id="eventTimeline" aria-label="Event keyframe timeline"></div>
           </section>
 
-          <section class="panel inspector metrics-panel">
-            <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Diagnostics</p>
-                <h2>性能诊断</h2>
-              </div>
+          <section class="panel timeline-card">
+            <div class="panel-head compact"><div><p class="eyebrow">Timeline</p><h2>事件时间线</h2></div></div>
+            <div class="event-recent">
+              <div class="event-recent-head"><strong>Recent Events</strong></div>
+              <div class="event-recent-list" id="eventRecentList">暂无事件</div>
             </div>
-            <dl class="detail-grid dense">
-              <dt>Detect FPS</dt><dd id="detectionFps">-</dd>
-              <dt>Track FPS</dt><dd id="trackingFps">-</dd>
-              <dt>Pose FPS</dt><dd id="poseFps">-</dd>
-              <dt>AI FPS</dt><dd id="aiFps">-</dd>
-              <dt>Backend Source</dt><dd id="backendSource">-</dd>
-              <dt>Video FPS</dt><dd id="videoFps">-</dd>
-              <dt>WS FPS</dt><dd id="wsFps">-</dd>
-              <dt>Overlay FPS</dt><dd id="overlayFps">-</dd>
-              <dt>Overlay Age</dt><dd id="overlayAge">-</dd>
-              <dt>Video Frames</dt><dd id="videoFrames">-</dd>
-              <dt>Video Ready</dt><dd id="videoReadyState">-</dd>
-              <dt>Video Size</dt><dd id="videoSize">-</dd>
-              <dt>PC Exists</dt><dd id="pcExists">-</dd>
-              <dt>ICE State</dt><dd id="iceConnectionState">-</dd>
-              <dt>ICE Gathering</dt><dd id="iceGatheringState">-</dd>
-              <dt>Signaling</dt><dd id="signalingState">-</dd>
-              <dt>Has Stream</dt><dd id="hasSrcObject">-</dd>
-              <dt>Tracks</dt><dd id="srcObjectTracks">-</dd>
-            </dl>
-          </section>
-
-          <section class="panel raw-panel">
-            <div class="panel-head compact">
-              <div>
-                <p class="eyebrow">Raw Status</p>
-                <h2>原始状态</h2>
-              </div>
+            <div class="event-health-strip" aria-label="Event pipeline health">
+              <span><strong>Pipeline</strong><em id="eventHealthPipeline">inactive</em></span>
+              <span><strong>Worker</strong><em id="eventHealthWorker">-</em></span>
+              <span><strong>Outbox</strong><em id="eventHealthOutbox">0 / 0 / 0 / 0</em></span>
             </div>
-            <pre id="statusBox">{}</pre>
           </section>
         </aside>
       </section>
+
+      <section class="engineering-drawer" aria-label="工程诊断">
+        <details>
+          <summary>工程诊断与保留功能</summary>
+          <div class="drawer-grid">
+            <section class="panel discovery-panel">
+              <div class="panel-head compact">
+                <div><p class="eyebrow">Main Pairing</p><h2>主系统配对</h2></div>
+                <button id="rescanDevicesBtn" class="ghost-btn compact-btn" type="button">重新搜索</button>
+              </div>
+              <div class="discovery-actions"><button id="autoConnectDevicesBtn" class="primary-btn" type="button">一键配对</button></div>
+              <label><span>主系统 URL</span><input id="mainSystemBaseUrl" placeholder="http://192.168.8.100:8000" inputmode="url" /></label>
+              <div class="discovery-actions">
+                <button id="saveMainSystemUrlBtn" class="ghost-btn compact-btn" type="button">保存 URL</button>
+                <button id="testMainSystemHealthBtn" class="ghost-btn compact-btn" type="button">测试连接</button>
+              </div>
+              <dl class="detail-grid">
+                <dt>主系统</dt><dd id="mainSystemDiscoveryState">-</dd>
+                <dt>主系统 IP</dt><dd id="mainSystemDiscoveryIp">-</dd>
+                <dt>告警端口</dt><dd id="mainSystemDiscoveryPort">-</dd>
+                <dt>告警路径</dt><dd id="mainSystemDiscoveryPath">-</dd>
+                <dt>投递状态</dt><dd id="mainSystemDeliveryState">-</dd>
+                <dt>当前网段</dt><dd id="discoverySubnet">-</dd>
+                <dt>最近发现</dt><dd id="discoveryLastScan">-</dd>
+              </dl>
+              <div id="discoveryResult" class="manual-alert-result">等待主系统配对</div>
+            </section>
+
+            <section class="panel manual-alert">
+              <div class="panel-head compact"><div><p class="eyebrow">Alarm Probe</p><h2>告警连通性探测</h2></div></div>
+              <label><span>接收服务器 IP</span><input id="manualAlertIp" value="192.168.8.253" placeholder="192.168.8.253" inputmode="decimal" /></label>
+              <button id="sendManualAlertBtn" class="warning-btn" type="button">发送模拟告警</button>
+              <div id="manualAlertResult" class="manual-alert-result">尚未发送</div>
+            </section>
+
+            <section class="panel inspector target-panel">
+              <div class="panel-head compact"><div><p class="eyebrow">Target</p><h2>目标状态</h2></div></div>
+              <dl class="detail-grid">
+                <dt>当前 Pipeline</dt><dd id="pipelineMode">-</dd>
+                <dt>二分类</dt><dd id="binaryLabel">-</dd>
+                <dt>Track ID</dt><dd id="targetTrackId">-</dd>
+                <dt>目标人物</dt><dd id="targetFlag">-</dd>
+                <dt>身份</dt><dd id="targetPerson">-</dd>
+                <dt>跟踪</dt><dd id="trackingState">-</dd>
+                <dt>识别</dt><dd id="identityState">-</dd>
+                <dt>行为</dt><dd id="behaviorState">-</dd>
+                <dt>姿态</dt><dd id="poseState">-</dd>
+                <dt>跌倒状态</dt><dd id="fallState">-</dd>
+                <dt>风险等级</dt><dd id="riskLevel">-</dd>
+                <dt>跌倒概率</dt><dd id="fallProbability">-</dd>
+                <dt>倒计时</dt><dd id="fallCountdown">-</dd>
+                <dt>影子概率</dt><dd id="shadowProbability">-</dd>
+                <dt>时间窗口</dt><dd id="temporalWindow">-</dd>
+                <dt>keyframe status</dt><dd id="keyframeStatus">-</dd>
+                <dt>vlm status</dt><dd id="vlmStatus">-</dd>
+                <dt>Incident ID</dt><dd id="incidentId">-</dd>
+                <dt>上报器</dt><dd id="reporterStatus">-</dd>
+              </dl>
+              <div class="event-review-copy pfv2-summary"><div><strong>千问事件后分析摘要</strong><p id="vlmSummary">-</p></div></div>
+            </section>
+
+            <section class="panel event-panel" id="eventPanel" aria-live="polite">
+              <div class="panel-head compact"><div><p class="eyebrow">Evidence Chain</p><h2>事件证据链</h2></div></div>
+              <div class="event-review-copy">
+                <div><strong>Review Result</strong><p id="eventReviewResult">-</p></div>
+                <div><strong>Explanation</strong><p id="eventExplanation">事件语义链路未启用</p></div>
+                <div><strong>Recommended Action</strong><p id="eventRecommendedAction">-</p></div>
+                <div><strong>Uncertainty</strong><p id="eventUncertainty">-</p></div>
+                <div><strong>Degradation</strong><p id="eventDegradation" class="event-tag-list">-</p></div>
+                <div><strong>Observed Process</strong><p id="eventObservedProcess">-</p></div>
+                <div><strong>Risk Interpretation</strong><p id="eventRiskInterpretation">-</p></div>
+                <div><strong>ADL Likelihood</strong><p id="eventAdlLikelihood">-</p></div>
+                <div><strong>VLM Advisory</strong><p id="eventVlmStatus">-</p></div>
+              </div>
+              <div class="event-timeline-image" id="eventTimelineImagePanel"><strong>Timeline Image</strong><div id="eventTimelineImage">不提供事件过程图</div></div>
+              <div class="event-timeline-head"><strong>Keyframe Timeline</strong><span>pre-fall / trigger / post-fall evidence</span></div>
+              <div class="event-timeline" id="eventTimeline" aria-label="Event keyframe timeline"></div>
+            </section>
+
+            <section class="panel inspector metrics-panel">
+              <div class="panel-head compact"><div><p class="eyebrow">Diagnostics</p><h2>性能诊断</h2></div></div>
+              <dl class="detail-grid dense">
+                <dt>Detect FPS</dt><dd id="detectionFps">-</dd>
+                <dt>Track FPS</dt><dd id="trackingFps">-</dd>
+                <dt>Pose FPS</dt><dd id="poseFps">-</dd>
+                <dt>AI FPS</dt><dd id="aiFps">-</dd>
+                <dt>Backend Source</dt><dd id="backendSource">-</dd>
+                <dt>Display FPS</dt><dd id="displayBackendFps">-</dd>
+                <dt>Display Encode</dt><dd id="displayEncodeMs">-</dd>
+                <dt>Display Cache</dt><dd id="displayCacheInfo">-</dd>
+                <dt>WS FPS</dt><dd id="wsFps">-</dd>
+                <dt>Overlay FPS</dt><dd id="overlayFps">-</dd>
+                <dt>Overlay Age</dt><dd id="overlayAge">-</dd>
+                <dt>Video Frames</dt><dd id="videoFrames">-</dd>
+                <dt>Video Ready</dt><dd id="videoReadyState">-</dd>
+                <dt>Video Size</dt><dd id="videoSize">-</dd>
+                <dt>PC Exists</dt><dd id="pcExists">-</dd>
+                <dt>ICE State</dt><dd id="iceConnectionState">-</dd>
+                <dt>ICE Gathering</dt><dd id="iceGatheringState">-</dd>
+                <dt>Signaling</dt><dd id="signalingState">-</dd>
+                <dt>Has Stream</dt><dd id="hasSrcObject">-</dd>
+                <dt>Tracks</dt><dd id="srcObjectTracks">-</dd>
+              </dl>
+            </section>
+
+            <section class="panel raw-panel">
+              <div class="panel-head compact"><div><p class="eyebrow">Raw Status</p><h2>原始状态</h2></div></div>
+              <pre id="statusBox">{}</pre>
+            </section>
+          </div>
+        </details>
+      </section>
     </main>
-    <script src="./overlay.js?v=hide-skeleton-20260708"></script>
-    <script src="./app.js?v=alarm-indicator-visible-20260829"></script>
+    <script defer src="./overlay.js?v=hide-skeleton-20260708"></script>
+    <script defer src="./dashboard-adapter.js?v=low-posture-demo-v45-20260831"></script>
+    <script defer src="./app.js?v=minimal-header-v49-20260831"></script>
   </body>
 </html>

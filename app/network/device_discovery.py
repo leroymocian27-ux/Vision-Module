@@ -144,7 +144,8 @@ def mask_url_secret(url: str | None) -> str | None:
 class MainSystemProbe:
     def __init__(self, *, port: int, base_prefix: str, timeout_ms: int) -> None:
         self.port = int(port)
-        self.base_prefix = base_prefix if base_prefix.startswith("/") else f"/{base_prefix}"
+        base_prefix = str(base_prefix or "").strip()
+        self.base_prefix = "" if not base_prefix else (base_prefix if base_prefix.startswith("/") else f"/{base_prefix}")
         self.timeout_sec = max(0.05, timeout_ms / 1000)
 
     def probe(self, ip: str) -> DeviceProbeResult:
@@ -161,7 +162,9 @@ class MainSystemProbe:
         open_ports.append(self.port)
         evidence.append("tcp_port_open")
         origin = f"http://{ip}:{self.port}"
-        health = _http_get(f"{origin}/healthz", timeout_sec=self.timeout_sec)
+        health = _http_get(f"{origin}/api/integrations/fall-detection/health", timeout_sec=self.timeout_sec)
+        if health is None:
+            health = _http_get(f"{origin}/healthz", timeout_sec=self.timeout_sec)
         if health is None:
             return DeviceProbeResult(
                 ip=ip,

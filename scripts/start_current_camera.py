@@ -105,7 +105,7 @@ def main() -> int:
     )
     parser.add_argument("--yolo11-pose-model-path", default=_env_or("YOLO11_POSE_MODEL_PATH", "yolo11n-pose.pt"))
     parser.add_argument("--enable-main-system-alerts", action="store_true", default=_env_or("MAIN_SYSTEM_ALERT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}, help="POST confirmed fall events to health-main.")
-    parser.add_argument("--main-system-base-url", default=_env_or("MAIN_SYSTEM_BASE_URL", "http://127.0.0.1:8090/api/v1"))
+    parser.add_argument("--main-system-base-url", default=_env_or("MAIN_SYSTEM_BASE_URL", ""))
     parser.add_argument("--vision-public-base-url", default=_env_or("VISION_SERVICE_PUBLIC_BASE_URL", ""))
     parser.add_argument("--alert-cooldown-seconds", type=float, default=90.0)
     parser.add_argument(
@@ -228,8 +228,10 @@ def main() -> int:
             "TEMPORAL_ONNX_PROVIDERS": "CUDAExecutionProvider,CPUExecutionProvider",
             "MAIN_SYSTEM_ALERT_ENABLED": "true" if args.enable_main_system_alerts else _env_or("MAIN_SYSTEM_ALERT_ENABLED", "false"),
             "MAIN_SYSTEM_BASE_URL": args.main_system_base_url,
-            "MAIN_SYSTEM_FALL_EVENT_PATH": "/video-bridge/fall-events",
-            "MAIN_SYSTEM_ALERT_TIMEOUT_MS": _env_or("MAIN_SYSTEM_ALERT_TIMEOUT_MS", "2500"),
+            "MAIN_SYSTEM_ALERT_PATH": "/api/integrations/fall-detection/alerts",
+            "MAIN_SYSTEM_HEALTH_PATH": "/api/integrations/fall-detection/health",
+            "MAIN_SYSTEM_CONNECT_TIMEOUT_SEC": _env_or("MAIN_SYSTEM_CONNECT_TIMEOUT_SEC", "2"),
+            "MAIN_SYSTEM_READ_TIMEOUT_SEC": _env_or("MAIN_SYSTEM_READ_TIMEOUT_SEC", "5"),
             "MAIN_SYSTEM_ALERT_COOLDOWN_SECONDS": str(args.alert_cooldown_seconds),
             "FALL_DETECTOR_CONFIRM_ENABLED": "true",
             "FALL_DETECTOR_CONFIRM_MIN_PROBABILITY": "0.15",

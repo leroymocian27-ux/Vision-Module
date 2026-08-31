@@ -45,6 +45,15 @@ class CameraStatus(BaseModel):
     capture_output_height: int | None = None
     mjpeg_content_type: str | None = None
     mjpeg_parsed_frames: int = 0
+    mjpeg_received_frames: int = 0
+    mjpeg_published_frames: int = 0
+    mjpeg_dropped_frames: int = 0
+    mjpeg_receive_fps: float = 0.0
+    mjpeg_publish_fps: float = 0.0
+    mjpeg_inter_frame_ms: float | None = None
+    mjpeg_inter_frame_max_ms: float | None = None
+    mjpeg_publish_latency_ms: float | None = None
+    mjpeg_publish_latency_max_ms: float | None = None
     last_error: str | None = None
 
 
@@ -73,6 +82,11 @@ class StreamingStatus(BaseModel):
     webrtc_clients: int = 0
     ws_clients: int = 0
     webrtc_target_fps: int | None = None
+
+
+class DisplayStreamStatus(BaseModel):
+    cache_entries: int = 0
+    cameras: dict = Field(default_factory=dict)
 
 
 class TrackingStatus(BaseModel):
@@ -246,6 +260,7 @@ class FallEventReporterStatus(BaseModel):
     endpoint: str | None = None
     endpoint_base_url: str | None = None
     endpoint_path: str | None = None
+    health_endpoint: str | None = None
     queue_size: int = 0
     cooldown_seconds: float = 0.0
     last_post_status: str | None = None
@@ -255,6 +270,13 @@ class FallEventReporterStatus(BaseModel):
     last_post_body: str | None = None
     last_payload: dict | None = None
     outbox: dict | None = None
+    main_system_enabled: bool = False
+    main_system_base_url: str | None = None
+    main_system_reachable: bool | None = None
+    main_system_last_check_at: str | None = None
+    main_system_last_success_at: str | None = None
+    main_system_last_error: str | None = None
+    main_system_pending_count: int = 0
 
 
 class StreamRuntimeAlias(BaseModel):
@@ -292,6 +314,7 @@ class VisionStatus(BaseModel):
     cameras: list[CameraStatus] = Field(default_factory=list)
     detection: list[DetectionStatus] = Field(default_factory=list)
     streaming: StreamingStatus = Field(default_factory=StreamingStatus)
+    display_stream: DisplayStreamStatus = Field(default_factory=DisplayStreamStatus)
     tracking: TrackingStatus = Field(default_factory=TrackingStatus)
     identity: IdentityStatus = Field(default_factory=IdentityStatus)
     pose: PoseStatus = Field(default_factory=PoseStatus)

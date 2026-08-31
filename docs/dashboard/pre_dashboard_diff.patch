@@ -1,0 +1,3820 @@
+diff --git a/.env.example b/.env.example
+index 53e874d..104358e 100644
+--- a/.env.example
++++ b/.env.example
+@@ -211,9 +211,13 @@ UNCERTAIN_TRACK_QUALITY_MIN=0.50
+ MAIN_SYSTEM_ALERT_ENABLED=false
+ # MAIN_SYSTEM_REPORT_DRY_RUN=true means build/report events locally but do not POST to the main system.
+ MAIN_SYSTEM_REPORT_DRY_RUN=false
+-MAIN_SYSTEM_BASE_URL=http://192.168.8.254:8000/api/v1
+-MAIN_SYSTEM_FALL_EVENT_PATH=/video-bridge/fall-events
+-MAIN_SYSTEM_ALERT_TIMEOUT_MS=2500
++MAIN_SYSTEM_BASE_URL=http://192.168.8.254:8000
++MAIN_SYSTEM_ALERT_PATH=/api/integrations/fall-detection/alerts
++MAIN_SYSTEM_HEALTH_PATH=/api/integrations/fall-detection/health
++MAIN_SYSTEM_CONNECT_TIMEOUT_SEC=2
++MAIN_SYSTEM_READ_TIMEOUT_SEC=5
++MAIN_SYSTEM_INTEGRATION_TOKEN=
++MAIN_SYSTEM_RETRY_BACKOFF_SECONDS=1,2,5
+ MAIN_SYSTEM_ALERT_COOLDOWN_SECONDS=90
+ MAIN_SYSTEM_ALERT_TOKEN=
+ MAIN_SYSTEM_ALERT_TOKEN_HEADER=X-Vision-Service-Token
+@@ -221,9 +225,9 @@ MAIN_SYSTEM_DEFAULT_PORT=8000
+ MAIN_SYSTEM_BASE_PREFIX=/api/v1
+ VISION_SERVICE_PUBLIC_BASE_URL=http://127.0.0.1:8000
+ FALL_EVENT_SNAPSHOT_DIR=logs/fall_events/snapshots
+-ALERT_OUTBOX_ENABLED=false
++ALERT_OUTBOX_ENABLED=true
+ ALERT_OUTBOX_PATH=data/alert_outbox.sqlite3
+-ALERT_OUTBOX_RETRY_LIMIT=10
++ALERT_OUTBOX_RETRY_LIMIT=4
+ 
+ # Event semantic pipeline. All capabilities remain disabled until the event
+ # lifecycle and evidence flow are explicitly enabled for a deployment.
+@@ -338,6 +342,7 @@ POST_FALL_V2_QWEN_IMAGE_MAX_EDGE=1280
+ POST_FALL_V2_QWEN_JPEG_QUALITY=85
+ POST_FALL_V2_QWEN_QUEUE_CAPACITY=2
+ POST_FALL_V2_QWEN_NUM_CTX=8192
++POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS=192
+ POST_FALL_V2_QWEN_TEMPERATURE=0.1
+ POST_FALL_V2_QWEN_CONTEXT_RETRY_ENABLED=true
+ POST_FALL_V2_KEYFRAME_POST_COLLECTION_ENABLED=true
+diff --git a/app/api/alerting_api.py b/app/api/alerting_api.py
+index 1ac2f44..7a08845 100644
+--- a/app/api/alerting_api.py
++++ b/app/api/alerting_api.py
+@@ -24,7 +24,7 @@ def alerting_status(runtime: Runtime = Depends(get_runtime)) -> AlertControlStat
+     return AlertControlStatus(
+         endpoint=AlertEndpointConfig(
+             base_url=str(reporter.get("endpoint_base_url") or ""),
+-            path=str(reporter.get("endpoint_path") or "/video-bridge/fall-events"),
++            path=str(reporter.get("endpoint_path") or "/api/integrations/fall-detection/alerts"),
+             enabled=bool(reporter.get("enabled")),
+             dry_run=bool(reporter.get("dry_run")),
+             token_header=str(reporter.get("token_header") or ""),
+@@ -47,7 +47,7 @@ def update_alert_endpoint(
+     return AlertControlStatus(
+         endpoint=AlertEndpointConfig(
+             base_url=str(reporter.get("endpoint_base_url") or ""),
+-            path=str(reporter.get("endpoint_path") or "/video-bridge/fall-events"),
++            path=str(reporter.get("endpoint_path") or "/api/integrations/fall-detection/alerts"),
+             enabled=bool(reporter.get("enabled")),
+             dry_run=bool(reporter.get("dry_run")),
+             token_header=str(reporter.get("token_header") or ""),
+@@ -56,6 +56,16 @@ def update_alert_endpoint(
+     )
+ 
+ 
++@router.get("/main-system/health")
++def test_main_system_connection(runtime: Runtime = Depends(get_runtime)) -> dict:
++    return runtime.fall_event_reporter.check_health()
++
++
++@router.post("/main-system/retry-pending")
++def retry_pending_main_system_alerts(runtime: Runtime = Depends(get_runtime)) -> dict:
++    return runtime.fall_event_reporter.retry_pending_alerts(include_failed=True)
++
++
+ @router.post("/simulation/start", response_model=AlertSimulationStatus)
+ def start_alert_simulation(
+     request: AlertSimulationStartRequest,
+@@ -64,16 +74,13 @@ def start_alert_simulation(
+     if request.base_url:
+         base_url = request.base_url
+     elif request.target_ip:
+-        prefix = runtime.settings.main_system_base_prefix.strip() or "/api/v1"
+-        if not prefix.startswith("/"):
+-            prefix = f"/{prefix}"
+-        base_url = f"http://{request.target_ip}:{runtime.settings.main_system_default_port}{prefix}"
++        base_url = f"http://{request.target_ip}:{runtime.settings.main_system_default_port}"
+     else:
+         reporter = runtime.fall_event_reporter.status()
+         base_url = str(reporter.get("endpoint_base_url") or "").strip()
+         if not base_url:
+             raise HTTPException(status_code=400, detail="target_ip or base_url is required")
+-    path = request.path or runtime.fall_event_reporter.status().get("endpoint_path") or "/video-bridge/fall-events"
++    path = request.path or runtime.fall_event_reporter.status().get("endpoint_path") or "/api/integrations/fall-detection/alerts"
+     runtime.fall_event_reporter.update_endpoint(base_url=base_url, path=str(path), enabled=True)
+     status = runtime.alert_simulator_service.start(
+         interval_seconds=request.interval_seconds,
+@@ -91,6 +98,8 @@ def send_alert_simulation_once(
+ ) -> AlertSimulationSendOnceResult:
+     result = runtime.alert_simulator_service.send_once(
+         target_ip=request.target_ip,
++        base_url=request.base_url,
++        event_id=request.event_id,
+         camera_id=request.camera_id,
+         track_id=request.track_id,
+         fall_prob=request.fall_prob,
+diff --git a/app/api/device_discovery_api.py b/app/api/device_discovery_api.py
+index bbad3bd..3e789c4 100644
+--- a/app/api/device_discovery_api.py
++++ b/app/api/device_discovery_api.py
+@@ -92,7 +92,7 @@ def _pair_main_system_alert_endpoint(runtime: Runtime, result) -> dict:
+     main_system = result.status.get("main_system") if isinstance(result.status, dict) else {}
+     connected = isinstance(main_system, dict) and main_system.get("status") == "connected"
+     base_url = str(result.settings.main_system_base_url or "").strip()
+-    path = str(result.settings.main_system_fall_event_path or "/video-bridge/fall-events")
++    path = str(getattr(result.settings, "main_system_alert_path", None) or result.settings.main_system_fall_event_path or "/api/integrations/fall-detection/alerts")
+     if reporter is not None and connected and base_url:
+         update_endpoint = getattr(reporter, "update_endpoint", None)
+         if callable(update_endpoint):
+diff --git a/app/api/integration_api.py b/app/api/integration_api.py
+index 039e08e..cfd3a2a 100644
+--- a/app/api/integration_api.py
++++ b/app/api/integration_api.py
+@@ -24,7 +24,17 @@ router = APIRouter(prefix="/integration", tags=["integration"])
+ def connection_status(runtime: Runtime = Depends(get_runtime)) -> IntegrationConnectionStatusResponse:
+     settings = runtime.settings
+     vision_base_url = settings.vision_service_public_base_url.rstrip("/")
+-    main_base_url = _origin_from_base_url(settings.main_system_base_url)
++    main_base_url = _origin_from_base_url(settings.main_system_base_url).rstrip("/")
++    reporter = getattr(runtime, "fall_event_reporter", None)
++    if reporter is not None and hasattr(reporter, "check_health"):
++        health = reporter.check_health()
++        main_status = "online" if health.get("ok") else "unavailable"
++    else:
++        main_status = _main_system_status(
++            main_base_url,
++            health_path=getattr(settings, "main_system_health_path", "/api/integrations/fall-detection/health"),
++            timeout_seconds=max(0.2, float(getattr(settings, "main_system_read_timeout_sec", settings.main_system_alert_timeout_ms / 1000))),
++        )
+     return IntegrationConnectionStatusResponse(
+         vision_service=ConnectionStatusEndpoint(
+             base_url=vision_base_url,
+@@ -32,7 +42,7 @@ def connection_status(runtime: Runtime = Depends(get_runtime)) -> IntegrationCon
+         ),
+         main_system=ConnectionStatusEndpoint(
+             base_url=main_base_url,
+-            status=_main_system_status(main_base_url, timeout_seconds=max(0.2, settings.main_system_alert_timeout_ms / 1000)),
++            status=main_status,
+         ),
+         camera=ConnectionStatusCamera(camera_id=settings.default_camera_id),
+         timestamp=utc_now_iso(),
+@@ -264,8 +274,11 @@ def _vision_service_status(runtime: Runtime) -> str:
+     return "degraded"
+ 
+ 
+-def _main_system_status(main_base_url: str, *, timeout_seconds: float) -> str:
+-    healthz_url = f"{main_base_url.rstrip('/')}/healthz"
++def _main_system_status(main_base_url: str, *, health_path: str, timeout_seconds: float) -> str:
++    path = health_path.strip() or "/api/integrations/fall-detection/health"
++    if not path.startswith("/"):
++        path = f"/{path}"
++    healthz_url = f"{main_base_url.rstrip('/')}{path}"
+     try:
+         response = requests.get(healthz_url, timeout=timeout_seconds)
+     except requests.Timeout:
+diff --git a/app/core/config.py b/app/core/config.py
+index e395404..a9b799a 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -411,6 +411,7 @@ class Settings:
+     post_fall_v2_qwen_jpeg_quality: int = _get_int("POST_FALL_V2_QWEN_JPEG_QUALITY", 85)
+     post_fall_v2_qwen_queue_capacity: int = _get_int("POST_FALL_V2_QWEN_QUEUE_CAPACITY", 2)
+     post_fall_v2_qwen_num_ctx: int = _get_int("POST_FALL_V2_QWEN_NUM_CTX", 8192)
++    post_fall_v2_qwen_max_output_tokens: int = _get_int("POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS", 192)
+     post_fall_v2_qwen_temperature: float = _get_float("POST_FALL_V2_QWEN_TEMPERATURE", 0.1)
+     post_fall_v2_qwen_context_retry_enabled: bool = _get_bool("POST_FALL_V2_QWEN_CONTEXT_RETRY_ENABLED", True)
+     post_fall_v2_evidence_export_enabled: bool = _get_bool("POST_FALL_V2_EVIDENCE_EXPORT_ENABLED", False)
+@@ -460,19 +461,30 @@ class Settings:
+ 
+     main_system_alert_enabled: bool = _get_bool("MAIN_SYSTEM_ALERT_ENABLED", False)
+     main_system_report_dry_run: bool = _get_bool("MAIN_SYSTEM_REPORT_DRY_RUN", False)
+-    main_system_base_url: str = os.getenv("MAIN_SYSTEM_BASE_URL", "http://127.0.0.1:8090/api/v1")
+-    main_system_fall_event_path: str = os.getenv("MAIN_SYSTEM_FALL_EVENT_PATH", "/video-bridge/fall-events")
++    main_system_base_url: str = os.getenv("MAIN_SYSTEM_BASE_URL", "").rstrip("/")
++    main_system_alert_path: str = os.getenv(
++        "MAIN_SYSTEM_ALERT_PATH",
++        os.getenv("MAIN_SYSTEM_FALL_EVENT_PATH", "/api/integrations/fall-detection/alerts"),
++    )
++    main_system_health_path: str = os.getenv(
++        "MAIN_SYSTEM_HEALTH_PATH",
++        "/api/integrations/fall-detection/health",
++    )
++    main_system_fall_event_path: str = main_system_alert_path
+     main_system_alert_timeout_ms: int = _get_int("MAIN_SYSTEM_ALERT_TIMEOUT_MS", 10000)
++    main_system_connect_timeout_sec: float = _get_float("MAIN_SYSTEM_CONNECT_TIMEOUT_SEC", 2.0)
++    main_system_read_timeout_sec: float = _get_float("MAIN_SYSTEM_READ_TIMEOUT_SEC", 5.0)
++    main_system_retry_backoff_seconds: str = os.getenv("MAIN_SYSTEM_RETRY_BACKOFF_SECONDS", "1,2,5")
+     main_system_alert_cooldown_seconds: float = _get_float("MAIN_SYSTEM_ALERT_COOLDOWN_SECONDS", 90.0)
+-    main_system_alert_token: str = os.getenv("MAIN_SYSTEM_ALERT_TOKEN", "")
++    main_system_alert_token: str = os.getenv("MAIN_SYSTEM_INTEGRATION_TOKEN", os.getenv("MAIN_SYSTEM_ALERT_TOKEN", ""))
+     main_system_alert_token_header: str = os.getenv("MAIN_SYSTEM_ALERT_TOKEN_HEADER", "X-Vision-Service-Token")
+     main_system_default_port: int = _get_int("MAIN_SYSTEM_DEFAULT_PORT", 8000)
+-    main_system_base_prefix: str = os.getenv("MAIN_SYSTEM_BASE_PREFIX", "/api/v1")
++    main_system_base_prefix: str = os.getenv("MAIN_SYSTEM_BASE_PREFIX", "")
+     vision_service_public_base_url: str = os.getenv("VISION_SERVICE_PUBLIC_BASE_URL", "http://127.0.0.1:8000")
+     fall_event_snapshot_dir: str = os.getenv("FALL_EVENT_SNAPSHOT_DIR", "logs/fall_events/snapshots")
+-    alert_outbox_enabled: bool = _get_bool("ALERT_OUTBOX_ENABLED", False)
++    alert_outbox_enabled: bool = _get_bool("ALERT_OUTBOX_ENABLED", True)
+     alert_outbox_path: str = os.getenv("ALERT_OUTBOX_PATH", "data/alert_outbox.sqlite3")
+-    alert_outbox_retry_limit: int = _get_int("ALERT_OUTBOX_RETRY_LIMIT", 10)
++    alert_outbox_retry_limit: int = _get_int("ALERT_OUTBOX_RETRY_LIMIT", 4)
+ 
+     # The event-semantic pipeline is additive and intentionally disabled until
+     # its evidence and delivery behavior is explicitly enabled for a deployment.
+@@ -682,6 +694,8 @@ class Settings:
+             raise ValueError("POST_FALL_V2_QWEN_QUEUE_CAPACITY must be at least 1")
+         if self.post_fall_v2_qwen_num_ctx < 4096:
+             raise ValueError("POST_FALL_V2_QWEN_NUM_CTX must be at least 4096")
++        if self.post_fall_v2_qwen_max_output_tokens < 64 or self.post_fall_v2_qwen_max_output_tokens > 1024:
++            raise ValueError("POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS must be between 64 and 1024")
+         if self.post_fall_v2_qwen_temperature < 0:
+             raise ValueError("POST_FALL_V2_QWEN_TEMPERATURE must be non-negative")
+         if self.test_drain_timeout_seconds <= 0:
+diff --git a/app/events/delivery.py b/app/events/delivery.py
+index 900fccf..88291aa 100644
+--- a/app/events/delivery.py
++++ b/app/events/delivery.py
+@@ -725,7 +725,7 @@ def _bbox(evidence: EvidencePackage) -> list[float] | None:
+ 
+ 
+ def _join_url(base_url: str, path: str) -> str:
+-    normalized_path = str(path or "").strip() or "/video-bridge/fall-events"
++    normalized_path = str(path or "").strip() or "/api/integrations/fall-detection/alerts"
+     if not normalized_path.startswith("/"):
+         normalized_path = f"/{normalized_path}"
+     return f"{str(base_url or '').rstrip('/')}{normalized_path}"
+diff --git a/app/events/qwen_keyframe.py b/app/events/qwen_keyframe.py
+index 61fb16e..29ae0f3 100644
+--- a/app/events/qwen_keyframe.py
++++ b/app/events/qwen_keyframe.py
+@@ -253,20 +253,21 @@ _POST_FALL_SYSTEM_PROMPT = """你是 Post-Fall V2 候选事件视觉复核模型
+ `high_risk_fall` 是最终跌倒告警硬控制位，只能为整数 0 或 1，默认必须为 0。
+ 只有视觉证据明确支持真实、非主动、具有危险性的跌倒，才允许 `high_risk_fall=1`。
+ 正常站立、行走、坐下、坐在椅子/沙发/床边休息、弯腰、蹲下、主动受控下降、主动躺下、低姿态看书、玩手机、休息、睡觉、仅靠近地面、仅横向姿态、仅静止、证据不足、遮挡严重、无法判断、只是建议人工复核，都必须保持 `high_risk_fall=0`。
++如果最早关键帧缺失，但后帧已经清楚呈现非自主翻倒、冲击后倒地或持续异常卧地状态，仍可判为 `confirmed_fall`；如果既看不到进入过程，也看不到这类异常倒地状态，才输出 `uncertain`。
+ “建议人工复核”绝对不等于“确认跌倒”，不能触发高危值。
+ 若 `high_risk_fall=1`，则 `fall_verdict` 必须为 `confirmed_fall`，`scene_type` 必须为 `fall`，`recommended_action` 必须为 `emergency_alert`。
+ 若 `high_risk_fall=0`，则 `fall_verdict` 不得为 `confirmed_fall`，`recommended_action` 不得为 `emergency_alert`。
+ 
+ 判定规则：
+ 
+-- `confirmed_fall`：明确看到人物发生非自主失衡或失控下落并倒地；或虽未拍到完整过程，但人物处于明显高危跌倒后异常倒地状态，持续未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息等自主行为证据。
++- `confirmed_fall`：明确看到人物发生非自主失衡或失控下落并倒地；或虽未拍到完整过程，但后帧已明确呈现非自主翻倒、冲击后倒地或异常卧地状态，持续未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息等自主行为证据。
+ - `non_fall`：站立、行走、转身、普通活动、稳定坐姿、坐椅子休息、主动低姿态、阅读、玩手机、休息或睡觉。
+ - `uncertain`：只看到人物已处于地面或低位、动作过程缺失、证据矛盾，或无法可靠判断是否发生跌倒。
+ - `insufficient_visual_evidence`：人物不可见、严重遮挡或画面质量不足。
+ 
+ 重要约束：
+ 不得仅因前级 FALL、身体倾斜、运动模糊、坐着、躺着或靠近地面而判定跌倒。
+-未看到跌倒转场时，即使人物在所提供关键帧时间跨度内持续低位，也不得推测曾发生跌倒。
++未看到跌倒转场且后帧也没有异常翻倒、冲击后倒地或持续异常卧地状态时，即使人物在所提供关键帧时间跨度内持续低位，也不得推测曾发生跌倒。
+ 如果人物臀部或躯干受到椅子、沙发、床等正常支撑面支撑，姿态稳定且没有突然失衡或失去支撑，必须输出 `scene_type=seated_rest`、`high_risk_fall=0`、`fall_verdict=non_fall`、`recommended_action=no_alert`。
+ `fall_transition_visible` 只能根据真实可见转场填写。
+ 主动行为只有在有明确可见证据时才能成立。
+@@ -287,6 +288,7 @@ class QwenKeyframeAnalyzer:
+         timeout_seconds: float,
+         transport: QwenTransport | None = None,
+         num_ctx: int = 8192,
++        max_output_tokens: int = 192,
+         temperature: float = 0.1,
+         context_retry_enabled: bool = True,
+     ) -> None:
+@@ -295,6 +297,7 @@ class QwenKeyframeAnalyzer:
+         self.timeout_seconds = max(0.1, float(timeout_seconds))
+         self._transport = transport
+         self.num_ctx = max(4096, int(num_ctx))
++        self.max_output_tokens = max(64, min(1024, int(max_output_tokens)))
+         self.temperature = max(0.0, float(temperature))
+         self.context_retry_enabled = bool(context_retry_enabled)
+         self._diagnostic_lock = Lock()
+@@ -538,14 +541,14 @@ class QwenKeyframeAnalyzer:
+             "constraints": [
+                 "只返回符合给定结构的 JSON 对象，不要输出解释、Markdown 或额外文字。",
+                 "所有自然语言描述必须使用简体中文，不得出现英文单词。",
+-                "必须输出全部结构化动作证据字段；最终是否告警由确定性事件状态机决定，不由你直接决定。",
++                "只输出安全判定所需字段；最终是否告警由确定性事件状态机决定，不由你直接决定。",
+                 "posture 不超过 40 个汉字，summary 不超过 80 个汉字；两者均只描述可见画面，不重复说明。",
+                 "示例只用于学习判定边界，不得把示例人物、物品、动作或场景复制到当前事件。",
+                 "这是前级模型触发的候选事件，候选事件可能是正常活动、主动低姿态、画面不足或真实跌倒；必须从零判断实际动作。",
+                 "先判断连续关键帧实际发生了什么：正常活动、主动受控进入低位、真实非自主失衡倒地，还是过程不清楚。",
+-                "只有真实看见较高姿态到明显非自主失衡、失控下降并真正倒地的连续过程，才允许输出 confirmed_fall，并将 fall_transition_visible 设为 true。",
++                "confirmed_fall 只允许两条证据路径：一是完整看到较高姿态到非自主失衡、失控下降并真正倒地的转场；二是虽未完整看到转场，但后帧持续异常卧地、未恢复且无主动行为证据。前者可将 fall_transition_visible 记为 true，后者可记为 false。",
+                 "人物最终坐在地面、垫子、床或躺在地面本身，不是确认跌倒的充分依据。",
+-                "只看到人物已处于低位且进入过程缺失时输出 unclear；可将 posture_state 设为 ground_low，并按画面填写 persistent_ground_state，但不得推测曾发生跌倒。",
++                "只看到人物已处于低位且进入过程缺失时输出 unclear；如果后帧持续异常卧地、未恢复且无主动行为证据，则可判 confirmed_fall。",
+                 "persistent_ground_state=observed 只表示在所给关键帧跨度内持续低位，不代表已经持续十秒。",
+                 "如果文字已经明确说明主动坐下、主动躺下、坐下看书/玩手机、躺下看书/玩手机/睡觉、主动恢复低位、没有明显失衡，则 fall_verdict 不能写成 confirmed_fall。",
+                 "如果先看见突然失衡、急速下落、肢体翻起、伸手撑地、撞向地面或非自主倒地，随后人物又坐起、阅读、玩手机或休息，仍可判 confirmed_fall。",
+@@ -556,7 +559,7 @@ class QwenKeyframeAnalyzer:
+                 "不得把二分类候选结果当作视觉事实；不得仅凭持续低位、未起身、垫子或可见性来确认跌倒，也不得忽略跨帧真实可见的失衡过程。",
+                 "触发帧或中间帧严重运动模糊时，不得把模糊本身当作失衡证据；必须结合前后清晰帧确认人体是否真的倒向地面。",
+                 "如果后帧显示人物仍在站立、行走、经过镜头或只有腿部近景，而不是倒地后的低位状态，不能确认跌倒。",
+-                "fall_verdict 和全部结构化证据字段必须一致；证据矛盾时输出 unclear，不得用结论反推或补造证据。",
++                "fall_verdict 和安全判定字段必须一致；证据矛盾时输出 unclear，不得用结论反推或补造证据。",
+                 "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
+             ],
+             "profile": "compact_retry" if compact else "full",
+@@ -586,6 +589,7 @@ class QwenKeyframeAnalyzer:
+     def _ollama_options(self) -> dict[str, float | int]:
+         return {
+             "num_ctx": self.num_ctx,
++            "num_predict": self.max_output_tokens,
+             "temperature": self.temperature,
+         }
+ 
+@@ -711,13 +715,12 @@ def _ollama_post_fall_json_schema() -> dict[str, Any]:
+         "type": "object",
+         "additionalProperties": False,
+         "required": [
+-            "schema_version", "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
+-            "positive_evidence", "negative_evidence", "activity", "posture_state",
++            "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
++            "activity", "posture_state",
+             "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
+             "persistent_ground_state", "posture", "summary", "confidence",
+         ],
+         "properties": {
+-            "schema_version": {"type": "string", "const": "pfv2_post_fall_detail.v1"},
+             "high_risk_fall": {"type": "integer", "enum": [0, 1]},
+             "fall_verdict": {"type": "string", "enum": ["confirmed_fall", "non_fall", "uncertain", "insufficient_visual_evidence"]},
+             "scene_type": {
+@@ -728,8 +731,6 @@ def _ollama_post_fall_json_schema() -> dict[str, Any]:
+                 ],
+             },
+             "recommended_action": {"type": "string", "enum": ["no_alert", "manual_review", "emergency_alert"]},
+-            "positive_evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+-            "negative_evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+             "activity": {"type": "string", "minLength": 1, "maxLength": 64},
+             "posture_state": {"type": "string", "enum": ["upright", "seated", "lying", "ground_low", "unknown"]},
+             "fall_transition_visible": {"type": "boolean"},
+@@ -813,6 +814,16 @@ def _parse_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallDetail:
+     transition_visible = _normalize_optional_bool(normalized_payload.get("fall_transition_visible"))
+     intentional_evidence = _normalize_optional_bool(normalized_payload.get("intentional_action_evidence"))
+     recovery_observed = _normalize_optional_bool(normalized_payload.get("recovery_observed"))
++    intentional_context = _has_verified_intentional_context(
++        f"{activity} {posture} {summary}",
++        posture_state=posture_state,
++    )
++    if (
++        intentional_evidence is True
++        and posture_state in {"lying", "ground_low"}
++        and not intentional_context
++    ):
++        intentional_evidence = False
+     effective_fall_verdict = _post_fall_verdict_for_internal_consistency(
+         normalized_payload.get("fall_verdict"),
+         scene_type=scene_type,
+@@ -1057,10 +1068,26 @@ def validate_post_fall_consistency(
+     normal = _looks_like_non_fall_activity(text)
+     transition_visible = _normalize_optional_bool(fall_transition_visible)
+     intentional_evidence = _normalize_optional_bool(intentional_action_evidence)
++    recovery_value = _normalize_optional_bool(recovery_observed)
+     posture_value = str(posture_state or "unknown").strip().lower()
+     persistent_value = str(persistent_ground_state or "unknown").strip().lower()
+     high_risk = _normalize_high_risk_fall(high_risk_fall) == 1
+     scene_value = _normalize_scene_type(scene_type)
++    verified_normal_scene = (
++        scene_value in {"walking", "standing", "seated_rest"}
++        and posture_value in {"upright", "seated"}
++    )
++    verified_intentional_scene = (
++        scene_value in {"intentional_low_posture", "intentional_lying"}
++        and intentional_evidence is True
++    )
++    abnormal_persistent_ground = (
++        posture_value in {"lying", "ground_low"}
++        and persistent_value == "observed"
++        and recovery_value is False
++        and intentional_evidence is not True
++        and scene_value not in {"walking", "standing", "seated_rest", "intentional_low_posture", "intentional_lying", "squatting", "bending"}
++    )
+ 
+     if raw_normalized == "confirmed_fall":
+         if transition_visible is not True:
+@@ -1069,6 +1096,7 @@ def validate_post_fall_consistency(
+                 and scene_value == "fall"
+                 and posture_value in {"lying", "ground_low"}
+                 and persistent_value == "observed"
++                and recovery_value is False
+                 and intentional_evidence is not True
+                 and not intentional
+                 and not normal
+@@ -1083,7 +1111,7 @@ def validate_post_fall_consistency(
+                 "raw_verdict": raw_text or raw_normalized,
+                 "normalized_verdict": "unclear",
+                 "consistency_status": "corrected",
+-                "consistency_reason": "confirmed_fall 必须由 fall_transition_visible=true 的真实可见转场支持",
++                "consistency_reason": "confirmed_fall 必须满足 transition_fall 或 post_fall_abnormality 两类证据之一",
+             }
+         if intentional_evidence is True or intentional or normal:
+             return {
+@@ -1107,7 +1135,7 @@ def validate_post_fall_consistency(
+         }
+ 
+     if raw_normalized == "intentional_low_posture":
+-        if transition_visible is True or intentional_evidence is not True or not intentional or explicit_fall:
++        if transition_visible is True or intentional_evidence is not True or not verified_intentional_scene or explicit_fall:
+             return {
+                 "raw_verdict": raw_text or raw_normalized,
+                 "normalized_verdict": "unclear",
+@@ -1116,20 +1144,23 @@ def validate_post_fall_consistency(
+             }
+ 
+     if raw_normalized == "non_fall":
+-        contradictory_fall = transition_visible is True or explicit_fall
+-        contradictory_ground = posture_value in {"ground_low"} and persistent_value == "observed"
+-        if contradictory_fall or contradictory_ground:
++        if transition_visible is True or explicit_fall or abnormal_persistent_ground:
+             return {
+                 "raw_verdict": raw_text or raw_normalized,
+                 "normalized_verdict": "unclear",
+                 "consistency_status": "corrected",
+                 "consistency_reason": "non_fall 与跌倒转场、明确跌倒或异常持续低位证据冲突",
+             }
++        if not (verified_normal_scene or verified_intentional_scene):
++            return {
++                "raw_verdict": raw_text or raw_normalized,
++                "normalized_verdict": "unclear",
++                "consistency_status": "corrected",
++                "consistency_reason": "non_fall 需要明确正常或主动低姿态证据支持",
++            }
+ 
+     if raw_normalized == "normal_activity":
+-        normal_posture = posture_value in {"upright", "seated"}
+-        contradictory_ground = posture_value in {"lying", "ground_low"} or persistent_value == "observed"
+-        if transition_visible is True or not normal or not normal_posture or contradictory_ground:
++        if transition_visible is True or not verified_normal_scene or abnormal_persistent_ground:
+             return {
+                 "raw_verdict": raw_text or raw_normalized,
+                 "normalized_verdict": "unclear",
+@@ -1346,6 +1377,27 @@ def _looks_like_intentional_low_posture(text: str) -> bool:
+     return False
+ 
+ 
++def _has_verified_intentional_context(text: str, *, posture_state: str) -> bool:
++    """Require a positive purpose/support signal before trusting active low posture."""
++    support_signals = (
++        "床",
++        "沙发",
++        "椅子",
++        "支撑面",
++        "支撑物",
++        "床上",
++        "沙发上",
++        "椅子上",
++    )
++    purpose_signals = ("看书", "阅读", "玩手机", "睡觉", "睡眠")
++    seated_signals = ("坐下", "坐在", "坐姿", "休息", "主动休息", "主动调整身体")
++    if posture_state == "seated":
++        return any(phrase in text for phrase in (*support_signals, *purpose_signals, *seated_signals))
++    if posture_state in {"lying", "ground_low"}:
++        return any(phrase in text for phrase in (*support_signals, *purpose_signals))
++    return any(phrase in text for phrase in (*support_signals, *purpose_signals, *seated_signals))
++
++
+ def _looks_like_clear_fall(text: str) -> bool:
+     return _looks_like_explicit_fall_sequence(text)
+ 
+@@ -1448,66 +1500,58 @@ def _build_post_fall_task(*, countercheck: bool) -> str:
+         (
+             "示例 1 主动坐下看书或玩手机",
+             "前帧站立或缓慢移动，随后主动弯腿并受控坐下，后帧稳定阅读或使用手机，没有突然失衡、失控下坠或意外倒地。",
+-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_low_posture","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["主动受控坐下","后续稳定阅读","未见失控下坠"],"activity":"主动坐下阅读","posture_state":"seated","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"not_observed","posture":"人物主动受控地坐下后活动。","summary":"连续画面显示主动坐下阅读，没有非自主失衡。","confidence":0.93}',
++            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_low_posture","recommended_action":"no_alert","activity":"主动坐下阅读","posture_state":"seated","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"not_observed","posture":"人物主动受控地坐下后活动。","summary":"连续画面显示主动坐下阅读，没有非自主失衡。","confidence":0.93}',
+         ),
+         (
+             "示例 2 主动躺下看书、玩手机或睡觉",
+-            "人物从坐姿或较高姿态有控制地向后或侧面躺下，后帧保持自然卧姿看书、玩手机或睡觉，没有失衡下落。",
+-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_lying","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["主动受控躺下","后续自然卧姿","未见失衡下落"],"activity":"主动躺下休息","posture_state":"lying","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物主动进入稳定卧姿。","summary":"动作受控且后续保持自然卧姿，属于主动躺下休息。","confidence":0.91}',
++            "人物在床、沙发等明确支撑面上有控制地向后或侧面躺下，后帧保持自然卧姿看书、玩手机或睡觉，没有失衡下落。",
++            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_lying","recommended_action":"no_alert","activity":"主动躺下休息","posture_state":"lying","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物在明确支撑面上主动进入稳定卧姿。","summary":"动作受控且后续保持自然卧姿，属于主动躺下休息。","confidence":0.91}',
+         ),
+         (
+             "示例 3 真实跌倒",
+             "人物原本站立或处于较高姿态，随后身体突然失去平衡并快速向地面倾倒，后帧已倒地，没有主动坐下或躺下的连续动作。",
+-            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","positive_evidence":["突然失衡","失控倒地","后续处于低位"],"negative_evidence":[],"activity":"非自主失衡倒地","posture_state":"ground_low","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物由较高姿态突然失衡并非自主倒地。","summary":"连续画面显示明显失衡和失控倒地过程。","confidence":0.96}',
+-        ),
+-        (
+-            "示例 4 触发帧已在翻倒过程",
+-            "最早关键帧没有完整站立画面，但触发附近可见身体横向非自然翻倒、双腿或肢体抬起、躯干失去支撑或冲击后摊倒，后帧持续倒地，且没有主动躺下的准备动作。稳定坐姿、屈膝坐姿或阅读姿态不能解释这种失控动态。",
+-            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","positive_evidence":["非自然翻倒","身体失去支撑","后续倒地"],"negative_evidence":[],"activity":"非自主翻倒","posture_state":"ground_low","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物处于非自然翻倒后倒地状态。","summary":"虽缺少完整起始动作，但可见非自主翻倒和后续倒地。","confidence":0.9}',
+-        ),
+-        (
+-            "示例 5 跌倒后再活动",
+-            "人物先明显失衡倒地，之后才坐起或拿起手机、阅读、休息；后续活动不能推翻前面的真实跌倒。",
+-            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","positive_evidence":["先发生失衡倒地","后续才恢复活动"],"negative_evidence":[],"activity":"跌倒后恢复活动","posture_state":"seated","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":true,"persistent_ground_state":"not_observed","posture":"人物先发生明显非自主跌倒，之后出现恢复动作。","summary":"后面虽能坐起，但此前已有清楚失衡倒地过程。","confidence":0.94}',
+-        ),
+-        (
+-            "示例 6 无法确认过程",
+-            "前后帧只能看见人物稳定处于低位，关键下落过程缺失，也没有非自然翻倒、冲击或失衡动态，无法可靠区分主动放低姿态和真实跌倒。",
+-            '{"high_risk_fall":0,"fall_verdict":"uncertain","scene_type":"unknown","recommended_action":"manual_review","positive_evidence":[],"negative_evidence":["关键下落过程缺失","未见非自然翻倒或冲击"],"activity":"低位状态不明","posture_state":"ground_low","fall_transition_visible":false,"intentional_action_evidence":null,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物处于低位姿态，但进入过程不清楚。","summary":"现有关键帧不足以可靠区分主动低位与真实跌倒。","confidence":0.55}',
++            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","activity":"非自主失衡倒地","posture_state":"ground_low","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物由较高姿态突然失衡并非自主倒地。","summary":"连续画面显示明显失衡和失控倒地过程。","confidence":0.96}',
+         ),
+         (
+-            "示例 7 正常行走或运动模糊误触发",
+-            "多帧显示人物正常行走、站立或经过镜头，可能有运动模糊，但没有突然失衡、身体失去支撑、冲击地面或倒地过程。",
+-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"walking","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["正常行走","未见失控下降","未见倒地过程"],"activity":"正常行走","posture_state":"upright","fall_transition_visible":false,"intentional_action_evidence":false,"recovery_observed":null,"persistent_ground_state":"not_observed","posture":"人物处于正常行走状态。","summary":"连续画面显示正常行走，未见失控下降或倒地。","confidence":0.95}',
++            "示例 4 触发帧已在翻倒过程后持续异常低位",
++            "最早关键帧没有完整跌倒起始动作，但后帧连续呈现异常倒地或贴地状态，人物未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息或睡觉的证据。",
++            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","activity":"持续异常倒地","posture_state":"ground_low","fall_transition_visible":false,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物持续处于异常倒地低位状态。","summary":"虽未完整记录跌倒瞬间，但连续画面支持异常倒地且未见自主行为或恢复。","confidence":0.88}',
+         ),
+         (
+-            "示例 8 坐在椅子上休息",
+-            "关键帧显示人物臀部或躯干由椅子、沙发或床边等支撑面稳定支撑，姿态符合正常坐姿，没有突然失衡、失去支撑或倒向地面的过程。",
+-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"seated_rest","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["身体受到椅子稳定支撑","姿态符合正常坐姿","未见突然失衡或倒地"],"activity":"坐在椅子上休息","posture_state":"seated","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":null,"persistent_ground_state":"not_observed","posture":"人物稳定坐在椅子上休息。","summary":"人物坐姿稳定且有支撑面，不属于跌倒。","confidence":0.96}',
++            "示例 5 无法确认过程",
++            "前后帧只能看见人物短暂或局部处于低位，但既没有看到进入低位的过程，也没有看到后帧异常卧地、持续贴地或未恢复状态，无法可靠区分主动低姿态和真实跌倒。",
++            '{"high_risk_fall":0,"fall_verdict":"uncertain","scene_type":"unknown","recommended_action":"manual_review","activity":"低位状态不明","posture_state":"ground_low","fall_transition_visible":false,"intentional_action_evidence":null,"recovery_observed":false,"persistent_ground_state":"not_observed","posture":"人物处于低位姿态，但进入过程不清楚。","summary":"现有关键帧不足以可靠区分主动低位与真实跌倒。","confidence":0.55}',
+         ),
+     ]
+     lines = [
+         "你是 Post-Fall V2 的视觉事件复核模型。",
+         f"当前任务为{review_mode}。",
+         "输入是一组按时间顺序排列的同一事件关键帧。",
+-        "你只判断关键帧中真实可见的动作和状态；若没有看到人物怎样进入低位，必须诚实输出 unclear。",
++        "你只判断关键帧中真实可见的动作和状态；若没有看到人物怎样进入低位，必须诚实输出 unclear，除非后帧显示异常翻倒、冲击后倒地或持续异常卧地状态。",
+         "重点区分主动且受控地放低身体，与突然失衡、失控、非自主地倒地。",
+         "前级模型只提供候选事件，不代表已经发生真实跌倒。",
+-        "必须填写 activity、posture_state、fall_transition_visible、intentional_action_evidence、recovery_observed 和 persistent_ground_state。",
++         "只填写安全判定所需字段：high_risk_fall、fall_verdict、scene_type、recommended_action、activity、posture_state、fall_transition_visible、intentional_action_evidence、recovery_observed、persistent_ground_state、posture、summary、confidence。",
++        "intentional_action_evidence=true 仅表示清楚看见主动控制身体的证据，例如明确坐下、阅读、玩手机、睡觉，或在床/沙发/椅子等正常支撑面上稳定休息。",
++        "从坐姿、半躺姿态变化为地面平躺本身不能证明是主动躺下；如果只有主动调整身体、口头休息或地面平躺，而没有阅读、玩手机、睡觉或明确支撑面等更强证据，不能把 intentional_action_evidence 写成 true。",
++        "intentional_action_evidence=false 表示人物和姿态清楚可见，但没有观察到上述主动行为证据；只有严重遮挡、严重模糊、人物不可见或图片不足时才可写 null。",
+         "必须输出 high_risk_fall，默认 0；只有明确高危真实跌倒才允许为 1。",
+         "输出四类结论：confirmed_fall、non_fall、uncertain、insufficient_visual_evidence。",
+         "清楚显示正常站立、正常行走、正常坐姿、坐椅子休息、普通活动或经过镜头，且没有真实倒地过程，输出 non_fall。",
+         "如果文字分析已经明确是主动坐下、主动躺下、坐下看书/玩手机、躺下看书/玩手机/睡觉，fall_verdict 不能写成 confirmed_fall，high_risk_fall 必须为 0。",
+         "如果画面清楚显示正常行走、站立、经过镜头、正常坐姿或普通活动，且没有明确失衡倒地过程，fall_verdict 应为 non_fall，不能写成 confirmed_fall。",
+-        "坐在椅子、沙发或床边等支撑物上休息且无失衡倒地过程时，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
++        "坐在椅子上休息、坐在沙发上休息或坐在床边等明确支撑面上，且无失衡倒地过程时，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
++        "蓝色地垫、瑜伽垫或地面软垫本身不等于正常支撑面，不能仅凭人物在垫子上就自动判定为主动躺下或休息。",
+         "如果先看到突然失衡、急速下落、肢体翻起、伸手撑地、撞向地面或非自主倒地，随后又坐起、阅读、玩手机或休息，仍可判 confirmed_fall。",
+-        "若只看到人物在全部关键帧中处于低位且没有可见进入过程，输出 uncertain、high_risk_fall=0、fall_transition_visible=false，并按画面填写低位和恢复证据。",
++        "真实跌倒允许两类确认路径：一类是完整看到站立/较高姿态到失衡、下落并倒地的转场；另一类是虽未完整拍到转场，但连续关键帧明确支持异常倒地或贴地状态、持续未恢复、且没有主动行为证据。",
++        "如果最早可见帧缺失，但后帧已明显呈现异常翻倒、冲击后倒地或持续异常卧地状态，且没有主动坐下或主动躺下证据，仍可判 confirmed_fall。",
++        "若没有看到人物怎样进入低位，且也没有后帧异常翻倒、冲击后倒地或持续异常卧地状态，必须诚实输出 unclear；如果后帧持续异常卧地、未恢复且无主动行为证据，则可判 confirmed_fall。",
+         "persistent_ground_state=observed 只描述所给关键帧跨度，不表示持续十秒。",
+         "recommended_action=manual_review 只表示可人工查看，绝对不等于跌倒告警。",
+         "high_risk_fall=1 时必须同时输出 fall_verdict=confirmed_fall、scene_type=fall、recommended_action=emergency_alert；否则必须保持 high_risk_fall=0。",
+         "若最早可见帧已经处于横向翻倒、身体失去支撑、双腿抬起或冲击后的异常姿态，不要仅凭后续坐起或静止就改判为主动躺下；应结合异常动态和后续状态判断。",
+-        "最终输出前要自检 fall_verdict 与全部结构化证据字段是否一致；不得用 verdict 反推证据。",
+-        "以下示例只用于学习判定边界，不得复制示例中的人物、物品、动作或场景到当前事件。",
++        "最终输出前要自检 fall_verdict 与安全判定字段是否一致；不得用 verdict 反推证据。",
++         "以下示例只用于学习判定边界，不得复制示例中的人物、物品、动作或场景到当前事件。",
++         "不要输出 positive_evidence、negative_evidence、movement_level、attempt_to_stand、visibility、occlusion、scene_risks、possible_help_gesture 或 review_points；展示字段由系统按精简格式补齐。",
+     ]
+     for title, scenario, answer in examples:
+         lines.extend([title + "：", scenario, f"正确输出：{answer}"])
+@@ -1518,9 +1562,9 @@ def _build_post_fall_task(*, countercheck: bool) -> str:
+     ])
+     if countercheck:
+         lines.extend([
+-            "反证复核特别要求：只有同时满足前后关键帧支持真实跌倒过程，才可输出 confirmed_fall。",
++            "反证复核特别要求：如果既没有观察到跌倒转场，也没有持续异常卧地、未恢复且无主动行为证据的后跌倒证据，才输出 unclear。",
+             "如果后帧显示人物站立、行走、坐着工作、经过镜头、只有腿部近景，或触发帧主要是运动模糊，应输出 normal_activity、intentional_low_posture 或 unclear。",
+-            "如果不能清楚看到从较高姿态非自主倒向地面并进入倒地低位状态，应输出 unclear。",
++            "如果不能清楚看到从较高姿态非自主倒向地面并进入倒地低位状态，而且也没有持续异常卧地、未恢复的证据，应输出 unclear。",
+         ])
+     return "\n".join(lines)
+ 
+@@ -1531,16 +1575,20 @@ def _build_compact_post_fall_task(*, countercheck: bool) -> str:
+         "前级二分类只表示候选，不代表真实跌倒。",
+         "必须输出 high_risk_fall，默认 0；只有明确高危真实跌倒才允许为 1。",
+         "看到较高姿态到非自主失衡、失控下落并倒地，或明确高危跌倒后异常倒地且无自主行为证据，才输出 high_risk_fall=1 和 confirmed_fall。",
+-        "只看到持续低位但没有可见进入过程时输出 high_risk_fall=0 和 uncertain，不得推测曾发生跌倒。",
++        "真实跌倒允许两类确认路径：一类是完整看到跌倒转场；另一类是虽未完整拍到转场，但连续关键帧明确支持异常倒地或贴地状态、持续未恢复、且没有主动行为证据。",
++        "只看到持续低位但没有可见进入过程，且没有后帧异常翻倒、冲击后倒地或持续异常卧地状态时输出 high_risk_fall=0 和 unclear，不得推测曾发生跌倒。",
+         "正常站立、行走、经过镜头、普通活动、稳定坐姿或坐椅子休息且无倒地过程，输出 non_fall。",
+         "主动且受控地坐下、躺下、阅读、玩手机、休息或睡觉且无失控倒地，输出 non_fall。",
++        "从坐姿、半躺姿态变化为地面平躺本身不能证明是主动躺下；只有明确主动控制证据才可判 intentional_action_evidence=true。",
+         "坐在椅子、沙发或床边等支撑面上休息，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
++        "蓝色地垫、瑜伽垫或地面软垫本身不等于正常支撑面，不能仅凭人物在垫子上就自动判定为主动躺下或休息。",
+         "过程缺失或无法可靠判断，输出 uncertain；人物不可见、遮挡严重或画面不足，输出 insufficient_visual_evidence。",
+         "不能仅凭身体倾斜、运动模糊、坐着、躺着、靠近地面或未起身确认跌倒。",
+-        "必须填写全部结构化证据字段；persistent_ground_state 只描述所给关键帧跨度。",
++         "只填写安全判定所需字段；persistent_ground_state 只描述所给关键帧跨度。",
++         "不要输出 positive_evidence、negative_evidence、movement_level、attempt_to_stand、visibility、occlusion、scene_risks、possible_help_gesture 或 review_points；展示字段由系统按精简格式补齐。",
+         "recommended_action=manual_review 不是跌倒告警；若 high_risk_fall=0，recommended_action 不得为 emergency_alert。",
+         "high_risk_fall=1 必须同时满足 fall_verdict=confirmed_fall、scene_type=fall、recommended_action=emergency_alert。",
+-        "fall_verdict 与证据字段必须一致；只返回 JSON，不输出解释或 Markdown。",
++        "fall_verdict 与安全判定字段必须一致；只返回 JSON，不输出解释或 Markdown。",
+     ]
+     if countercheck:
+         lines.append("反证复核：证据不足时不要确认跌倒，优先排除正常活动和主动低姿态。")
+diff --git a/app/main.py b/app/main.py
+index 78ca380..0d91abe 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -190,6 +190,7 @@ async def lifespan(app: FastAPI):
+             model_name=settings.post_fall_v2_qwen_model,
+             timeout_seconds=settings.post_fall_v2_qwen_timeout_seconds,
+             num_ctx=settings.post_fall_v2_qwen_num_ctx,
++            max_output_tokens=settings.post_fall_v2_qwen_max_output_tokens,
+             temperature=settings.post_fall_v2_qwen_temperature,
+             context_retry_enabled=settings.post_fall_v2_qwen_context_retry_enabled,
+             image_provider=post_fall_v2_runtime_service.qwen_images_for_incident,
+diff --git a/app/network/device_discovery.py b/app/network/device_discovery.py
+index 1b0a92f..6fafc8f 100644
+--- a/app/network/device_discovery.py
++++ b/app/network/device_discovery.py
+@@ -144,7 +144,8 @@ def mask_url_secret(url: str | None) -> str | None:
+ class MainSystemProbe:
+     def __init__(self, *, port: int, base_prefix: str, timeout_ms: int) -> None:
+         self.port = int(port)
+-        self.base_prefix = base_prefix if base_prefix.startswith("/") else f"/{base_prefix}"
++        base_prefix = str(base_prefix or "").strip()
++        self.base_prefix = "" if not base_prefix else (base_prefix if base_prefix.startswith("/") else f"/{base_prefix}")
+         self.timeout_sec = max(0.05, timeout_ms / 1000)
+ 
+     def probe(self, ip: str) -> DeviceProbeResult:
+@@ -161,7 +162,9 @@ class MainSystemProbe:
+         open_ports.append(self.port)
+         evidence.append("tcp_port_open")
+         origin = f"http://{ip}:{self.port}"
+-        health = _http_get(f"{origin}/healthz", timeout_sec=self.timeout_sec)
++        health = _http_get(f"{origin}/api/integrations/fall-detection/health", timeout_sec=self.timeout_sec)
++        if health is None:
++            health = _http_get(f"{origin}/healthz", timeout_sec=self.timeout_sec)
+         if health is None:
+             return DeviceProbeResult(
+                 ip=ip,
+diff --git a/app/post_fall_v2/post_fall_runtime_service.py b/app/post_fall_v2/post_fall_runtime_service.py
+index d438411..269baa8 100644
+--- a/app/post_fall_v2/post_fall_runtime_service.py
++++ b/app/post_fall_v2/post_fall_runtime_service.py
+@@ -4,8 +4,10 @@ import queue
+ import threading
+ import time
+ from collections import deque
++from datetime import datetime, timezone
+ from dataclasses import dataclass, field, replace
+ from pathlib import Path
++from types import SimpleNamespace
+ 
+ from app.camera.source_manager import CameraSourceManager
+ from app.core.config import Settings
+@@ -688,13 +690,24 @@ class PostFallV2RuntimeService:
+                         self._test_archive.archive_binary_frame(binary, aggregate, None, sampled)
+                     self._publish(binary, aggregate, None)
+                     continue
+-                raw = classifier.infer(sampled)
+-                binary = BinaryFrameResult.from_classifier_result(raw)
++                binary_started_at = utc_now_iso()
++                raw_result = classifier.infer(sampled)
++                binary_finished_at = utc_now_iso()
++                raw = SimpleNamespace(
++                    model=getattr(raw_result, "model", None),
++                    performance=getattr(raw_result, "performance", None),
++                    timing=SimpleNamespace(
++                        started_at=binary_started_at,
++                        finished_at=binary_finished_at,
++                    ),
++                    result=raw_result,
++                )
++                binary = BinaryFrameResult.from_classifier_result(raw_result)
+                 binary = BinaryFrameResult(**{**binary.to_record(), "frame_seq": sampled.frame_seq, "target_binding": sampled.target_binding})
+                 aggregate = self._aggregator.update(binary)
+                 self._update_state(camera_id, binary, raw, sampled)
+                 self._log_binary_progress(camera_id, binary, aggregate)
+-                event = self._maybe_create_event(aggregate, sampled)
++                event = self._maybe_create_event(aggregate, sampled, raw)
+                 if self._test_archive is not None:
+                     self._test_archive.archive_binary_frame(binary, aggregate, raw, sampled)
+                 self._publish(binary, aggregate, event)
+@@ -703,7 +716,12 @@ class PostFallV2RuntimeService:
+                 logger.exception("post_fall_v2_runtime_worker_error camera_id=%s", camera_id)
+                 model_log_bus.publish("binary", "binary_worker_error", level="error", camera_id=camera_id, error=str(exc))
+ 
+-    def _maybe_create_event(self, decision: BinaryAggregateDecision, sampled: SampledFrame) -> FallEvent | None:
++    def _maybe_create_event(
++        self,
++        decision: BinaryAggregateDecision,
++        sampled: SampledFrame,
++        raw: object | None = None,
++    ) -> FallEvent | None:
+         if not decision.event_created or not decision.incident_id:
+             return None
+         session = self._new_keyframe_session(decision, sampled)
+@@ -720,7 +738,15 @@ class PostFallV2RuntimeService:
+             "frame_seq": decision.frame_seq,
+             "fall_probability": decision.fall_probability,
+             "target_binding": sampled.target_binding,
++            "captured_at": sampled.captured_at,
++            "sampled_at": sampled.sampled_at,
++            "captured_monotonic": sampled.captured_monotonic,
++            "sampled_monotonic": sampled.sampled_monotonic,
+         }
++        timing = getattr(raw, "timing", None)
++        if timing is not None:
++            binary_evidence["binary_started_at"] = getattr(timing, "started_at", None)
++            binary_evidence["binary_finished_at"] = getattr(timing, "finished_at", None)
+         event = FallEvent(
+             incident_id=decision.incident_id,
+             camera_id=decision.camera_id,
+@@ -975,8 +1001,8 @@ class PostFallV2RuntimeService:
+         detail = event.vlm_analysis
+         transition_alert = safety.path == "transition_fall"
+         fall_state = "fallen_confirmed"
+-        confirm_source = "event_state_transition_fall" if transition_alert else "event_state_high_risk_post_fall"
+-        source = "post_fall_v2_transition" if transition_alert else "post_fall_v2_high_risk_post_fall"
++        confirm_source = "event_state_transition_fall" if transition_alert else "event_state_post_fall_persistent_abnormality"
++        source = "post_fall_v2_transition" if transition_alert else "post_fall_v2_persistent_abnormality"
+         keyframes = event.keyframes
+         evidence = event.binary_evidence if isinstance(event.binary_evidence, dict) else {}
+         target_binding = event.target_binding or evidence.get("target_binding") or {}
+@@ -1074,10 +1100,9 @@ class PostFallV2RuntimeService:
+         with self._lock:
+             latest = self._events.get(event.incident_id, event)
+         binary_state = aggregate.state if aggregate is not None else "NORMAL"
+-        elapsed_ms = (
+-            aggregate.evidence.candidate_duration_ms
+-            if aggregate is not None
+-            else int(latest.binary_evidence.get("candidate_duration_ms") or 0)
++        elapsed_ms = max(
++            aggregate.evidence.candidate_duration_ms if aggregate is not None else int(latest.binary_evidence.get("candidate_duration_ms") or 0),
++            _elapsed_ms_since(latest.confirmed_at),
+         )
+         safety = evaluate_fall_safety(
+             latest,
+@@ -1134,7 +1159,7 @@ class PostFallV2RuntimeService:
+         binary_event_active = decision.state in {"EVENT_ACTIVE", "FALL_CONFIRMED"}
+         qwen_gate = _qwen_gate_state(active_event)
+         safety = active_event.safety_decision if active_event is not None else None
+-        alert_active = bool(binary_event_active and safety is not None and safety.outcome == "alert")
++        alert_active = bool(safety is not None and safety.outcome == "alert")
+         if active_event is not None:
+             public_fall_state = _public_fall_state(safety)
+         else:
+@@ -1567,6 +1592,19 @@ def _same_safety_decision(left: FallSafetyDecision, right: FallSafetyDecision) -
+     )
+ 
+ 
++def _elapsed_ms_since(iso_timestamp: str | None) -> int:
++    if not iso_timestamp:
++        return 0
++    try:
++        normalized = iso_timestamp.replace("Z", "+00:00")
++        started = datetime.fromisoformat(normalized)
++        if started.tzinfo is None:
++            started = started.replace(tzinfo=timezone.utc)
++        return max(0, int((datetime.now(timezone.utc) - started.astimezone(timezone.utc)).total_seconds() * 1000))
++    except Exception:
++        return 0
++
++
+ def _percentile(values: list[float], percentile: float) -> float | None:
+     if not values:
+         return None
+diff --git a/app/post_fall_v2/qwen_fall_analyzer.py b/app/post_fall_v2/qwen_fall_analyzer.py
+index 9197609..040e8dd 100644
+--- a/app/post_fall_v2/qwen_fall_analyzer.py
++++ b/app/post_fall_v2/qwen_fall_analyzer.py
+@@ -14,7 +14,7 @@ from app.events.qwen_keyframe import (
+ )
+ from app.events.schemas import EventSemantics, QwenKeyframeAdvisory
+ from app.post_fall_v2.model_log_bus import model_log_bus
+-from app.post_fall_v2.schemas import FallDetailResult, FallEvent, KeyframePackage
++from app.post_fall_v2.schemas import FallDetailResult, FallEvent, KeyframePackage, utc_now_iso as event_now_iso
+ 
+ 
+ QwenImageProvider = Callable[[str], tuple[list[QwenImageInput], list[str]]]
+@@ -46,6 +46,7 @@ class PFV2QwenFallAnalyzer:
+         timeout_seconds: float,
+         image_provider: QwenImageProvider,
+         num_ctx: int = 8192,
++        max_output_tokens: int = 192,
+         temperature: float = 0.1,
+         context_retry_enabled: bool = True,
+     ) -> "PFV2QwenFallAnalyzer":
+@@ -58,6 +59,7 @@ class PFV2QwenFallAnalyzer:
+                 model_name=model_name,
+                 timeout_seconds=timeout_seconds,
+                 num_ctx=num_ctx,
++                max_output_tokens=max_output_tokens,
+                 temperature=temperature,
+                 context_retry_enabled=context_retry_enabled,
+             ),
+@@ -65,6 +67,7 @@ class PFV2QwenFallAnalyzer:
+         )
+ 
+     def analyze_fall_event(self, event: FallEvent, keyframes: KeyframePackage) -> FallDetailResult:
++        request_started_at = event_now_iso()
+         images, missing_reasons = self.image_provider(event.incident_id)
+         if not images:
+             model_log_bus.publish(
+@@ -83,6 +86,8 @@ class PFV2QwenFallAnalyzer:
+                 review_points=["检查关键帧采集链路是否可用。"],
+                 model_name=self.analyzer.model_name,
+                 error_message="no_qwen_keyframe_images",
++                request_started_at=request_started_at,
++                completed_at=event_now_iso(),
+             )
+         try:
+             model_log_bus.publish(
+@@ -219,6 +224,8 @@ class PFV2QwenFallAnalyzer:
+             fall_transition_visible=detail.fall_transition_visible,
+             intentional_action_evidence=detail.intentional_action_evidence,
+             recovery_observed=detail.recovery_observed,
++            request_started_at=request_started_at,
++            completed_at=event_now_iso(),
+         )
+ 
+ 
+@@ -305,6 +312,8 @@ def _failure(
+         confidence=None,
+         model_name=model_name,
+         error_message=message or reason,
++        request_started_at=event_now_iso(),
++        completed_at=event_now_iso(),
+     )
+ 
+ 
+diff --git a/app/post_fall_v2/safety_decision.py b/app/post_fall_v2/safety_decision.py
+index 000f034..8c361d3 100644
+--- a/app/post_fall_v2/safety_decision.py
++++ b/app/post_fall_v2/safety_decision.py
+@@ -20,28 +20,47 @@ def evaluate_fall_safety(
+     elapsed_ms = max(0, int(observation_elapsed_ms))
+     detail = event.vlm_analysis
+     verdict = detail.fall_verdict if detail is not None else None
++    effective_verdict = verdict
++    abnormal_ground_conflict = False
+ 
+     if detail is not None and detail.analysis_status == "completed":
+         high_risk_fall = _is_high_risk_fall(getattr(detail, "high_risk_fall", 0))
+-        explicit_non_fall = (
+-            (
+-                verdict == "non_fall"
+-                and not high_risk_fall
+-                and detail.fall_transition_visible is not True
+-            )
+-            or
++        abnormal_ground_conflict = bool(
+             (
+-                verdict == "normal_activity"
+-                and detail.posture_state in _NORMAL_POSTURES
+-                and detail.activity.strip().lower() not in {"", "unknown", "unclear"}
++                detail.posture_state in _GROUND_POSTURES
++                and detail.persistent_ground_state == "observed"
++                and detail.recovery_observed is False
++                and detail.intentional_action_evidence is not True
+             )
+             or (
+-                verdict == "intentional_low_posture"
+-                and detail.intentional_action_evidence is True
++                detail.posture_state in {"lying", "ground_low"}
++                and detail.scene_type
++                not in {"walking", "standing", "seated_rest", "intentional_low_posture", "intentional_lying", "squatting", "bending"}
+             )
+         )
++        if verdict == "non_fall" and abnormal_ground_conflict:
++            effective_verdict = "unclear"
++
++        verified_normal_activity = (
++            effective_verdict in {"non_fall", "normal_activity"}
++            and detail.scene_type in {"walking", "standing", "seated_rest"}
++            and detail.posture_state in _NORMAL_POSTURES
++            and detail.fall_transition_visible is not True
++            and not abnormal_ground_conflict
++        )
++        verified_intentional_activity = (
++            effective_verdict in {"non_fall", "intentional_low_posture"}
++            and detail.scene_type in {"intentional_low_posture", "intentional_lying"}
++            and detail.intentional_action_evidence is True
++            and detail.fall_transition_visible is not True
++            and not abnormal_ground_conflict
++        )
++        explicit_non_fall = (
++            not high_risk_fall
++            and (verified_normal_activity or verified_intentional_activity)
++        )
+         transition_evidence = detail.fall_transition_visible is True
+-        qwen_confirmed_high_risk = verdict == "confirmed_fall" and high_risk_fall
++        qwen_confirmed_high_risk = effective_verdict == "confirmed_fall" and high_risk_fall
+         if transition_evidence and (explicit_non_fall or detail.intentional_action_evidence is True):
+             return FallSafetyDecision(
+                 outcome="observe",
+@@ -49,7 +68,7 @@ def evaluate_fall_safety(
+                 alert_level="none",
+                 reason="semantic_review_conflicting_transition_and_intentional_evidence",
+                 observation_elapsed_ms=elapsed_ms,
+-                qwen_verdict=verdict,
++                qwen_verdict=effective_verdict,
+                 review_required=True,
+             )
+         if explicit_non_fall:
+@@ -59,7 +78,7 @@ def evaluate_fall_safety(
+                 alert_level="none",
+                 reason="semantic_review_explicit_non_fall",
+                 observation_elapsed_ms=elapsed_ms,
+-                qwen_verdict=verdict,
++                qwen_verdict=effective_verdict,
+             )
+ 
+         if qwen_confirmed_high_risk:
+@@ -70,20 +89,27 @@ def evaluate_fall_safety(
+                 alert_level="high",
+                 reason="qwen_high_risk_confirmed_fall",
+                 observation_elapsed_ms=elapsed_ms,
+-                qwen_verdict=verdict,
++                qwen_verdict=effective_verdict,
+             )
+-        if verdict == "confirmed_fall" and not high_risk_fall:
++        if effective_verdict == "confirmed_fall" and not high_risk_fall:
+             return FallSafetyDecision(
+                 outcome="observe",
+                 path="uncertain_evidence",
+                 alert_level="none",
+                 reason="confirmed_fall_without_high_risk_gate",
+                 observation_elapsed_ms=elapsed_ms,
+-                qwen_verdict=verdict,
++                qwen_verdict=effective_verdict,
+                 review_required=True,
+             )
+ 
+-    binary_persisting = binary_state in _ACTIVE_BINARY_STATES
++    persistent_ground_evidence = bool(
++        detail is not None
++        and detail.analysis_status == "completed"
++        and detail.posture_state in _GROUND_POSTURES
++        and detail.persistent_ground_state == "observed"
++        and detail.recovery_observed is False
++    )
++    binary_persisting = binary_state in _ACTIVE_BINARY_STATES or persistent_ground_evidence
+     if binary_persisting and elapsed_ms >= max(1, int(post_fall_alert_min_ms)):
+         if not followup_complete:
+             return FallSafetyDecision(
+@@ -98,21 +124,33 @@ def evaluate_fall_safety(
+         persistent_visual_evidence = bool(
+             detail is not None
+             and detail.analysis_status == "completed"
+-            and verdict == "unclear"
++            and effective_verdict == "unclear"
+             and detail.posture_state in _GROUND_POSTURES
+             and detail.persistent_ground_state == "observed"
+-            and detail.recovery_observed is not True
+-            and detail.intentional_action_evidence is not True
++            and detail.recovery_observed is False
++            and detail.intentional_action_evidence is False
++            and not (
++                detail.scene_type
++                in {
++                    "walking",
++                    "standing",
++                    "seated_rest",
++                    "intentional_low_posture",
++                    "intentional_lying",
++                    "squatting",
++                    "bending",
++                }
++                and detail.intentional_action_evidence is True
++            )
+         )
+         if persistent_visual_evidence:
+             return FallSafetyDecision(
+-                outcome="observe",
+-                path="uncertain_evidence",
+-                alert_level="none",
+-                reason="persistent_visual_ground_abnormality_requires_high_risk_gate",
++                outcome="alert",
++                path="post_fall_persistent_abnormality",
++                alert_level="high",
++                reason="persistent_post_fall_abnormality_without_intentional_evidence",
+                 observation_elapsed_ms=elapsed_ms,
+-                qwen_verdict=verdict,
+-                review_required=True,
++                qwen_verdict=effective_verdict,
+             )
+ 
+     return FallSafetyDecision(
+diff --git a/app/post_fall_v2/schemas.py b/app/post_fall_v2/schemas.py
+index 72145f8..6d6b9c2 100644
+--- a/app/post_fall_v2/schemas.py
++++ b/app/post_fall_v2/schemas.py
+@@ -314,6 +314,8 @@ class FallDetailResult:
+     fall_transition_visible: bool | None = None
+     intentional_action_evidence: bool | None = None
+     recovery_observed: bool | None = None
++    request_started_at: str | None = None
++    completed_at: str | None = None
+ 
+     def to_record(self) -> dict[str, Any]:
+         return asdict(self)
+diff --git a/app/post_fall_v2/test_archive_service.py b/app/post_fall_v2/test_archive_service.py
+index 7851f01..63b19fa 100644
+--- a/app/post_fall_v2/test_archive_service.py
++++ b/app/post_fall_v2/test_archive_service.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import csv
+ import json
+ import re
+ import subprocess
+@@ -72,7 +73,7 @@ class PostFallTestArchiveService:
+         self.test_sessions_dir = self.event_root / "test_sessions"
+         self._performance_interval = max(0.5, float(performance_sample_interval_seconds))
+         self._drain_timeout_seconds = max(1.0, float(drain_timeout_seconds))
+-        self._lock = threading.Lock()
++        self._lock = threading.RLock()
+         self._state = "idle"
+         self._running = False
+         self._session_id: str | None = None
+@@ -101,6 +102,8 @@ class PostFallTestArchiveService:
+         self._event_created_at: dict[str, str] = {}
+         self._qwen_images: dict[str, list[QwenImageInput]] = {}
+         self._event_records: dict[str, dict[str, Any]] = {}
++        self._session_manifest: dict[str, Any] | None = None
++        self._trace_records: list[dict[str, Any]] = []
+         self._performance_samples_count = 0
+         self._latest_performance: dict[str, Any] | None = None
+         self._performance_summary: dict[str, Any] = {}
+@@ -116,9 +119,54 @@ class PostFallTestArchiveService:
+             self.qwen_deny_dir,
+             self.qwen_review_dir,
+             self.test_sessions_dir,
++            self.event_root / "system_e2e_tests",
+         ):
+             directory.mkdir(parents=True, exist_ok=True)
+ 
++    def _session_manifest_path_locked(self) -> Path:
++        return self._session_dir_locked() / "SESSION_MANIFEST.json"
++
++    def _trace_path_locked(self) -> Path:
++        return self._session_dir_locked() / "TRACE_TIMELINE.jsonl"
++
++    def _summary_path_locked(self) -> Path:
++        return self._session_dir_locked() / "SUMMARY.json"
++
++    def _report_path_locked(self) -> Path:
++        return self._session_dir_locked() / "TEST_REPORT.md"
++
++    def _build_session_manifest(self, started_at: datetime, total_seconds: int) -> dict[str, Any]:
++        session_id = self._session_id or f"test_{started_at.strftime('%Y%m%d_%H%M%S')}"
++        session_dir = self.test_sessions_dir / session_id
++        return {
++            "schema_version": "post_fall_v2_test_session_manifest.v1",
++            "test_session_id": session_id,
++            "started_at": started_at.isoformat(timespec="seconds"),
++            "total_seconds": int(total_seconds),
++            "event_root": str(self.event_root),
++            "session_dir": str(session_dir),
++            "paths": {
++                "session_summary_json": str(session_dir / "session_summary.json"),
++                "summary_json": str(session_dir / "SUMMARY.json"),
++                "trace_timeline_jsonl": str(session_dir / "TRACE_TIMELINE.jsonl"),
++                "test_report_md": str(session_dir / "TEST_REPORT.md"),
++                "events_json": str(session_dir / "events.json"),
++                "binary_predictions_csv": str(session_dir / "binary_predictions.csv"),
++                "performance_csv": str(session_dir / "performance.csv"),
++            },
++            "timers": {
++                "performance_sample_interval_seconds": self._performance_interval,
++                "drain_timeout_seconds": self._drain_timeout_seconds,
++            },
++            "directories": {
++                "binary_full": str(self.binary_full_dir),
++                "binary_other": str(self.binary_other_dir),
++                "qwen_confirm": str(self.qwen_confirm_dir),
++                "qwen_deny": str(self.qwen_deny_dir),
++                "qwen_review": str(self.qwen_review_dir),
++            },
++        }
++
+     def start_test(self, total_seconds: int) -> ArchiveStatus:
+         if total_seconds <= 0:
+             raise ValueError("test duration must be greater than zero")
+@@ -154,6 +202,8 @@ class PostFallTestArchiveService:
+             self._event_created_at.clear()
+             self._qwen_images.clear()
+             self._event_records.clear()
++            self._trace_records.clear()
++            self._session_manifest = self._build_session_manifest(now, total_seconds)
+             self._performance_samples_count = 0
+             self._latest_performance = None
+             self._performance_summary = {}
+@@ -161,6 +211,14 @@ class PostFallTestArchiveService:
+             self._start_performance_monitor_locked()
+         self.ensure_directories()
+         self._write_session_summary()
++        self._append_trace_locked(
++            "test_started",
++            {
++                "test_session_id": session_id,
++                "started_at": self._started_at,
++                "total_seconds": self._total_seconds,
++            },
++        )
+         return self.status()
+ 
+     def stop_test(self) -> ArchiveStatus:
+@@ -178,6 +236,14 @@ class PostFallTestArchiveService:
+             if self._state == "completed":
+                 self._stop_performance_monitor_locked()
+             self._append_log_locked("stop_test_requested")
++            self._append_trace_locked(
++                "test_stop_requested",
++                {
++                    "test_session_id": self._session_id,
++                    "stopped_at": self._stopped_at,
++                    "state": self._state,
++                },
++            )
+         self._write_session_summary()
+         return self.status()
+ 
+@@ -228,6 +294,31 @@ class PostFallTestArchiveService:
+             session_id = self._session_id
+             self._observe_binary_prediction_locked(binary, decision)
+             self._append_binary_prediction_locked(binary, decision, raw, sampled)
++            performance = getattr(raw, "performance", None)
++            captured_monotonic = getattr(sampled, "captured_monotonic", None)
++            frame_age_ms = None
++            if captured_monotonic is not None:
++                try:
++                    frame_age_ms = round((time.monotonic() - float(captured_monotonic)) * 1000, 2)
++                except (TypeError, ValueError):
++                    frame_age_ms = None
++            self._append_trace_locked(
++                "binary_frame",
++                {
++                    "incident_id": decision.incident_id,
++                    "camera_id": binary.camera_id,
++                    "frame_id": binary.frame_id,
++                    "frame_seq": binary.frame_seq,
++                    "decision_label": binary.decision_label,
++                    "fall_probability": binary.fall_probability,
++                    "aggregate_state": decision.state,
++                    "frame_age_ms": frame_age_ms,
++                    "queue_delay_ms": getattr(performance, "queue_delay_ms", None),
++                    "inference_ms": getattr(performance, "inference_ms", None),
++                    "total_ms": getattr(performance, "total_ms", None),
++                    "provider": getattr(getattr(raw, "model", None), "provider", None),
++                },
++            )
+             if binary.decision_label != "NON_FALL":
+                 return
+             self._binary_other_count += 1
+@@ -271,6 +362,21 @@ class PostFallTestArchiveService:
+                 "binary_full",
+                 list(missing_reasons or []),
+             )
++            self._append_trace_locked(
++                "binary_event",
++                {
++                    "incident_id": event.incident_id,
++                    "camera_id": event.camera_id,
++                    "event_created_at": event.created_at,
++                    "confirmed_at": event.confirmed_at,
++                    "vlm_status": event.vlm_status,
++                    "candidate_duration_ms": event.binary_evidence.get("candidate_duration_ms") if isinstance(event.binary_evidence, dict) else None,
++                    "window_size": event.binary_evidence.get("window_size") if isinstance(event.binary_evidence, dict) else None,
++                    "positive_count": event.binary_evidence.get("positive_count") if isinstance(event.binary_evidence, dict) else None,
++                    "consecutive_positive_count": event.binary_evidence.get("consecutive_positive_count") if isinstance(event.binary_evidence, dict) else None,
++                    "reason": event.binary_evidence.get("reason") if isinstance(event.binary_evidence, dict) else None,
++                },
++            )
+             self._append_log_locked(f"binary_event_archived incident_id={event.incident_id}")
+             self._write_session_events_locked()
+             self._write_session_summary_locked()
+@@ -329,12 +435,16 @@ class PostFallTestArchiveService:
+         event_dir = root / _safe_name(event.incident_id)
+         event_dir.mkdir(parents=True, exist_ok=True)
+         image_files = _write_images(event_dir, images)
++        completed_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
++        qwen_review = _compact_qwen_review(detail)
++        _write_json(event_dir / "qwen_review.json", qwen_review)
+         payload = {
+             "schema_version": "post_fall_v2_test_qwen_review.v1",
+             "test_session_id": session_id,
+             "created_during_test": True,
+             "event_created_at": self._event_created_at.get(event.incident_id, event.created_at),
+-            "qwen_completed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
++            "qwen_request_started_at": detail.request_started_at,
++            "qwen_completed_at": completed_at,
+             "stage": f"qwen_{bucket}",
+             "incident_id": event.incident_id,
+             "camera_id": event.camera_id,
+@@ -342,16 +452,18 @@ class PostFallTestArchiveService:
+             "analysis_status": detail.analysis_status,
+             "qwen_analysis": detail.to_record(),
+             "keyframes": image_files,
++            "qwen_review": qwen_review,
+         }
+-        _write_json(event_dir / "qwen_review.json", payload)
+         with self._lock:
+             record = self._event_records.get(event.incident_id, {})
+             record.update(
+                 {
+                     "stage": f"qwen_{bucket}",
+                     "qwen_bucket": bucket,
++                    "qwen_request_started_at": detail.request_started_at,
+                     "qwen_completed_at": payload["qwen_completed_at"],
+                     "qwen_analysis": detail.to_record(),
++                    "event": event.to_record(),
+                 }
+             )
+             self._event_records[event.incident_id] = record
+@@ -360,6 +472,20 @@ class PostFallTestArchiveService:
+                 self._drain_deadline_monotonic = None
+                 self._stop_performance_monitor_locked()
+             self._append_log_locked(f"qwen_result_archived incident_id={event.incident_id} bucket={bucket}")
++            self._append_trace_locked(
++                "qwen_result",
++                {
++                    "incident_id": event.incident_id,
++                    "camera_id": event.camera_id,
++                    "bucket": bucket,
++                    "analysis_status": detail.analysis_status,
++                    "fall_verdict": detail.fall_verdict,
++                    "request_started_at": detail.request_started_at,
++                    "completed_at": completed_at,
++                    "latency_ms": detail.latency_ms,
++                    "request_to_complete_ms": _elapsed_ms_since(detail.request_started_at) if detail.request_started_at else None,
++                },
++            )
+             self._write_session_events_locked()
+             self._write_session_summary_locked()
+         self._write_incident_event_json(event, {**payload, "event": event.to_record()})
+@@ -416,6 +542,14 @@ class PostFallTestArchiveService:
+                 "fall_verdict": "unclear",
+                 "error_message": "test_drain_timeout",
+             }
++            qwen_review = {
++                "occlusion": "unknown",
++                "scene_risks": [],
++                "possible_help_gesture": "unknown",
++                "summary": "千问分析超时，建议人工复核事件关键帧。",
++                "review_points": ["建议人工复核事件关键帧。"],
++                "confidence": None,
++            }
+             payload = {
+                 "schema_version": "post_fall_v2_test_qwen_review.v1",
+                 "test_session_id": session_id,
+@@ -429,9 +563,10 @@ class PostFallTestArchiveService:
+                 "analysis_status": "timeout",
+                 "qwen_analysis": qwen_analysis,
+                 "keyframes": [],
++                "qwen_review": qwen_review,
+             }
+             qwen_dir = self.qwen_review_dir / _safe_name(incident_id)
+-            _write_json(qwen_dir / "qwen_review.json", payload)
++            _write_json(qwen_dir / "qwen_review.json", qwen_review)
+             record.update(
+                 {
+                     "stage": "qwen_timeout",
+@@ -441,6 +576,15 @@ class PostFallTestArchiveService:
+                 }
+             )
+             self._event_records[incident_id] = record
++            self._append_trace_locked(
++                "qwen_timeout",
++                {
++                    "incident_id": incident_id,
++                    "camera_id": camera_id,
++                    "completed_at": completed_at,
++                    "event_created_at": self._event_created_at.get(incident_id),
++                },
++            )
+             self._write_incident_payload(camera_id, incident_id, {**payload, "event": event_record})
+             self._append_log_locked(f"qwen_timeout incident_id={incident_id}")
+         self._state = "completed"
+@@ -455,6 +599,7 @@ class PostFallTestArchiveService:
+     def _initialise_session_files_locked(self) -> None:
+         session_dir = self._session_dir_locked()
+         session_dir.mkdir(parents=True, exist_ok=True)
++        _write_json(self._session_manifest_path_locked(), self._session_manifest or {})
+         _write_text_if_missing(
+             session_dir / "binary_predictions.csv",
+             "created_at,camera_id,frame_seq,frame_id,frame_age_ms,decision_label,fall_probability,non_fall_probability,provider,inference_ms,total_ms,aggregate_state,window_size,positive_count,consecutive_positive_count,candidate_duration_ms,incident_id,event_created,reason,inference_at\n",
+@@ -463,10 +608,24 @@ class PostFallTestArchiveService:
+             session_dir / "performance.csv",
+             "created_at,cpu_percent,memory_percent,memory_used_mb,process_cpu_percent,process_rss_mb,gpu_util_percent,gpu_memory_used_mb,gpu_memory_total_mb,gpu_memory_percent\n",
+         )
++        _write_text_if_missing(self._trace_path_locked(), "")
+         _write_json(session_dir / "events.json", [])
+         self._write_session_summary_locked()
+         self._append_log_locked("start_test")
+ 
++    def _append_trace_locked(self, stage: str, payload: dict[str, Any]) -> None:
++        if not self._session_id:
++            return
++        record: dict[str, Any] = {
++            "seq": len(self._trace_records) + 1,
++            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
++            "stage": stage,
++        }
++        record.update({str(key): _jsonable(value) for key, value in payload.items()})
++        self._trace_records.append(record)
++        with self._trace_path_locked().open("a", encoding="utf-8", newline="") as handle:
++            handle.write(json.dumps(_jsonable(record), ensure_ascii=False) + "\n")
++
+     def _append_binary_prediction_locked(
+         self,
+         binary: BinaryFrameResult,
+@@ -647,13 +806,79 @@ class PostFallTestArchiveService:
+             "archive_failed": self._archive_failed_count,
+             "performance_samples_count": self._performance_samples_count,
+             "latest_performance": self._latest_performance,
++            "trace_count": len(self._trace_records),
++            "last_trace": self._trace_records[-1] if self._trace_records else None,
++            "manifest": self._session_manifest,
++            "artifacts": {
++                "session_manifest": str(self._session_manifest_path_locked()),
++                "trace_timeline": str(self._trace_path_locked()),
++                "summary": str(self._summary_path_locked()),
++                "report": str(self._report_path_locked()),
++                "session_summary": str(self._session_dir_locked() / "session_summary.json"),
++            },
+             "performance": {
+                 key: value
+                 for key, value in self._performance_summary.items()
+                 if not key.startswith("_")
+             },
+         }
++        report = self._build_session_report_locked(summary)
+         _write_json(self._session_dir_locked() / "session_summary.json", summary)
++        _write_json(self._summary_path_locked(), summary)
++        self._report_path_locked().write_text(report, encoding="utf-8")
++        _write_json(self._session_manifest_path_locked(), self._session_manifest or {})
++
++    def _build_session_report_locked(self, summary: dict[str, Any]) -> str:
++        lines = [
++            "# SYSTEM E2E TEST REPORT",
++            "",
++            f"- session_id: `{summary['test_session_id']}`",
++            f"- state: `{summary['state']}`",
++            f"- started_at: `{summary.get('started_at')}`",
++            f"- stopped_at: `{summary.get('stopped_at')}`",
++            f"- total_seconds: `{summary.get('total_seconds')}`",
++            f"- remaining_seconds: `{summary.get('remaining_seconds')}`",
++            "",
++            "## Counts",
++            f"- binary_full: `{summary.get('binary_full_count')}`",
++            f"- binary_other: `{summary.get('binary_other_count')}`",
++            f"- binary_fall: `{summary.get('binary_fall_count')}`",
++            f"- binary_non_fall: `{summary.get('binary_non_fall_count')}`",
++            f"- binary_unknown: `{summary.get('binary_unknown_count')}`",
++            f"- candidate_count: `{summary.get('candidate_count')}`",
++            f"- qwen_requested: `{summary.get('qwen_requested')}`",
++            f"- qwen_completed: `{summary.get('qwen_completed')}`",
++            f"- qwen_failed: `{summary.get('qwen_failed')}`",
++            f"- qwen_timeout: `{summary.get('qwen_timeout')}`",
++            f"- trace_count: `{summary.get('trace_count')}`",
++            "",
++            "## Performance",
++            f"- latest_performance: `{summary.get('latest_performance')}`",
++            f"- performance: `{summary.get('performance')}`",
++            "",
++            "## Trace",
++        ]
++        if self._trace_records:
++            for record in self._trace_records[-20:]:
++                payload = {k: v for k, v in record.items() if k not in {"timestamp", "stage", "seq"}}
++                lines.append(
++                    f"- {record.get('timestamp')} {record.get('stage')} "
++                    f"{json.dumps(payload, ensure_ascii=False)}"
++                )
++        else:
++            lines.append("- no trace records yet")
++        lines.extend(
++            [
++                "",
++                "## Artifacts",
++                f"- SESSION_MANIFEST.json: `{summary['artifacts']['session_manifest']}`",
++                f"- TRACE_TIMELINE.jsonl: `{summary['artifacts']['trace_timeline']}`",
++                f"- SUMMARY.json: `{summary['artifacts']['summary']}`",
++                f"- TEST_REPORT.md: `{summary['artifacts']['report']}`",
++                f"- session_summary.json: `{summary['artifacts']['session_summary']}`",
++            ]
++        )
++        return "\n".join(lines) + "\n"
+ 
+     def _append_log_locked(self, message: str) -> None:
+         self._append_session_file_locked(
+@@ -836,6 +1061,22 @@ def _safe_name(value: str) -> str:
+     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "unknown"
+ 
+ 
++def _compact_qwen_review(detail: Any) -> dict[str, Any]:
++    source = detail.to_record() if hasattr(detail, "to_record") else {}
++    scene_risks = source.get("scene_risks")
++    review_points = source.get("review_points")
++    return {
++        "occlusion": str(source.get("occlusion") or "unknown"),
++        "scene_risks": [str(item) for item in scene_risks[:4]]
++        if isinstance(scene_risks, list) else [],
++        "possible_help_gesture": str(source.get("possible_help_gesture") or "unknown"),
++        "summary": str(source.get("summary") or ""),
++        "review_points": [str(item) for item in review_points[:3]]
++        if isinstance(review_points, list) else [],
++        "confidence": _as_float(source.get("confidence")),
++    }
++
++
+ def _write_images(output_dir: Path, images: list[QwenImageInput]) -> list[str]:
+     saved: list[str] = []
+     for index, image in enumerate(images, start=1):
+diff --git a/app/schemas/alerting.py b/app/schemas/alerting.py
+index 2258f84..30678b4 100644
+--- a/app/schemas/alerting.py
++++ b/app/schemas/alerting.py
+@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
+ 
+ class AlertEndpointConfig(BaseModel):
+     base_url: str
+-    path: str = "/video-bridge/fall-events"
++    path: str = "/api/integrations/fall-detection/alerts"
+     enabled: bool = True
+     dry_run: bool = False
+     token_header: str | None = None
+@@ -13,7 +13,7 @@ class AlertEndpointConfig(BaseModel):
+ 
+ class AlertEndpointUpdateRequest(BaseModel):
+     base_url: str
+-    path: str = "/video-bridge/fall-events"
++    path: str = "/api/integrations/fall-detection/alerts"
+     enabled: bool = True
+ 
+ 
+@@ -28,7 +28,9 @@ class AlertSimulationStartRequest(BaseModel):
+ 
+ 
+ class AlertSimulationSendOnceRequest(BaseModel):
+-    target_ip: str = Field(min_length=1)
++    target_ip: str | None = None
++    base_url: str | None = None
++    event_id: str | None = None
+     camera_id: str = "camera_01"
+     track_id: str = "manual-console-probe"
+     fall_prob: float = Field(default=0.91, ge=0.0, le=1.0)
+diff --git a/app/schemas/status.py b/app/schemas/status.py
+index 56e81d9..a2ef880 100644
+--- a/app/schemas/status.py
++++ b/app/schemas/status.py
+@@ -246,6 +246,7 @@ class FallEventReporterStatus(BaseModel):
+     endpoint: str | None = None
+     endpoint_base_url: str | None = None
+     endpoint_path: str | None = None
++    health_endpoint: str | None = None
+     queue_size: int = 0
+     cooldown_seconds: float = 0.0
+     last_post_status: str | None = None
+@@ -255,6 +256,13 @@ class FallEventReporterStatus(BaseModel):
+     last_post_body: str | None = None
+     last_payload: dict | None = None
+     outbox: dict | None = None
++    main_system_enabled: bool = False
++    main_system_base_url: str | None = None
++    main_system_reachable: bool | None = None
++    main_system_last_check_at: str | None = None
++    main_system_last_success_at: str | None = None
++    main_system_last_error: str | None = None
++    main_system_pending_count: int = 0
+ 
+ 
+ class StreamRuntimeAlias(BaseModel):
+diff --git a/app/services/alert_outbox_service.py b/app/services/alert_outbox_service.py
+index 099bf18..51bbbef 100644
+--- a/app/services/alert_outbox_service.py
++++ b/app/services/alert_outbox_service.py
+@@ -17,6 +17,7 @@ class AlertOutboxStatus:
+     enabled: bool
+     path: str
+     pending_count: int = 0
++    retry_wait_count: int = 0
+     failed_count: int = 0
+     delivered_count: int = 0
+     last_status: str | None = None
+@@ -38,7 +39,7 @@ class AlertOutboxService:
+     def record_pending(self, payload: dict[str, Any]) -> None:
+         if not self.enabled:
+             return
+-        incident_id = str(payload.get("incident_id") or "")
++        incident_id = _event_id(payload)
+         if not incident_id:
+             return
+         now = utc_now_iso()
+@@ -48,15 +49,20 @@ class AlertOutboxService:
+                 """
+                 INSERT INTO alert_outbox (
+                     incident_id, camera_id, track_id, created_at, updated_at,
+-                    payload_json, delivery_state, retry_count, last_error
++                    payload_json, delivery_state, retry_count, last_error,
++                    next_attempt_at, last_http_status
+                 )
+-                VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL)
++                VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, NULL)
+                 ON CONFLICT(incident_id) DO UPDATE SET
+                     updated_at=excluded.updated_at,
+                     payload_json=excluded.payload_json,
+                     delivery_state=CASE
+                         WHEN alert_outbox.delivery_state='delivered' THEN 'delivered'
+                         ELSE 'pending'
++                    END,
++                    next_attempt_at=CASE
++                        WHEN alert_outbox.delivery_state='delivered' THEN alert_outbox.next_attempt_at
++                        ELSE excluded.next_attempt_at
+                     END
+                 """,
+                 (
+@@ -66,54 +72,93 @@ class AlertOutboxService:
+                     now,
+                     now,
+                     body,
++                    now,
+                 ),
+             )
+             self._last_status = "pending"
+             self._last_error = None
+ 
+-    def record_result(self, payload: dict[str, Any], status: str, error: str | None) -> None:
++    def record_result(self, payload: dict[str, Any], status: str, error: str | None, *, http_status: int | None = None) -> None:
+         if not self.enabled:
+             return
+-        incident_id = str(payload.get("incident_id") or "")
++        incident_id = _event_id(payload)
+         if not incident_id:
+             return
+-        state = "delivered" if status.startswith("http_2") else ("dry_run" if status == "dry_run_skipped" else "failed")
++        now = utc_now_iso()
++        body = json.dumps(payload, ensure_ascii=False, sort_keys=True)
++        delivered = status in {"delivered", "duplicate_ack"} or status.startswith("http_2")
++        dry_run = status == "dry_run_skipped"
+         with self._lock, self._connect() as conn:
++            row = conn.execute("SELECT retry_count FROM alert_outbox WHERE incident_id=?", (incident_id,)).fetchone()
++            previous_retries = int(row[0]) if row is not None else 0
++            retry_count = previous_retries if delivered or dry_run else previous_retries + 1
++            retry_limit = max(0, int(self.settings.alert_outbox_retry_limit))
++            if delivered:
++                state = "delivered"
++                next_attempt_at = None
++            elif dry_run:
++                state = "dry_run"
++                next_attempt_at = None
++            elif retry_limit > 0 and retry_count >= retry_limit:
++                state = "failed"
++                next_attempt_at = None
++            else:
++                state = "retry_wait"
++                next_attempt_at = _future_attempt_iso(_backoff_seconds(self.settings, retry_count))
+             conn.execute(
+                 """
+-                UPDATE alert_outbox
+-                SET updated_at=?, delivery_state=?, retry_count=retry_count + ?,
+-                    last_error=?
+-                WHERE incident_id=?
++                INSERT INTO alert_outbox (
++                    incident_id, camera_id, track_id, created_at, updated_at,
++                    payload_json, delivery_state, retry_count, last_error,
++                    next_attempt_at, last_http_status
++                )
++                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                ON CONFLICT(incident_id) DO UPDATE SET
++                    updated_at=excluded.updated_at,
++                    payload_json=excluded.payload_json,
++                    delivery_state=excluded.delivery_state,
++                    retry_count=excluded.retry_count,
++                    last_error=excluded.last_error,
++                    next_attempt_at=excluded.next_attempt_at,
++                    last_http_status=excluded.last_http_status
+                 """,
+                 (
+-                    utc_now_iso(),
++                    incident_id,
++                    str(payload.get("camera_id") or ""),
++                    str(payload.get("track_id") or ""),
++                    now,
++                    now,
++                    body,
+                     state,
+-                    0 if state in {"delivered", "dry_run"} else 1,
++                    retry_count,
+                     error,
+-                    incident_id,
++                    next_attempt_at,
++                    http_status,
+                 ),
+             )
+             self._last_status = state
+             self._last_error = error
+ 
+-    def pending_payloads(self, limit: int = 8) -> list[dict[str, Any]]:
++    def pending_payloads(self, limit: int = 8, *, include_failed: bool = False) -> list[dict[str, Any]]:
+         if not self.enabled:
+             return []
+         retry_limit = max(0, int(self.settings.alert_outbox_retry_limit))
+         if retry_limit <= 0:
+             return []
++        states = ("pending", "retry_wait", "failed") if include_failed else ("pending", "retry_wait")
++        retry_clause = "(retry_count < ? OR delivery_state='failed')" if include_failed else "retry_count < ?"
+         with self._lock, self._connect() as conn:
+             rows = conn.execute(
+-                """
++                f"""
+                 SELECT payload_json
+                 FROM alert_outbox
+-                WHERE delivery_state IN ('pending', 'failed')
+-                  AND retry_count < ?
++                WHERE delivery_state IN ({",".join("?" for _ in states)})
++                  AND {retry_clause}
++                  AND (next_attempt_at IS NULL OR next_attempt_at <= ? OR delivery_state='failed')
+                 ORDER BY updated_at ASC
+                 LIMIT ?
+                 """,
+-                (retry_limit, max(1, int(limit))),
++                (*states, retry_limit, utc_now_iso(), max(1, int(limit))),
+             ).fetchall()
+         payloads: list[dict[str, Any]] = []
+         for row in rows:
+@@ -141,6 +186,7 @@ class AlertOutboxService:
+             enabled=True,
+             path=str(self.path),
+             pending_count=counts.get("pending", 0),
++            retry_wait_count=counts.get("retry_wait", 0),
+             failed_count=counts.get("failed", 0),
+             delivered_count=counts.get("delivered", 0),
+             last_status=self._last_status,
+@@ -160,13 +206,20 @@ class AlertOutboxService:
+                     payload_json TEXT NOT NULL,
+                     delivery_state TEXT NOT NULL,
+                     retry_count INTEGER NOT NULL DEFAULT 0,
+-                    last_error TEXT
++                    last_error TEXT,
++                    next_attempt_at TEXT,
++                    last_http_status INTEGER
+                 )
+                 """
+             )
+             conn.execute(
+                 "CREATE INDEX IF NOT EXISTS idx_alert_outbox_state ON alert_outbox(delivery_state)"
+             )
++            columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(alert_outbox)").fetchall()}
++            if "next_attempt_at" not in columns:
++                conn.execute("ALTER TABLE alert_outbox ADD COLUMN next_attempt_at TEXT")
++            if "last_http_status" not in columns:
++                conn.execute("ALTER TABLE alert_outbox ADD COLUMN last_http_status INTEGER")
+ 
+     @contextmanager
+     def _connect(self) -> Iterator[sqlite3.Connection]:
+@@ -176,3 +229,29 @@ class AlertOutboxService:
+             conn.commit()
+         finally:
+             conn.close()
++
++
++def _event_id(payload: dict[str, Any]) -> str:
++    return str(payload.get("event_id") or payload.get("incident_id") or "").strip()
++
++
++def _backoff_seconds(settings: Settings, retry_count: int) -> float:
++    raw = str(getattr(settings, "main_system_retry_backoff_seconds", "1,2,5") or "")
++    values: list[float] = []
++    for part in raw.split(","):
++        try:
++            value = float(part.strip())
++        except ValueError:
++            continue
++        if value >= 0:
++            values.append(value)
++    if not values:
++        values = [1.0, 2.0, 5.0]
++    index = max(0, min(len(values) - 1, retry_count - 1))
++    return values[index]
++
++
++def _future_attempt_iso(delay_seconds: float) -> str:
++    from datetime import datetime, timedelta, timezone
++
++    return (datetime.now(timezone.utc) + timedelta(seconds=max(0.0, float(delay_seconds)))).isoformat(timespec="milliseconds")
+diff --git a/app/services/alert_simulator_service.py b/app/services/alert_simulator_service.py
+index daf28f7..7eb42a2 100644
+--- a/app/services/alert_simulator_service.py
++++ b/app/services/alert_simulator_service.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import json
+ import threading
+ from datetime import datetime, timezone
+ from typing import Any
+@@ -82,37 +83,40 @@ class AlertSimulatorService:
+     def send_once(
+         self,
+         *,
+-        target_ip: str,
++        target_ip: str | None = None,
++        base_url: str | None = None,
++        event_id: str | None = None,
+         camera_id: str,
+         track_id: str,
+         fall_prob: float,
+     ) -> dict[str, Any]:
+-        target_url = self._manual_target_url(target_ip)
+-        payload = self._build_payload(camera_id=camera_id, track_id=track_id, fall_prob=fall_prob)
+-        sent_at = utc_now_iso()
+-        status_code: int | None = None
+-        response_body: str | None = None
+-        error: str | None = None
+         try:
+-            response = requests.post(
+-                target_url,
+-                json=payload,
+-                headers=self._alert_headers(),
+-                timeout=self.reporter.request_timeout_seconds(),
+-            )
+-            status_code = response.status_code
+-            response_body = response.text[:1000]
+-            ok = response.status_code < 400
+-            if not ok:
+-                error = response_body
+-            logger.info("alert_simulator_send_once status=%s url=%s", response.status_code, target_url)
+-        except requests.RequestException as exc:
+-            ok = False
+-            error = str(exc)
+-            logger.warning("alert_simulator_send_once_error url=%s error=%s", target_url, exc)
++            target_url = self._manual_target_url(target_ip=target_ip, base_url=base_url)
++        except ValueError as exc:
++            sent_at = utc_now_iso()
++            return {
++                "ok": False,
++                "target_url": "",
++                "status_code": None,
++                "response_body": None,
++                "error": str(exc),
++                "sent_at": sent_at,
++                "incident_id": "",
++            }
++        self._apply_manual_endpoint(target_ip=target_ip, base_url=base_url)
++        payload = self._build_payload(camera_id=camera_id, track_id=track_id, fall_prob=fall_prob, incident_id=event_id)
++        sent_at = utc_now_iso()
++        delivery_result = self.reporter.send_external_alert_once(payload)
++        delivery = delivery_result.get("delivery") if isinstance(delivery_result.get("delivery"), dict) else {}
++        status_code = delivery.get("last_http_status")
++        ack = delivery.get("ack") if isinstance(delivery.get("ack"), dict) else None
++        response_body = json.dumps(ack, ensure_ascii=False, sort_keys=True) if ack is not None else None
++        error = delivery.get("last_error")
++        ok = str(delivery.get("status") or "").strip() == "delivered"
++        logger.info("alert_simulator_send_once status=%s url=%s event_id=%s", delivery.get("status"), target_url, payload.get("event_id"))
+         with self._lock:
+             self._sent_count += 1
+-            self._last_status = f"http_{status_code}" if status_code is not None else "request_error"
++            self._last_status = str(delivery.get("status") or ("http_" + str(status_code) if status_code is not None else "request_error"))
+             self._last_error = error
+             self._last_sent_at = sent_at
+             self._last_payload = dict(payload)
+@@ -155,14 +159,16 @@ class AlertSimulatorService:
+                 self._last_payload = dict(payload)
+             self._stop.wait(self._interval_seconds)
+ 
+-    def _build_payload(self, *, camera_id: str, track_id: str, fall_prob: float) -> dict[str, Any]:
++    def _build_payload(self, *, camera_id: str, track_id: str, fall_prob: float, incident_id: str | None = None) -> dict[str, Any]:
+         timestamp = utc_now_iso()
+-        incident_id = (
+-            f"vision-fall-smoke-{camera_id}-{track_id}-"
+-            f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
+-        )
++        normalized_incident_id = str(incident_id or "").strip()
++        if not normalized_incident_id:
++            normalized_incident_id = (
++                f"vision-fall-smoke-{camera_id}-{track_id}-"
++                f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
++            )
+         probability = max(0.0, min(1.0, float(fall_prob)))
+-        return {
++        legacy_payload = {
+             "camera_id": camera_id,
+             "stream_name": "primary",
+             "source": "vision_service_simulator",
+@@ -177,7 +183,7 @@ class AlertSimulatorService:
+             "fall_prob": probability,
+             "fall_score": probability,
+             "track_id": track_id,
+-            "incident_id": incident_id,
++            "incident_id": normalized_incident_id,
+             "bbox": [80.0, 60.0, 380.0, 330.0],
+             "snapshot_url": None,
+             "snapshot_path": None,
+@@ -193,7 +199,7 @@ class AlertSimulatorService:
+             },
+             "metadata": {
+                 "event": {
+-                    "incident_id": incident_id,
++                    "incident_id": normalized_incident_id,
+                     "camera_id": camera_id,
+                     "stream_name": "primary",
+                     "event_type": "fall_confirmed",
+@@ -225,17 +231,70 @@ class AlertSimulatorService:
+                 "provider": "simulator",
+             },
+         }
++        return {
++            "schema_version": "1.0",
++            "event_id": normalized_incident_id,
++            "incident_id": normalized_incident_id,
++            "source": "camera-service",
++            "camera_id": camera_id,
++            "track_id": track_id,
++            "event_time": timestamp,
++            "sent_at": timestamp,
++            "alert_type": "fall",
++            "alert_level": "high",
++            "safety_outcome": "alert",
++            "fall_verdict": "confirmed_fall",
++            "confidence": probability,
++            "summary": "Simulated fall alert for LAN integration verification.",
++            "recommended_action": "emergency_alert",
++            "analysis_status": "completed",
++            "binary_result": {"fall_probability": probability, "source": "simulator"},
++            "qwen_review": {
++                "analysis_status": "completed",
++                "fall_verdict": "confirmed_fall",
++                "high_risk_fall": 1,
++                "recommended_action": "emergency_alert",
++                "summary": "Simulated fall alert for LAN integration verification.",
++                "confidence": probability,
++            },
++            "evidence": [{"type": "simulator", "track_id": track_id}],
++            "test_event": True,
++            "legacy_payload": legacy_payload,
++        }
+ 
+-    def _manual_target_url(self, target_ip: str) -> str:
++    def _manual_target_url(self, *, target_ip: str | None = None, base_url: str | None = None) -> str:
+         settings = self.reporter.settings
+-        ip = target_ip.strip()
+-        base_prefix = str(settings.main_system_base_prefix or "/api/v1").strip()
+-        if base_prefix and not base_prefix.startswith("/"):
+-            base_prefix = f"/{base_prefix}"
+-        path = str(settings.main_system_fall_event_path or "/video-bridge/fall-events").strip()
++        alert_path = str(getattr(settings, "main_system_alert_path", "") or "").strip()
++        legacy_path = str(getattr(settings, "main_system_fall_event_path", "") or "").strip()
++        default_path = "/api/integrations/fall-detection/alerts"
++        path = legacy_path if legacy_path and legacy_path != alert_path and legacy_path != default_path else (alert_path or legacy_path or default_path)
+         if path and not path.startswith("/"):
+             path = f"/{path}"
+-        return f"http://{ip}:{settings.main_system_default_port}{base_prefix}{path}"
++        if base_url:
++            return f"{base_url.strip().rstrip('/')}{path}"
++        if target_ip:
++            return f"http://{target_ip.strip()}:{settings.main_system_default_port}{path}"
++        endpoint = self.reporter.endpoint_url()
++        if not endpoint:
++            raise ValueError("target_ip, base_url, or configured MAIN_SYSTEM_BASE_URL is required")
++        return endpoint
++
++    def _apply_manual_endpoint(self, *, target_ip: str | None = None, base_url: str | None = None) -> None:
++        if base_url:
++            self.reporter.update_endpoint(
++                base_url=base_url.strip().rstrip("/"),
++                path=self.reporter.status().get("endpoint_path") or "/api/integrations/fall-detection/alerts",
++                enabled=True,
++                start_worker=False,
++            )
++            return
++        if target_ip:
++            self.reporter.update_endpoint(
++                base_url=f"http://{target_ip.strip()}:{self.reporter.settings.main_system_default_port}",
++                path=self.reporter.status().get("endpoint_path") or "/api/integrations/fall-detection/alerts",
++                enabled=True,
++                start_worker=False,
++            )
+ 
+     def _alert_headers(self) -> dict[str, str]:
+         settings = self.reporter.settings
+diff --git a/app/services/fall_event_reporter_service.py b/app/services/fall_event_reporter_service.py
+index 2c3c972..6cc487f 100644
+--- a/app/services/fall_event_reporter_service.py
++++ b/app/services/fall_event_reporter_service.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import copy
++import json
+ import queue
+ import re
+ import threading
+@@ -8,6 +9,7 @@ import time
+ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any
++from urllib.parse import urlsplit
+ 
+ import cv2
+ import requests
+@@ -45,6 +47,10 @@ class FallEventReporterService:
+         self._last_snapshot_url: str | None = None
+         self._last_error: str | None = None
+         self._last_payload: dict[str, Any] | None = None
++        self._main_system_reachable: bool | None = None
++        self._main_system_last_check_at: str | None = None
++        self._main_system_last_success_at: str | None = None
++        self._main_system_last_error: str | None = None
+         self._latest_alert_by_camera: dict[str, dict[str, Any]] = {}
+         self._active_alerts_by_key: dict[str, dict[str, Any]] = {}
+         self._recent_alerts_by_key: dict[str, dict[str, Any]] = {}
+@@ -55,7 +61,7 @@ class FallEventReporterService:
+         self._enabled = settings.main_system_alert_enabled
+         self._dry_run = settings.main_system_report_dry_run
+         self._endpoint_base_url = settings.main_system_base_url.rstrip("/")
+-        path = settings.main_system_fall_event_path.strip() or "/video-bridge/fall-events"
++        path = _alert_path_from_settings(settings)
+         self._endpoint_path = path if path.startswith("/") else f"/{path}"
+         self._lock = threading.Lock()
+         self._last_outbox_retry_at = 0.0
+@@ -65,6 +71,9 @@ class FallEventReporterService:
+         if not self.enabled:
+             logger.info("fall_event_reporter_disabled")
+             return
++        if not self._endpoint_base_url:
++            logger.warning("fall_event_reporter_no_main_system_base_url")
++            return
+         if self._worker and self._worker.is_alive():
+             return
+         self._stop.clear()
+@@ -194,43 +203,102 @@ class FallEventReporterService:
+                 return
+ 
+     def _post_payload(self, payload: dict[str, Any]) -> None:
++        external_payload = self._external_alert_payload(payload)
++        event_id = self._event_id(external_payload)
+         if self.dry_run:
+-            self._record_dry_run(payload)
++            self._persist_main_system_files(external_payload, status="dry_run", http_status=None, error=None)
++            self._record_dry_run(external_payload)
+             logger.info(
+-                "fall_event_report_dry_run skipped_real_post target=%s event_type=%s track_id=%s incident_id=%s",
++                "main_system_alert_queued event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s dry_run=true",
++                event_id,
+                 self._endpoint_url(),
+-                payload.get("event_type"),
+-                payload.get("track_id"),
+-                payload.get("incident_id"),
++                0,
++                None,
++                None,
+             )
+             return
+-        timeout = self.request_timeout_seconds()
++        if not self._endpoint_base_url:
++            error = "MAIN_SYSTEM_BASE_URL is not configured"
++            self._persist_main_system_files(external_payload, status="failed", http_status=None, error=error)
++            self._record_post_result(external_payload, "configuration_error", error)
++            logger.warning(
++                "main_system_alert_failed event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                event_id,
++                self._endpoint_url(),
++                0,
++                None,
++                error,
++            )
++            return
++        attempt = self._next_delivery_attempt(external_payload)
++        self._persist_main_system_files(external_payload, status="sending", http_status=None, error=None, attempt=attempt)
++        logger.info(
++            "main_system_alert_sending event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++            event_id,
++            self._endpoint_url(),
++            attempt,
++            None,
++            None,
++        )
+         try:
+             response = requests.post(
+                 self._endpoint_url(),
+-                json=payload,
++                json=external_payload,
+                 headers=self._alert_headers(),
+-                timeout=timeout,
++                timeout=self.request_timeout(),
+             )
+             if response.status_code >= 400:
++                error = response.text[:500]
+                 logger.warning(
+-                    "fall_event_report_failed status=%s body=%s incident_id=%s",
++                    "main_system_alert_retry event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                    event_id,
++                    self._endpoint_url(),
++                    attempt,
+                     response.status_code,
+-                    response.text[:500],
+-                    payload.get("incident_id"),
++                    error,
+                 )
+-                self._record_post_result(payload, f"http_{response.status_code}", response.text[:500])
++                self._persist_main_system_files(external_payload, status="retry_wait", http_status=response.status_code, error=error, attempt=attempt)
++                self._record_post_result(external_payload, f"http_{response.status_code}", error, http_status=response.status_code)
+                 return
+-            self._record_post_result(payload, f"http_{response.status_code}", None)
++            ack = _decode_json_response(response.text)
++            ack_event_id = str((ack or {}).get("event_id") or "").strip()
++            if ack_event_id and ack_event_id != event_id:
++                error = f"ACK event_id mismatch: expected {event_id}, got {ack_event_id}"
++                logger.warning(
++                    "main_system_alert_retry event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                    event_id,
++                    self._endpoint_url(),
++                    attempt,
++                    response.status_code,
++                    error,
++                )
++                self._persist_main_system_files(external_payload, status="retry_wait", http_status=response.status_code, error=error, attempt=attempt)
++                self._record_post_result(external_payload, "ack_event_id_mismatch", error, http_status=response.status_code)
++                return
++            status_name = "duplicate_ack" if bool((ack or {}).get("duplicate")) else "delivered"
++            self._persist_main_system_files(external_payload, status="delivered", http_status=response.status_code, error=None, attempt=attempt, ack=ack)
++            self._record_post_result(external_payload, status_name, None, http_status=response.status_code)
+             logger.info(
+-                "fall_event_reported status=%s incident_id=%s alarm_response=%s",
++                "%s event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                "main_system_alert_duplicate_ack" if status_name == "duplicate_ack" else "main_system_alert_delivered",
++                event_id,
++                self._endpoint_url(),
++                attempt,
+                 response.status_code,
+-                payload.get("incident_id"),
+-                response.text[:500],
++                None,
+             )
+         except requests.RequestException as exc:
+-            logger.warning("fall_event_report_request_error incident_id=%s error=%s", payload.get("incident_id"), exc)
+-            self._record_post_result(payload, "request_error", str(exc))
++            error = str(exc)
++            logger.warning(
++                "main_system_alert_retry event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                event_id,
++                self._endpoint_url(),
++                attempt,
++                None,
++                error,
++            )
++            self._persist_main_system_files(external_payload, status="retry_wait", http_status=None, error=error, attempt=attempt)
++            self._record_post_result(external_payload, "request_error", error)
+ 
+     def status(self) -> dict[str, Any]:
+         with self._lock:
+@@ -242,6 +310,7 @@ class FallEventReporterService:
+                 "endpoint": endpoint,
+                 "endpoint_base_url": self._endpoint_base_url,
+                 "endpoint_path": self._endpoint_path,
++                "health_endpoint": self._health_url_locked(),
+                 "token_header": self.settings.main_system_alert_token_header,
+                 "queue_size": self._queue.qsize(),
+                 "cooldown_seconds": self.settings.main_system_alert_cooldown_seconds,
+@@ -252,6 +321,13 @@ class FallEventReporterService:
+                 "last_post_body": self._last_error,
+                 "last_payload": self._last_payload,
+                 "outbox": self.alert_outbox.status().__dict__ if self.alert_outbox is not None else None,
++                "main_system_enabled": self._enabled and bool(self._endpoint_base_url),
++                "main_system_base_url": self._endpoint_base_url,
++                "main_system_reachable": self._main_system_reachable,
++                "main_system_last_check_at": self._main_system_last_check_at,
++                "main_system_last_success_at": self._main_system_last_success_at,
++                "main_system_last_error": self._main_system_last_error,
++                "main_system_pending_count": self._pending_count_locked(),
+             }
+ 
+     @property
+@@ -271,9 +347,10 @@ class FallEventReporterService:
+         path: str,
+         enabled: bool = True,
+         dry_run: bool | None = None,
++        start_worker: bool = True,
+     ) -> dict[str, Any]:
+         normalized_base = base_url.rstrip("/")
+-        normalized_path = path.strip() or "/video-bridge/fall-events"
++        normalized_path = path.strip() or "/api/integrations/fall-detection/alerts"
+         if not normalized_path.startswith("/"):
+             normalized_path = f"/{normalized_path}"
+         with self._lock:
+@@ -284,7 +361,7 @@ class FallEventReporterService:
+             self._endpoint_path = normalized_path
+             endpoint = f"{self._endpoint_base_url}{self._endpoint_path}"
+         logger.info("fall_event_reporter_endpoint_updated enabled=%s endpoint=%s", enabled, endpoint)
+-        if enabled:
++        if enabled and start_worker:
+             self.start()
+         return self.status()
+ 
+@@ -303,7 +380,91 @@ class FallEventReporterService:
+         logger.info("fall_event_reporter_endpoint_updated endpoint=%s", self._endpoint_url())
+ 
+     def request_timeout_seconds(self) -> float:
+-        return max(0.2, self.settings.main_system_alert_timeout_ms / 1000)
++        return max(0.2, float(self.settings.main_system_read_timeout_sec))
++
++    def request_timeout(self) -> tuple[float, float]:
++        return (
++            max(0.2, float(self.settings.main_system_connect_timeout_sec)),
++            max(0.2, float(self.settings.main_system_read_timeout_sec)),
++        )
++
++    def check_health(self) -> dict[str, Any]:
++        url = self._health_url()
++        checked_at = _utc_now()
++        if not self._endpoint_base_url:
++            error = "MAIN_SYSTEM_BASE_URL is not configured"
++            with self._lock:
++                self._main_system_reachable = False
++                self._main_system_last_check_at = checked_at
++                self._main_system_last_error = error
++            logger.warning(
++                "main_system_health_failed event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                None,
++                url,
++                0,
++                None,
++                error,
++            )
++            return {"ok": False, "url": url, "status_code": None, "error": error, "checked_at": checked_at}
++        try:
++            response = requests.get(url, headers=self._alert_headers(), timeout=self.request_timeout())
++        except requests.RequestException as exc:
++            error = str(exc)
++            with self._lock:
++                self._main_system_reachable = False
++                self._main_system_last_check_at = checked_at
++                self._main_system_last_error = error
++            logger.warning(
++                "main_system_health_failed event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++                None,
++                url,
++                0,
++                None,
++                error,
++            )
++            return {"ok": False, "url": url, "status_code": None, "error": error, "checked_at": checked_at}
++        ok = response.status_code < 400
++        error = None if ok else response.text[:500]
++        with self._lock:
++            self._main_system_reachable = ok
++            self._main_system_last_check_at = checked_at
++            self._main_system_last_error = error
++            if ok:
++                self._main_system_last_success_at = checked_at
++        logger.log(
++            20 if ok else 30,
++            "%s event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++            "main_system_health_ok" if ok else "main_system_health_failed",
++            None,
++            url,
++            0,
++            response.status_code,
++            error,
++        )
++        return {"ok": ok, "url": url, "status_code": response.status_code, "error": error, "checked_at": checked_at, "body": response.text[:1000]}
++
++    def retry_pending_alerts(self, *, include_failed: bool = True, limit: int = 8) -> dict[str, Any]:
++        if self.alert_outbox is None or not self.alert_outbox.enabled:
++            return {"queued": 0, "event_ids": [], "error": "alert_outbox_disabled"}
++        queued: list[str] = []
++        for payload in self.alert_outbox.pending_payloads(limit=limit, include_failed=include_failed):
++            event_id = self._event_id(payload)
++            try:
++                self._queue.put_nowait(payload)
++            except queue.Full:
++                break
++            queued.append(event_id)
++        if queued and self.enabled:
++            self.start()
++        return {"queued": len(queued), "event_ids": queued, "include_failed": include_failed}
++
++    def send_external_alert_once(self, payload: dict[str, Any]) -> dict[str, Any]:
++        external_payload = self._external_alert_payload(payload)
++        self._post_payload(external_payload)
++        return {
++            "event_id": self._event_id(external_payload),
++            "delivery": self._delivery_record(external_payload),
++        }
+ 
+     def latest_alert(self, camera_id: str) -> dict[str, Any] | None:
+         with self._lock:
+@@ -345,15 +506,25 @@ class FallEventReporterService:
+ 
+     def _record_pending(self, payload: dict[str, Any]) -> None:
+         self._update_incident_delivery_state(payload, sent_to_main=False)
++        external_payload = self._external_alert_payload(payload)
++        self._persist_main_system_files(external_payload, status="pending", http_status=None, error=None)
+         if self.alert_outbox is not None:
+-            self.alert_outbox.record_pending(payload)
++            self.alert_outbox.record_pending(external_payload)
+         with self._lock:
+             self._last_post_status = "queued"
+-            self._last_incident_id = str(payload.get("incident_id") or "")
++            self._last_incident_id = self._event_id(external_payload)
+             snapshot_url = payload.get("snapshot_url")
+             self._last_snapshot_url = str(snapshot_url) if snapshot_url else None
+             self._last_error = None
+-            self._last_payload = dict(payload)
++            self._last_payload = dict(external_payload)
++        logger.info(
++            "main_system_alert_queued event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
++            self._event_id(external_payload),
++            self._endpoint_url(),
++            0,
++            None,
++            None,
++        )
+ 
+     def _record_poll_only(self, payload: dict[str, Any]) -> None:
+         self._update_incident_delivery_state(payload, sent_to_main=False)
+@@ -371,19 +542,19 @@ class FallEventReporterService:
+             self.alert_outbox.record_result(payload, "dry_run_skipped", None)
+         with self._lock:
+             self._last_post_status = "dry_run_skipped"
+-            self._last_incident_id = str(payload.get("incident_id") or "")
++            self._last_incident_id = self._event_id(payload)
+             snapshot_url = payload.get("snapshot_url")
+             self._last_snapshot_url = str(snapshot_url) if snapshot_url else None
+             self._last_error = None
+             self._last_payload = dict(payload)
+ 
+-    def _record_post_result(self, payload: dict[str, Any], status: str, error: str | None) -> None:
+-        self._update_incident_delivery_state(payload, sent_to_main=status.startswith("http_2"))
++    def _record_post_result(self, payload: dict[str, Any], status: str, error: str | None, *, http_status: int | None = None) -> None:
++        self._update_incident_delivery_state(payload, sent_to_main=status in {"delivered", "duplicate_ack"} or status.startswith("http_2"))
+         if self.alert_outbox is not None:
+-            self.alert_outbox.record_result(payload, status, error)
++            self.alert_outbox.record_result(payload, status, error, http_status=http_status)
+         with self._lock:
+             self._last_post_status = status
+-            self._last_incident_id = str(payload.get("incident_id") or "")
++            self._last_incident_id = self._event_id(payload)
+             snapshot_url = payload.get("snapshot_url")
+             self._last_snapshot_url = str(snapshot_url) if snapshot_url else None
+             self._last_error = error
+@@ -1094,6 +1265,193 @@ class FallEventReporterService:
+                     event["snapshot_path"] = snapshot_path
+         return updated
+ 
++    def _external_alert_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
++        if str(payload.get("schema_version") or "") == "1.0" and payload.get("event_id"):
++            updated = copy.deepcopy(payload)
++            updated["sent_at"] = _utc_now()
++            return updated
++        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
++        event_metadata = metadata.get("event") if isinstance(metadata.get("event"), dict) else {}
++        fall_decision = metadata.get("fall_decision") if isinstance(metadata.get("fall_decision"), dict) else {}
++        alarm_preview = metadata.get("alarm_preview") if isinstance(metadata.get("alarm_preview"), dict) else {}
++        temporal = metadata.get("temporal") if isinstance(metadata.get("temporal"), dict) else {}
++        qwen_review = (
++            payload.get("qwen_review")
++            if isinstance(payload.get("qwen_review"), dict)
++            else event_metadata.get("qwen_review")
++            if isinstance(event_metadata.get("qwen_review"), dict)
++            else temporal.get("qwen")
++            if isinstance(temporal.get("qwen"), dict)
++            else {}
++        )
++        safety_decision = fall_decision.get("safety_decision") if isinstance(fall_decision.get("safety_decision"), dict) else {}
++        binary_evidence = temporal.get("binary_evidence") or fall_decision.get("binary_evidence")
++        if not isinstance(binary_evidence, dict):
++            binary_evidence = {}
++        binary_result = {
++            "fall_probability": payload.get("fall_prob") or fall_decision.get("fall_probability"),
++            "threshold": binary_evidence.get("threshold") or fall_decision.get("threshold"),
++            "positive_count": binary_evidence.get("positive_count"),
++            "consecutive_positive_count": binary_evidence.get("consecutive_positive_count"),
++            "max_fall_probability": binary_evidence.get("max_fall_probability"),
++        }
++        evidence = []
++        if binary_evidence:
++            evidence.append({"type": "binary_evidence"})
++        keyframes = event_metadata.get("keyframes")
++        if isinstance(keyframes, dict):
++            frames = keyframes.get("frames")
++            evidence.append({
++                "type": "keyframes",
++                "status": keyframes.get("status"),
++                "count": len(frames) if isinstance(frames, list) else None,
++            })
++        event_id = str(payload.get("incident_id") or fall_decision.get("incident_id") or event_metadata.get("incident_id") or "").strip()
++        event_time = str(payload.get("timestamp") or event_metadata.get("event_created_at") or event_metadata.get("timestamp") or _utc_now())
++        confidence = _as_float(
++            qwen_review.get("confidence")
++            if isinstance(qwen_review, dict)
++            else None
++        )
++        if confidence is None:
++            confidence = _as_float(payload.get("fall_prob") or fall_decision.get("fall_probability"))
++        summary = str(
++            payload.get("summary")
++            or payload.get("summary_zh")
++            or payload.get("description_zh")
++            or fall_decision.get("vlm_summary")
++            or (qwen_review.get("summary") if isinstance(qwen_review, dict) else "")
++            or ""
++        ).strip()
++        recommended_action = str(
++            fall_decision.get("recommended_action")
++            or (qwen_review.get("recommended_action") if isinstance(qwen_review, dict) else "")
++            or "emergency_alert"
++        ).strip()
++        fall_verdict = str(
++            fall_decision.get("fall_verdict")
++            or (qwen_review.get("fall_verdict") if isinstance(qwen_review, dict) else "")
++            or "confirmed_fall"
++        ).strip()
++        analysis_status = str(
++            fall_decision.get("vlm_status")
++            or (qwen_review.get("analysis_status") if isinstance(qwen_review, dict) else "")
++            or "completed"
++        ).strip()
++        public_qwen_review = _compact_qwen_review(qwen_review)
++        public_legacy_payload = {
++            "event_type": payload.get("event_type"),
++            "state": payload.get("state"),
++            "status": payload.get("status"),
++            "fall_detected": True,
++            "fall_prob": payload.get("fall_prob") or fall_decision.get("fall_probability"),
++            "track_id": payload.get("track_id") or event_metadata.get("track_id"),
++            "incident_id": event_id,
++            "timestamp": payload.get("timestamp") or event_metadata.get("timestamp"),
++            "summary": summary,
++            "qwen_review": public_qwen_review,
++        }
++        alert = {
++            "schema_version": "1.0",
++            "event_id": event_id,
++            "incident_id": event_id,
++            "source": "camera-service",
++            "camera_id": str(payload.get("camera_id") or event_metadata.get("camera_id") or self.settings.default_camera_id),
++            "track_id": payload.get("track_id") or event_metadata.get("track_id"),
++            "event_time": event_time,
++            "sent_at": _utc_now(),
++            "alert_type": "fall",
++            "alert_level": str(safety_decision.get("alert_level") or "high"),
++            "safety_outcome": "alert",
++            "fall_verdict": fall_verdict,
++            "confidence": confidence,
++            "summary": summary,
++            "recommended_action": recommended_action,
++            "analysis_status": analysis_status,
++            "binary_result": binary_result,
++            "qwen_review": public_qwen_review,
++            "evidence": evidence,
++            "legacy_payload": public_legacy_payload,
++        }
++        if bool(payload.get("test_event")):
++            alert["test_event"] = True
++        return alert
++
++    def _persist_main_system_files(
++        self,
++        payload: dict[str, Any],
++        *,
++        status: str,
++        http_status: int | None,
++        error: str | None,
++        attempt: int | None = None,
++        ack: dict[str, Any] | None = None,
++    ) -> None:
++        event_id = self._event_id(payload)
++        camera_id = str(payload.get("camera_id") or self.settings.default_camera_id)
++        if not event_id:
++            return
++        event_dir = Path(self.settings.test_event_root) / self._safe_slug(camera_id) / self._safe_slug(event_id)
++        try:
++            event_dir.mkdir(parents=True, exist_ok=True)
++            _write_json_atomic(event_dir / "main_system_alert.json", payload)
++            qwen_review = payload.get("qwen_review")
++            qwen_path = event_dir / "qwen_review.json"
++            if isinstance(qwen_review, dict) and qwen_review and not qwen_path.exists():
++                _write_json_atomic(qwen_path, qwen_review)
++            previous = _read_json_file(event_dir / "main_system_delivery.json")
++            attempts = int(previous.get("attempts") or 0)
++            if attempt is not None:
++                attempts = max(attempts, int(attempt))
++            delivery = {
++                "event_id": event_id,
++                "status": status,
++                "attempts": attempts,
++                "last_http_status": http_status,
++                "last_error": error,
++                "last_attempt_at": _utc_now() if status in {"sending", "retry_wait", "failed", "delivered"} else previous.get("last_attempt_at"),
++                "delivered_at": _utc_now() if status == "delivered" else previous.get("delivered_at"),
++                "main_system_url": self._endpoint_url(),
++                "ack": ack,
++            }
++            _write_json_atomic(event_dir / "main_system_delivery.json", delivery)
++        except Exception:
++            logger.exception("main_system_delivery_file_write_failed event_id=%s", event_id)
++
++    def _next_delivery_attempt(self, payload: dict[str, Any]) -> int:
++        event_id = self._event_id(payload)
++        camera_id = str(payload.get("camera_id") or self.settings.default_camera_id)
++        event_dir = Path(self.settings.test_event_root) / self._safe_slug(camera_id) / self._safe_slug(event_id)
++        previous = _read_json_file(event_dir / "main_system_delivery.json")
++        return int(previous.get("attempts") or 0) + 1
++
++    def _delivery_record(self, payload: dict[str, Any]) -> dict[str, Any]:
++        event_id = self._event_id(payload)
++        camera_id = str(payload.get("camera_id") or self.settings.default_camera_id)
++        if not event_id:
++            return {}
++        event_dir = Path(self.settings.test_event_root) / self._safe_slug(camera_id) / self._safe_slug(event_id)
++        return _read_json_file(event_dir / "main_system_delivery.json")
++
++    def _event_id(self, payload: dict[str, Any]) -> str:
++        return str(payload.get("event_id") or payload.get("incident_id") or "").strip()
++
++    def _health_url(self) -> str:
++        with self._lock:
++            return self._health_url_locked()
++
++    def _health_url_locked(self) -> str:
++        path = str(getattr(self.settings, "main_system_health_path", "/api/integrations/fall-detection/health") or "").strip()
++        if path and not path.startswith("/"):
++            path = f"/{path}"
++        return f"{self._endpoint_base_url}{path}"
++
++    def _pending_count_locked(self) -> int:
++        if self.alert_outbox is None:
++            return self._queue.qsize()
++        status = self.alert_outbox.status()
++        return int(status.pending_count) + int(getattr(status, "retry_wait_count", 0)) + self._queue.qsize()
++
+     def _save_snapshot(self, camera_id: str, track_id: str, timestamp_slug: str) -> tuple[str | None, str | None]:
+         try:
+             buffer = self.source_manager.get_buffer(camera_id)
+@@ -1265,3 +1623,67 @@ def _post_fall_high_risk_gate(value: Any) -> bool:
+     if isinstance(value, str):
+         return value.strip() == "1"
+     return False
++
++
++def _compact_qwen_review(review: Any) -> dict[str, Any]:
++    """Keep only the small, user-facing Qwen review contract."""
++    source = review if isinstance(review, dict) else {}
++    scene_risks = source.get("scene_risks")
++    review_points = source.get("review_points")
++    return {
++        "occlusion": str(source.get("occlusion") or "unknown"),
++        "scene_risks": [str(item) for item in scene_risks[:4]]
++        if isinstance(scene_risks, list) else [],
++        "possible_help_gesture": str(
++            source.get("possible_help_gesture") or "unknown"
++        ),
++        "summary": str(source.get("summary") or ""),
++        "review_points": [str(item) for item in review_points[:3]]
++        if isinstance(review_points, list) else [],
++        "confidence": _as_float(source.get("confidence")),
++    }
++
++
++def _as_float(value: Any) -> float | None:
++    try:
++        if value is None:
++            return None
++        return float(value)
++    except (TypeError, ValueError):
++        return None
++
++
++def _alert_path_from_settings(settings: Settings) -> str:
++    alert_path = str(getattr(settings, "main_system_alert_path", "") or "").strip()
++    legacy_path = str(getattr(settings, "main_system_fall_event_path", "") or "").strip()
++    default_path = "/api/integrations/fall-detection/alerts"
++    if legacy_path and legacy_path != alert_path and legacy_path != default_path:
++        return legacy_path
++    return alert_path or legacy_path or default_path
++
++
++def _utc_now() -> str:
++    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
++
++
++def _decode_json_response(text: str) -> dict[str, Any]:
++    try:
++        decoded = json.loads(text or "{}")
++    except json.JSONDecodeError:
++        return {}
++    return decoded if isinstance(decoded, dict) else {}
++
++
++def _read_json_file(path: Path) -> dict[str, Any]:
++    try:
++        payload = json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, ValueError, json.JSONDecodeError):
++        return {}
++    return payload if isinstance(payload, dict) else {}
++
++
++def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_suffix(path.suffix + ".tmp")
++    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++    temporary.replace(path)
+diff --git a/configs/original_camera_79.env b/configs/original_camera_79.env
+index b5738dc..63e4669 100644
+--- a/configs/original_camera_79.env
++++ b/configs/original_camera_79.env
+@@ -180,19 +180,21 @@ UNCERTAIN_TRACK_QUALITY_MIN=0.50
+ 
+ MAIN_SYSTEM_ALERT_ENABLED=true
+ MAIN_SYSTEM_REPORT_DRY_RUN=false
+-MAIN_SYSTEM_BASE_URL=http://127.0.0.1:8000/api/v1
+-MAIN_SYSTEM_FALL_EVENT_PATH=/video-bridge/fall-events
+-MAIN_SYSTEM_ALERT_TIMEOUT_MS=2500
++MAIN_SYSTEM_BASE_URL=http://192.168.8.254:8000
++MAIN_SYSTEM_ALERT_PATH=/api/integrations/fall-detection/alerts
++MAIN_SYSTEM_HEALTH_PATH=/api/integrations/fall-detection/health
++MAIN_SYSTEM_CONNECT_TIMEOUT_SEC=2
++MAIN_SYSTEM_READ_TIMEOUT_SEC=5
+ MAIN_SYSTEM_ALERT_COOLDOWN_SECONDS=90
+-MAIN_SYSTEM_ALERT_TOKEN=
++MAIN_SYSTEM_INTEGRATION_TOKEN=
+ MAIN_SYSTEM_ALERT_TOKEN_HEADER=X-Vision-Service-Token
+ MAIN_SYSTEM_DEFAULT_PORT=8000
+ MAIN_SYSTEM_BASE_PREFIX=/api/v1
+ VISION_SERVICE_PUBLIC_BASE_URL=http://127.0.0.1:8000
+ FALL_EVENT_SNAPSHOT_DIR=logs/fall_events/snapshots
+-ALERT_OUTBOX_ENABLED=false
++ALERT_OUTBOX_ENABLED=true
+ ALERT_OUTBOX_PATH=data/alert_outbox.sqlite3
+-ALERT_OUTBOX_RETRY_LIMIT=10
++ALERT_OUTBOX_RETRY_LIMIT=4
+ 
+ # Robot assistance is hidden and disabled for the current demo/runtime.
+ ROBOT_ASSIST_SERVICE_ENABLED=false
+diff --git a/configs/post_fall_v2_candidate.env b/configs/post_fall_v2_candidate.env
+index 4d10782..0a4f2e5 100644
+--- a/configs/post_fall_v2_candidate.env
++++ b/configs/post_fall_v2_candidate.env
+@@ -65,14 +65,16 @@ POST_FALL_V2_QWEN_PROVIDER=qwen_keyframe
+ POST_FALL_V2_QWEN_MODEL=qwen3.5:4b
+ POST_FALL_V2_QWEN_BASE_URL=http://127.0.0.1:11434/api/chat
+ POST_FALL_V2_QWEN_TIMEOUT_SECONDS=90
++POST_FALL_V2_QWEN_NUM_CTX=12288
+ POST_FALL_V2_QWEN_MAX_IMAGES=6
+ POST_FALL_V2_QWEN_MAX_IMAGE_BYTES=5242880
+ POST_FALL_V2_QWEN_IMAGE_MAX_EDGE=1280
+ POST_FALL_V2_QWEN_JPEG_QUALITY=85
+ POST_FALL_V2_QWEN_QUEUE_CAPACITY=2
++POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS=192
+ POST_FALL_V2_KEYFRAME_POST_COLLECTION_ENABLED=true
+ POST_FALL_V2_KEYFRAME_TOLERANCE_MS=750
+-POST_FALL_V2_KEYFRAME_COLLECTION_TIMEOUT_SECONDS=5
++POST_FALL_V2_KEYFRAME_COLLECTION_TIMEOUT_SECONDS=6
+ POST_FALL_V2_AUX_PERSON_DETECTION_ENABLED=false
+ POST_FALL_V2_SHADOW_ENABLED=false
+ 
+diff --git a/configs/production_candidate.env b/configs/production_candidate.env
+index 4b8fd4e..46aa6f5 100644
+--- a/configs/production_candidate.env
++++ b/configs/production_candidate.env
+@@ -41,7 +41,9 @@ TEMPORAL_MODEL_PROVIDER=mock
+ 
+ MAIN_SYSTEM_ALERT_ENABLED=false
+ MAIN_SYSTEM_REPORT_DRY_RUN=true
+-MAIN_SYSTEM_BASE_URL=http://192.168.8.252:8000/api/v1
++MAIN_SYSTEM_BASE_URL=http://192.168.8.254:8000
++MAIN_SYSTEM_ALERT_PATH=/api/integrations/fall-detection/alerts
++MAIN_SYSTEM_HEALTH_PATH=/api/integrations/fall-detection/health
+ EVENT_PIPELINE_ENABLED=false
+ EVENT_DELIVERY_ENABLED=false
+ EVENT_DELIVERY_MODE=dry_run
+diff --git a/configs/safe_demo.env b/configs/safe_demo.env
+index b49053a..4d2608e 100644
+--- a/configs/safe_demo.env
++++ b/configs/safe_demo.env
+@@ -90,15 +90,17 @@ POST_FALL_V2_QWEN_PROVIDER=qwen_keyframe
+ POST_FALL_V2_QWEN_MODEL=qwen3.5:4b
+ POST_FALL_V2_QWEN_BASE_URL=http://127.0.0.1:11434/api/chat
+ POST_FALL_V2_QWEN_TIMEOUT_SECONDS=90
+-POST_FALL_V2_QWEN_MAX_IMAGES=3
++POST_FALL_V2_QWEN_NUM_CTX=12288
++POST_FALL_V2_QWEN_MAX_IMAGES=6
+ POST_FALL_V2_QWEN_MAX_IMAGE_BYTES=5242880
+ POST_FALL_V2_QWEN_IMAGE_MAX_EDGE=1280
+ POST_FALL_V2_QWEN_JPEG_QUALITY=85
+ POST_FALL_V2_QWEN_QUEUE_CAPACITY=2
++POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS=192
+ POST_FALL_V2_KEYFRAME_POST_COLLECTION_ENABLED=true
+ POST_FALL_V2_KEYFRAME_TOLERANCE_MS=750
+-POST_FALL_V2_KEYFRAME_COLLECTION_TIMEOUT_SECONDS=3.5
+-EVENT_KEYFRAME_OFFSETS_MS=-1000,0,3000
++POST_FALL_V2_KEYFRAME_COLLECTION_TIMEOUT_SECONDS=6
++EVENT_KEYFRAME_OFFSETS_MS=-3000,-2000,-1000,0,1000,3000
+ POST_FALL_V2_AUX_PERSON_DETECTION_ENABLED=false
+ POST_FALL_V2_SHADOW_ENABLED=false
+ 
+diff --git a/frontend_demo/app.js b/frontend_demo/app.js
+index 9419d8a..a3b7df8 100644
+--- a/frontend_demo/app.js
++++ b/frontend_demo/app.js
+@@ -452,6 +452,8 @@ function maybeAutoConnectFrontend(status = state.lastStatus) {
+ const DEFAULT_MANUAL_ALERT_IP = "192.168.8.253";
+ const LEGACY_MANUAL_ALERT_IPS = new Set(["172.18.33.66", "192.168.8.254"]);
+ const MANUAL_ALERT_IP_STORAGE_KEY = "vision.manualAlertTargetIp";
++const MAIN_SYSTEM_BASE_URL_STORAGE_KEY = "vision.mainSystemBaseUrl";
++const MAIN_SYSTEM_ALERT_PATH = "/api/integrations/fall-detection/alerts";
+ 
+ function initializeManualAlertControls() {
+   const input = $("manualAlertIp");
+@@ -467,6 +469,78 @@ function initializeManualAlertControls() {
+     window.localStorage?.setItem(MANUAL_ALERT_IP_STORAGE_KEY, DEFAULT_MANUAL_ALERT_IP);
+   }
+   button.addEventListener("click", sendManualAlert);
++  initializeMainSystemUrlControls();
++}
++
++function initializeMainSystemUrlControls() {
++  const input = $("mainSystemBaseUrl");
++  const saveButton = $("saveMainSystemUrlBtn");
++  const healthButton = $("testMainSystemHealthBtn");
++  if (!input) {
++    return;
++  }
++  const savedUrl = window.localStorage?.getItem(MAIN_SYSTEM_BASE_URL_STORAGE_KEY);
++  if (savedUrl) {
++    input.value = savedUrl;
++  }
++  saveButton?.addEventListener("click", saveMainSystemUrl);
++  healthButton?.addEventListener("click", testMainSystemHealth);
++}
++
++async function saveMainSystemUrl() {
++  const input = $("mainSystemBaseUrl");
++  const baseUrl = normalizeHttpBaseUrl(input?.value || "");
++  if (!baseUrl) {
++    setDiscoveryResult("失败：请输入 http://主系统IPv4:8000", "error");
++    input?.focus();
++    return false;
++  }
++  try {
++    const response = await fetch(`${apiBase()}/alerting/endpoint`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ base_url: baseUrl, path: MAIN_SYSTEM_ALERT_PATH, enabled: true }),
++    });
++    const payload = await safeJson(response);
++    if (!response.ok) {
++      throw new Error(payload?.detail || `HTTP ${response.status}`);
++    }
++    window.localStorage?.setItem(MAIN_SYSTEM_BASE_URL_STORAGE_KEY, baseUrl);
++    setDiscoveryResult(`已保存：${baseUrl}`, "success");
++    await refreshDeviceDiscoveryStatus();
++    return true;
++  } catch (error) {
++    setDiscoveryResult(`保存失败：${error}`, "error");
++    return false;
++  }
++}
++
++async function testMainSystemHealth() {
++  const saved = await saveMainSystemUrl();
++  if (!saved) {
++    return;
++  }
++  try {
++    const response = await fetch(`${apiBase()}/alerting/main-system/health`);
++    const payload = await safeJson(response);
++    if (response.ok && payload?.ok) {
++      setDiscoveryResult(`连接成功：${payload.url}`, "success");
++      $("statusBox").textContent = JSON.stringify(payload, null, 2);
++      return;
++    }
++    setDiscoveryResult(`连接失败：${payload?.error || payload?.status_code || response.status}`, "error");
++    $("statusBox").textContent = JSON.stringify(payload, null, 2);
++  } catch (error) {
++    setDiscoveryResult(`连接失败：${error}`, "error");
++  }
++}
++
++function normalizeHttpBaseUrl(value) {
++  const text = String(value || "").trim().replace(/\/+$/, "");
++  if (!/^https?:\/\/[^/\s]+(?::\d+)?$/.test(text)) {
++    return "";
++  }
++  return text;
+ }
+ 
+ async function sendManualAlert() {
+@@ -536,6 +610,15 @@ function setManualAlertResult(message, kind) {
+   result.dataset.state = kind;
+ }
+ 
++function setDiscoveryResult(message, kind) {
++  const result = $("discoveryResult");
++  if (!result) {
++    return;
++  }
++  result.textContent = message;
++  result.dataset.state = kind;
++}
++
+ function summarizeRemoteBody(body) {
+   if (!body) {
+     return "远端无响应正文";
+diff --git a/frontend_demo/index.html b/frontend_demo/index.html
+index 677e4fc..65750b8 100644
+--- a/frontend_demo/index.html
++++ b/frontend_demo/index.html
+@@ -164,6 +164,14 @@
+             <div class="discovery-actions">
+               <button id="autoConnectDevicesBtn" class="primary-btn" type="button">一键配对</button>
+             </div>
++            <label>
++              <span>主系统 URL</span>
++              <input id="mainSystemBaseUrl" placeholder="http://192.168.8.100:8000" inputmode="url" />
++            </label>
++            <div class="discovery-actions">
++              <button id="saveMainSystemUrlBtn" class="ghost-btn compact-btn" type="button">保存 URL</button>
++              <button id="testMainSystemHealthBtn" class="ghost-btn compact-btn" type="button">测试连接</button>
++            </div>
+             <dl class="detail-grid">
+               <dt>主系统</dt><dd id="mainSystemDiscoveryState">-</dd>
+               <dt>主系统 IP</dt><dd id="mainSystemDiscoveryIp">-</dd>
+diff --git a/frontend_demo/styles.css b/frontend_demo/styles.css
+index b6042ed..834d5ad 100644
+--- a/frontend_demo/styles.css
++++ b/frontend_demo/styles.css
+@@ -426,7 +426,7 @@ input:focus {
+ 
+ .discovery-actions {
+   display: grid;
+-  grid-template-columns: 1fr;
++  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+   gap: 10px;
+ }
+ 
+diff --git a/scripts/start_current_camera.py b/scripts/start_current_camera.py
+index 4eb145f..560fa8e 100644
+--- a/scripts/start_current_camera.py
++++ b/scripts/start_current_camera.py
+@@ -105,7 +105,7 @@ def main() -> int:
+     )
+     parser.add_argument("--yolo11-pose-model-path", default=_env_or("YOLO11_POSE_MODEL_PATH", "yolo11n-pose.pt"))
+     parser.add_argument("--enable-main-system-alerts", action="store_true", default=_env_or("MAIN_SYSTEM_ALERT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}, help="POST confirmed fall events to health-main.")
+-    parser.add_argument("--main-system-base-url", default=_env_or("MAIN_SYSTEM_BASE_URL", "http://127.0.0.1:8090/api/v1"))
++    parser.add_argument("--main-system-base-url", default=_env_or("MAIN_SYSTEM_BASE_URL", ""))
+     parser.add_argument("--vision-public-base-url", default=_env_or("VISION_SERVICE_PUBLIC_BASE_URL", ""))
+     parser.add_argument("--alert-cooldown-seconds", type=float, default=90.0)
+     parser.add_argument(
+@@ -228,8 +228,10 @@ def main() -> int:
+             "TEMPORAL_ONNX_PROVIDERS": "CUDAExecutionProvider,CPUExecutionProvider",
+             "MAIN_SYSTEM_ALERT_ENABLED": "true" if args.enable_main_system_alerts else _env_or("MAIN_SYSTEM_ALERT_ENABLED", "false"),
+             "MAIN_SYSTEM_BASE_URL": args.main_system_base_url,
+-            "MAIN_SYSTEM_FALL_EVENT_PATH": "/video-bridge/fall-events",
+-            "MAIN_SYSTEM_ALERT_TIMEOUT_MS": _env_or("MAIN_SYSTEM_ALERT_TIMEOUT_MS", "2500"),
++            "MAIN_SYSTEM_ALERT_PATH": "/api/integrations/fall-detection/alerts",
++            "MAIN_SYSTEM_HEALTH_PATH": "/api/integrations/fall-detection/health",
++            "MAIN_SYSTEM_CONNECT_TIMEOUT_SEC": _env_or("MAIN_SYSTEM_CONNECT_TIMEOUT_SEC", "2"),
++            "MAIN_SYSTEM_READ_TIMEOUT_SEC": _env_or("MAIN_SYSTEM_READ_TIMEOUT_SEC", "5"),
+             "MAIN_SYSTEM_ALERT_COOLDOWN_SECONDS": str(args.alert_cooldown_seconds),
+             "FALL_DETECTOR_CONFIRM_ENABLED": "true",
+             "FALL_DETECTOR_CONFIRM_MIN_PROBABILITY": "0.15",
+diff --git a/tests/test_alerting_manual_send.py b/tests/test_alerting_manual_send.py
+index 3abc2a7..92fd624 100644
+--- a/tests/test_alerting_manual_send.py
++++ b/tests/test_alerting_manual_send.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import unittest
+ from dataclasses import replace
++from tempfile import TemporaryDirectory
+ from typing import Any
+ 
+ from fastapi import FastAPI
+@@ -9,7 +10,11 @@ from fastapi.testclient import TestClient
+ 
+ from app.api import alerting_api
+ from app.core.config import Settings
++from app.services.alert_outbox_service import AlertOutboxService
+ from app.services.alert_simulator_service import AlertSimulatorService
++from app.services.fall_event_reporter_service import FallEventReporterService
++
++import app.services.fall_event_reporter_service as reporter_module
+ 
+ 
+ class _FakeResponse:
+@@ -18,109 +23,192 @@ class _FakeResponse:
+         self.text = body
+ 
+ 
+-class _ReporterStub:
+-    def __init__(self, settings: Settings) -> None:
+-        self.settings = settings
+-
+-    @staticmethod
+-    def endpoint_url() -> str:
+-        return "http://unused.example/api/v1/video-bridge/fall-events"
+-
+-    @staticmethod
+-    def request_timeout_seconds() -> float:
+-        return 2.5
+-
+-    def status(self) -> dict[str, Any]:
+-        return {
+-            "enabled": True,
+-            "endpoint_base_url": "http://unused.example/api/v1",
+-            "endpoint_path": "/video-bridge/fall-events",
+-            "dry_run": self.settings.main_system_report_dry_run,
+-            "token_header": self.settings.main_system_alert_token_header,
+-        }
++class _SourceManagerStub:
++    pass
+ 
+ 
+ class _RuntimeStub:
+     def __init__(self, settings: Settings) -> None:
+-        self.settings = settings
+-        self.fall_event_reporter = _ReporterStub(settings)
++        self._temp_dir = TemporaryDirectory()
++        self.settings = replace(
++            settings,
++            test_event_root=self._temp_dir.name,
++            alert_outbox_enabled=True,
++            alert_outbox_path=f"{self._temp_dir.name}/alert_outbox.sqlite3",
++        )
++        self.fall_event_reporter = FallEventReporterService(
++            settings=self.settings,
++            source_manager=_SourceManagerStub(),
++            alert_outbox=AlertOutboxService(self.settings),
++        )
+         self.alert_simulator_service = AlertSimulatorService(reporter=self.fall_event_reporter)
+ 
+ 
+ class AlertingManualSendTest(unittest.TestCase):
+     def test_send_once_posts_single_alert_with_configured_token_header(self) -> None:
+         settings = self._settings()
+-        service = AlertSimulatorService(reporter=_ReporterStub(settings))
+-        calls: list[dict[str, Any]] = []
+-
+-        def fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: float) -> _FakeResponse:
+-            calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+-            return _FakeResponse(200, '{"ok":true,"accepted":true,"pushed":true}')
+-
+-        import app.services.alert_simulator_service as simulator_module
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(settings, test_event_root=temp_dir, alert_outbox_enabled=True, alert_outbox_path=f"{temp_dir}/alert_outbox.sqlite3")
++            reporter = FallEventReporterService(settings=settings, source_manager=_SourceManagerStub(), alert_outbox=AlertOutboxService(settings))
++            service = AlertSimulatorService(reporter=reporter)
++            calls: list[dict[str, Any]] = []
++
++            def fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: float) -> _FakeResponse:
++                calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
++                return _FakeResponse(200, '{"ok":true,"accepted":true,"pushed":true}')
++
++            previous_post = reporter_module.requests.post
++            reporter_module.requests.post = fake_post
++            try:
++                first = service.send_once(
++                    target_ip="192.168.8.254",
++                    camera_id="camera_01",
++                    track_id="manual-console-probe",
++                    fall_prob=0.91,
++                )
++                second = service.send_once(
++                    target_ip="192.168.8.254",
++                    camera_id="camera_01",
++                    track_id="manual-console-probe",
++                    fall_prob=0.91,
++                )
++            finally:
++                reporter_module.requests.post = previous_post
++
++            self.assertTrue(first["ok"], first)
++            self.assertEqual(first["status_code"], 200)
++            self.assertEqual(first["target_url"], "http://192.168.8.254:8000/api/integrations/fall-detection/alerts")
++            self.assertNotEqual(first["incident_id"], second["incident_id"])
++            self.assertEqual(len(calls), 2)
++            self.assertEqual(calls[0]["headers"], {"X-Vision-Service-Token": "test-bridge-token"})
++            self.assertEqual(calls[0]["json"]["camera_id"], "camera_01")
++            self.assertEqual(calls[0]["json"]["track_id"], "manual-console-probe")
++            self.assertEqual(calls[0]["json"]["schema_version"], "1.0")
++            self.assertEqual(calls[0]["json"]["safety_outcome"], "alert")
++            self.assertTrue(calls[0]["json"]["test_event"])
++            self.assertIsInstance(calls[0]["json"]["legacy_payload"]["metadata"].get("event"), dict)
++            self.assertEqual(
++                calls[0]["json"]["legacy_payload"]["metadata"]["event"]["incident_id"],
++                calls[0]["json"]["incident_id"],
++            )
+ 
+-        previous_post = simulator_module.requests.post
+-        simulator_module.requests.post = fake_post
+-        try:
+-            first = service.send_once(
+-                target_ip="192.168.8.254",
+-                camera_id="camera_01",
+-                track_id="manual-console-probe",
+-                fall_prob=0.91,
++    def test_send_once_does_not_prequeue_pending_before_sync_post(self) -> None:
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(
++                self._settings(),
++                test_event_root=temp_dir,
++                alert_outbox_enabled=True,
++                alert_outbox_path=f"{temp_dir}/alert_outbox.sqlite3",
+             )
+-            second = service.send_once(
+-                target_ip="192.168.8.254",
+-                camera_id="camera_01",
+-                track_id="manual-console-probe",
+-                fall_prob=0.91,
++            outbox = AlertOutboxService(settings)
++            reporter = FallEventReporterService(
++                settings=settings,
++                source_manager=_SourceManagerStub(),
++                alert_outbox=outbox,
+             )
+-        finally:
+-            simulator_module.requests.post = previous_post
+-
+-        self.assertTrue(first["ok"], first)
+-        self.assertEqual(first["status_code"], 200)
+-        self.assertEqual(first["target_url"], "http://192.168.8.254:8000/api/v1/video-bridge/fall-events")
+-        self.assertNotEqual(first["incident_id"], second["incident_id"])
+-        self.assertEqual(len(calls), 2)
+-        self.assertEqual(calls[0]["headers"], {"X-Vision-Service-Token": "test-bridge-token"})
+-        self.assertEqual(calls[0]["json"]["camera_id"], "camera_01")
+-        self.assertEqual(calls[0]["json"]["track_id"], "manual-console-probe")
+-        self.assertEqual(calls[0]["json"]["event_type"], "fall_confirmed")
+-        self.assertIsInstance(calls[0]["json"]["metadata"].get("event"), dict)
+-        self.assertEqual(
+-            calls[0]["json"]["metadata"]["event"]["incident_id"],
+-            calls[0]["json"]["incident_id"],
+-        )
++            service = AlertSimulatorService(reporter=reporter)
++            pending_counts_seen_at_post: list[int] = []
++            calls: list[dict[str, Any]] = []
++
++            def fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: float) -> _FakeResponse:
++                del headers, timeout
++                pending_counts_seen_at_post.append(outbox.status().pending_count)
++                calls.append({"url": url, "json": json})
++                return _FakeResponse(200, f'{{"ok":true,"event_id":"{json["event_id"]}","duplicate":false}}')
++
++            previous_post = reporter_module.requests.post
++            reporter_module.requests.post = fake_post
++            try:
++                result = service.send_once(
++                    target_ip="192.168.8.254",
++                    event_id="manual-single-post-001",
++                    camera_id="camera_01",
++                    track_id="manual-console-probe",
++                    fall_prob=0.91,
++                )
++            finally:
++                reporter_module.requests.post = previous_post
++
++            self.assertTrue(result["ok"], result)
++            self.assertEqual(len(calls), 1)
++            self.assertEqual(pending_counts_seen_at_post, [0])
++            self.assertEqual(outbox.status().delivered_count, 1)
++            delivery = reporter._delivery_record(calls[0]["json"])  # type: ignore[attr-defined]
++            self.assertEqual(delivery["status"], "delivered")
++            self.assertEqual(delivery["attempts"], 1)
+ 
+     def test_send_once_reports_non_2xx_as_failure(self) -> None:
+-        service = AlertSimulatorService(reporter=_ReporterStub(self._settings()))
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(self._settings(), test_event_root=temp_dir, alert_outbox_enabled=True, alert_outbox_path=f"{temp_dir}/alert_outbox.sqlite3")
++            reporter = FallEventReporterService(settings=settings, source_manager=_SourceManagerStub(), alert_outbox=AlertOutboxService(settings))
++            service = AlertSimulatorService(reporter=reporter)
++
++            def fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: float) -> _FakeResponse:
++                del url, json, headers, timeout
++                return _FakeResponse(403, "forbidden")
++
++            previous_post = reporter_module.requests.post
++            reporter_module.requests.post = fake_post
++            try:
++                result = service.send_once(
++                    target_ip="192.168.8.254",
++                    camera_id="camera_01",
++                    track_id="manual-console-probe",
++                    fall_prob=0.91,
++                )
++            finally:
++                reporter_module.requests.post = previous_post
++
++            self.assertFalse(result["ok"], result)
++            self.assertEqual(result["status_code"], 403)
++            self.assertEqual(result["error"], "forbidden")
++
++    def test_send_once_can_reuse_event_id_for_duplicate_check(self) -> None:
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(self._settings(), test_event_root=temp_dir, alert_outbox_enabled=True, alert_outbox_path=f"{temp_dir}/alert_outbox.sqlite3")
++            reporter = FallEventReporterService(settings=settings, source_manager=_SourceManagerStub(), alert_outbox=AlertOutboxService(settings))
++            service = AlertSimulatorService(reporter=reporter)
++
++            def fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: float) -> _FakeResponse:
++                del url, headers, timeout
++                return _FakeResponse(200, f'{{"ok":true,"event_id":"{json["event_id"]}","duplicate":true}}')
++
++            previous_post = reporter_module.requests.post
++            reporter_module.requests.post = fake_post
++            try:
++                result = service.send_once(
++                    target_ip="192.168.8.254",
++                    event_id="manual-duplicate-001",
++                    camera_id="camera_01",
++                    track_id="manual-console-probe",
++                    fall_prob=0.91,
++                )
++            finally:
++                reporter_module.requests.post = previous_post
++
++            self.assertTrue(result["ok"], result)
++            self.assertEqual(result["incident_id"], "manual-duplicate-001")
++            self.assertIn('"duplicate": true', result["response_body"])
++
++    def test_api_can_use_configured_endpoint_without_target_ip(self) -> None:
++        calls: list[str] = []
+ 
+         def fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: float) -> _FakeResponse:
+-            del url, json, headers, timeout
+-            return _FakeResponse(403, "forbidden")
+-
+-        import app.services.alert_simulator_service as simulator_module
++            del json, headers, timeout
++            calls.append(url)
++            return _FakeResponse(200, '{"ok":true}')
+ 
+-        previous_post = simulator_module.requests.post
+-        simulator_module.requests.post = fake_post
++        previous_post = reporter_module.requests.post
++        reporter_module.requests.post = fake_post
+         try:
+-            result = service.send_once(
+-                target_ip="192.168.8.254",
+-                camera_id="camera_01",
+-                track_id="manual-console-probe",
+-                fall_prob=0.91,
+-            )
++            client = self._client()
++            response = client.post("/alerting/simulation/send-once", json={})
+         finally:
+-            simulator_module.requests.post = previous_post
+-
+-        self.assertFalse(result["ok"], result)
+-        self.assertEqual(result["status_code"], 403)
+-        self.assertEqual(result["error"], "forbidden")
++            reporter_module.requests.post = previous_post
+ 
+-    def test_api_requires_target_ip(self) -> None:
+-        client = self._client()
+-        response = client.post("/alerting/simulation/send-once", json={})
+-        self.assertEqual(response.status_code, 422, response.text)
++        self.assertEqual(response.status_code, 200, response.text)
++        self.assertTrue(response.json()["ok"], response.json())
++        self.assertEqual(calls, ["http://unused.example/api/integrations/fall-detection/alerts"])
+ 
+     def test_api_send_once_does_not_start_continuous_simulation(self) -> None:
+         calls: list[str] = []
+@@ -130,10 +218,8 @@ class AlertingManualSendTest(unittest.TestCase):
+             calls.append(url)
+             return _FakeResponse(200, '{"accepted":true,"pushed":true}')
+ 
+-        import app.services.alert_simulator_service as simulator_module
+-
+-        previous_post = simulator_module.requests.post
+-        simulator_module.requests.post = fake_post
++        previous_post = reporter_module.requests.post
++        reporter_module.requests.post = fake_post
+         try:
+             client = self._client()
+             response = client.post(
+@@ -142,11 +228,11 @@ class AlertingManualSendTest(unittest.TestCase):
+             )
+             status = client.get("/alerting/status")
+         finally:
+-            simulator_module.requests.post = previous_post
++            reporter_module.requests.post = previous_post
+ 
+         self.assertEqual(response.status_code, 200, response.text)
+         self.assertTrue(response.json()["ok"], response.json())
+-        self.assertEqual(calls, ["http://192.168.8.254:8000/api/v1/video-bridge/fall-events"])
++        self.assertEqual(calls, ["http://192.168.8.254:8000/api/integrations/fall-detection/alerts"])
+         self.assertFalse(status.json()["simulation"]["running"], status.text)
+ 
+     def test_status_exposes_dry_run_and_header_without_token_value(self) -> None:
+@@ -173,8 +259,12 @@ class AlertingManualSendTest(unittest.TestCase):
+             main_system_alert_token="test-bridge-token",
+             main_system_alert_token_header="X-Vision-Service-Token",
+             main_system_default_port=8000,
+-            main_system_base_prefix="/api/v1",
+-            main_system_fall_event_path="/video-bridge/fall-events",
++            main_system_base_prefix="",
++            main_system_alert_enabled=True,
++            main_system_report_dry_run=False,
++            main_system_base_url="http://unused.example",
++            main_system_alert_path="/api/integrations/fall-detection/alerts",
++            main_system_fall_event_path="/api/integrations/fall-detection/alerts",
+         )
+ 
+     def _client(self, settings: Settings | None = None) -> TestClient:
+diff --git a/tests/test_async_workers_and_outbox.py b/tests/test_async_workers_and_outbox.py
+index ae6afec..2663f04 100644
+--- a/tests/test_async_workers_and_outbox.py
++++ b/tests/test_async_workers_and_outbox.py
+@@ -118,11 +118,47 @@ class AsyncWorkersAndOutboxTest(unittest.TestCase):
+ 
+             outbox.record_result(payload, "request_error", "timeout")
+             failed_status = outbox.status()
+-            self.assertEqual(failed_status.failed_count, 1)
+-            self.assertEqual(failed_status.last_status, "failed")
+-            retry_payloads = outbox.pending_payloads()
++            self.assertEqual(failed_status.retry_wait_count, 1)
++            self.assertEqual(failed_status.last_status, "retry_wait")
++
++    def test_alert_outbox_records_result_without_existing_pending_row(self) -> None:
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(
++                Settings(),
++                alert_outbox_enabled=True,
++                alert_outbox_path=str(Path(temp_dir) / "outbox.sqlite3"),
++                main_system_retry_backoff_seconds="0",
++            )
++            outbox = AlertOutboxService(settings)
++            payload = {"event_id": "manual-1", "camera_id": "camera_01", "track_id": "manual"}
++
++            outbox.record_result(payload, "request_error", "timeout")
++
++            status = outbox.status()
++            self.assertEqual(status.retry_wait_count, 1)
++            pending_payloads = outbox.pending_payloads()
++            self.assertEqual(len(pending_payloads), 1)
++            self.assertEqual(pending_payloads[0]["event_id"], "manual-1")
++
++    def test_alert_outbox_manual_retry_can_include_failed_records(self) -> None:
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(
++                Settings(),
++                alert_outbox_enabled=True,
++                alert_outbox_path=str(Path(temp_dir) / "outbox.sqlite3"),
++                alert_outbox_retry_limit=1,
++            )
++            outbox = AlertOutboxService(settings)
++            payload = {"event_id": "event-1", "camera_id": "camera_01"}
++
++            outbox.record_pending(payload)
++            outbox.record_result(payload, "request_error", "timeout")
++
++            self.assertEqual(outbox.status().failed_count, 1)
++            self.assertEqual(outbox.pending_payloads(), [])
++            retry_payloads = outbox.pending_payloads(include_failed=True)
+             self.assertEqual(len(retry_payloads), 1)
+-            self.assertEqual(retry_payloads[0]["incident_id"], "incident-1")
++            self.assertEqual(retry_payloads[0]["event_id"], "event-1")
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/tests/test_device_connection_discovery.py b/tests/test_device_connection_discovery.py
+index 315391c..5b2fbf4 100644
+--- a/tests/test_device_connection_discovery.py
++++ b/tests/test_device_connection_discovery.py
+@@ -26,7 +26,7 @@ def _settings(config_path: str) -> Settings:
+         device_discovery_config_path=config_path,
+         device_discovery_enabled=True,
+         main_system_default_port=8000,
+-        main_system_base_prefix="/api/v1",
++        main_system_base_prefix="",
+         camera_rtsp_username="admin",
+         camera_rtsp_password="secret",
+         camera_rtsp_port=10554,
+@@ -54,7 +54,7 @@ def _main(ip: str = "192.168.8.254") -> DeviceProbeResult:
+         status="connected",
+         open_ports=[8000],
+         evidence=["tcp_port_open", "health_endpoint_success", "response_signature_matched"],
+-        main_system_base_url=f"http://{ip}:8000/api/v1",
++        main_system_base_url=f"http://{ip}:8000",
+     )
+ 
+ 
+@@ -83,7 +83,7 @@ class DeviceConnectionDiscoveryTest(unittest.TestCase):
+             ):
+                 result = service.resolve(force_scan=False, scan_main=True, scan_camera=True)
+ 
+-            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.254:8000/api/v1")
++            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.254:8000")
+             self.assertEqual(result.settings.default_rtsp_url, "rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1")
+             self.assertEqual(result.status["main_system"]["status"], "connected")
+             self.assertEqual(result.status["camera"]["status"], "connected")
+@@ -106,7 +106,7 @@ class DeviceConnectionDiscoveryTest(unittest.TestCase):
+                 result = service.resolve(force_scan=False, scan_main=True, scan_camera=True)
+ 
+             self.assertEqual(calls, [{"main": True, "camera": False}])
+-            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.253:8000/api/v1")
++            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.253:8000")
+             self.assertEqual(result.settings.default_rtsp_url, "rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1")
+ 
+     def test_both_invalid_scans_both_and_saves_new_config(self) -> None:
+@@ -266,15 +266,15 @@ class DeviceDiscoveryApiTest(unittest.TestCase):
+         response = client.post("/device-discovery/rescan")
+ 
+         self.assertEqual(response.status_code, 200, response.text)
+-        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000/api/v1")
++        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000")
+         self.assertEqual(runtime.stream_service.started, [])
+-        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000/api/v1"])
++        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000"])
+         self.assertEqual(
+             runtime.fall_event_reporter.endpoint_updates,
+             [
+                 {
+-                    "base_url": "http://192.168.8.252:8000/api/v1",
+-                    "path": "/video-bridge/fall-events",
++                    "base_url": "http://192.168.8.252:8000",
++                    "path": "/api/integrations/fall-detection/alerts",
+                     "enabled": True,
+                     "dry_run": False,
+                 }
+@@ -289,9 +289,9 @@ class DeviceDiscoveryApiTest(unittest.TestCase):
+         response = client.post("/device-discovery/connect-main-system")
+ 
+         self.assertEqual(response.status_code, 200, response.text)
+-        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000/api/v1")
++        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000")
+         self.assertEqual(runtime.stream_service.started, [])
+-        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000/api/v1"])
++        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000"])
+         self.assertEqual(runtime.fall_event_reporter.endpoint_updates[0]["dry_run"], False)
+ 
+     def test_connect_camera_endpoint_is_removed(self) -> None:
+@@ -385,7 +385,7 @@ class _DeviceConnectionServiceStub:
+     def manual_rescan(self) -> DeviceResolutionResult:
+         settings = replace(
+             self.settings,
+-            main_system_base_url="http://192.168.8.254:8000/api/v1",
++            main_system_base_url="http://192.168.8.254:8000",
+             default_rtsp_url="rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1",
+             mock_camera_enabled=False,
+         )
+@@ -395,7 +395,7 @@ class _DeviceConnectionServiceStub:
+     def connect_main_system(self) -> DeviceResolutionResult:
+         settings = replace(
+             self.settings,
+-            main_system_base_url="http://192.168.8.252:8000/api/v1",
++            main_system_base_url="http://192.168.8.252:8000",
+         )
+         self.settings = settings
+         status = _status_payload()
+diff --git a/tests/test_fall_event_reporter_service.py b/tests/test_fall_event_reporter_service.py
+index 5a91dac..9239523 100644
+--- a/tests/test_fall_event_reporter_service.py
++++ b/tests/test_fall_event_reporter_service.py
+@@ -3,6 +3,8 @@ from __future__ import annotations
+ import json
+ import unittest
+ from dataclasses import replace
++from pathlib import Path
++from tempfile import TemporaryDirectory
+ 
+ from app.core.config import Settings
+ from app.schemas.vision_result import DetectedObject, VisionResult
+@@ -63,8 +65,8 @@ class FallEventReporterServiceTest(unittest.TestCase):
+             main_system_report_dry_run=False,
+             main_system_alert_token="unit-test-token",
+             main_system_alert_token_header="X-Vision-Service-Token",
+-            main_system_base_url="http://192.168.8.254:8000/api/v1",
+-            main_system_fall_event_path="/video-bridge/fall-events",
++            main_system_base_url="http://192.168.8.254:8000",
++            main_system_alert_path="/api/integrations/fall-detection/alerts",
+         )
+         reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
+         calls: list[dict] = []
+@@ -92,9 +94,12 @@ class FallEventReporterServiceTest(unittest.TestCase):
+             reporter_module.requests.post = previous_post
+ 
+         self.assertEqual(len(calls), 1)
+-        self.assertEqual(calls[0]["url"], "http://192.168.8.254:8000/api/v1/video-bridge/fall-events")
++        self.assertEqual(calls[0]["url"], "http://192.168.8.254:8000/api/integrations/fall-detection/alerts")
+         self.assertEqual(calls[0]["headers"], {"X-Vision-Service-Token": "unit-test-token"})
+-        self.assertEqual(reporter.status()["last_post_status"], "http_200")
++        self.assertEqual(calls[0]["json"]["schema_version"], "1.0")
++        self.assertEqual(calls[0]["json"]["event_id"], "post-incident")
++        self.assertEqual(calls[0]["json"]["safety_outcome"], "alert")
++        self.assertEqual(reporter.status()["last_post_status"], "delivered")
+ 
+     def test_active_confirmed_fall_backfills_snapshot_after_initial_miss(self) -> None:
+         settings = replace(
+@@ -449,6 +454,147 @@ class FallEventReporterServiceTest(unittest.TestCase):
+         self.assertEqual(latest["description_zh"], "画面显示人员失衡后倒地，建议立即查看现场。")
+         self.assertEqual(latest["qwen_review"]["fall_verdict"], "confirmed_fall")
+ 
++    def test_post_fall_v2_safety_deny_does_not_queue_main_system_alert(self) -> None:
++        settings = replace(Settings(), main_system_alert_enabled=True, main_system_report_dry_run=False)
++        reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
++        result = self._confirmed_result()
++        obj = result.objects[0]
++        result.objects[0] = obj.model_copy(
++            update={
++                "fall_decision": {
++                    **(obj.fall_decision or {}),
++                    "pipeline": "post_fall_v2",
++                    "decision_authority": "event_state_machine",
++                    "safety_outcome": "dismiss",
++                    "fall_verdict": "confirmed_fall",
++                    "high_risk_fall": 1,
++                    "incident_id": "pfv2-deny-001",
++                }
++            }
++        )
++
++        reporter.inspect_result(result)
++
++        self.assertEqual(reporter._queue.qsize(), 0)  # type: ignore[attr-defined]
++        self.assertIsNone(reporter.latest_alert("camera_01"))
++
++    def test_delivered_ack_writes_main_system_files_in_event_directory(self) -> None:
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(
++                Settings(),
++                main_system_alert_enabled=True,
++                main_system_report_dry_run=False,
++                main_system_base_url="http://192.168.8.254:8000",
++                main_system_alert_path="/api/integrations/fall-detection/alerts",
++                test_event_root=temp_dir,
++            )
++            reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
++
++            class FakeResponse:
++                status_code = 200
++                text = '{"ok":true,"event_id":"pfv2-alert-001","duplicate":false}'
++
++            def fake_post(url: str, json: dict, headers: dict, timeout) -> FakeResponse:
++                del url, json, headers, timeout
++                return FakeResponse()
++
++            previous_post = reporter_module.requests.post
++            reporter_module.requests.post = fake_post
++            try:
++                reporter._post_payload(
++                    {
++                        "event_type": "fall_confirmed",
++                        "camera_id": "go2_front_camera",
++                        "track_id": "0",
++                        "incident_id": "pfv2-alert-001",
++                        "timestamp": "2026-08-29T09:10:00+00:00",
++                        "fall_prob": 0.93,
++                        "qwen_review": {"analysis_status": "completed", "fall_verdict": "confirmed_fall", "high_risk_fall": 1},
++                    }
++                )
++            finally:
++                reporter_module.requests.post = previous_post
++
++            event_dir = Path(temp_dir) / "go2_front_camera" / "pfv2-alert-001"
++            alert = json.loads((event_dir / "main_system_alert.json").read_text(encoding="utf-8"))
++            delivery = json.loads((event_dir / "main_system_delivery.json").read_text(encoding="utf-8"))
++            self.assertEqual(alert["schema_version"], "1.0")
++            self.assertEqual(alert["event_id"], "pfv2-alert-001")
++            self.assertEqual(delivery["status"], "delivered")
++            self.assertEqual(delivery["last_http_status"], 200)
++
++    def test_post_fall_v2_external_qwen_review_is_compact(self) -> None:
++        settings = replace(Settings(), main_system_alert_enabled=True)
++        reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
++
++        payload = reporter._external_alert_payload(  # type: ignore[attr-defined]
++            {
++                "event_type": "fall_confirmed",
++                "camera_id": "camera_01",
++                "incident_id": "incident-compact-001",
++                "timestamp": "2026-08-30T03:18:03+00:00",
++                "fall_prob": 0.97,
++                "metadata": {
++                    "event": {
++                        "qwen_review": {
++                            "analysis_status": "completed",
++                            "fall_verdict": "confirmed_fall",
++                            "high_risk_fall": 1,
++                            "occlusion": "unknown",
++                            "scene_risks": ["通行区域"],
++                            "possible_help_gesture": "unknown",
++                            "summary": "连续画面显示人员异常倒地。",
++                            "review_points": ["建议人工复核事件关键帧。"],
++                            "confidence": 0.92,
++                            "snapshot_path": "E:\\internal\\snapshot.jpg",
++                        }
++                    }
++                },
++            }
++        )
++
++        assert set(payload["qwen_review"]) == {
++            "occlusion",
++            "scene_risks",
++            "possible_help_gesture",
++            "summary",
++            "review_points",
++            "confidence",
++        }
++        assert payload["qwen_review"]["confidence"] == 0.92
++        assert "snapshot_path" not in payload["qwen_review"]
++
++    def test_ack_event_id_mismatch_is_not_delivered(self) -> None:
++        with TemporaryDirectory() as temp_dir:
++            settings = replace(
++                Settings(),
++                main_system_alert_enabled=True,
++                main_system_report_dry_run=False,
++                main_system_base_url="http://192.168.8.254:8000",
++                main_system_alert_path="/api/integrations/fall-detection/alerts",
++                test_event_root=temp_dir,
++            )
++            reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
++
++            class FakeResponse:
++                status_code = 200
++                text = '{"ok":true,"event_id":"different-event"}'
++
++            def fake_post(url: str, json: dict, headers: dict, timeout) -> FakeResponse:
++                del url, json, headers, timeout
++                return FakeResponse()
++
++            previous_post = reporter_module.requests.post
++            reporter_module.requests.post = fake_post
++            try:
++                reporter._post_payload({"camera_id": "camera_01", "incident_id": "pfv2-alert-002"})
++            finally:
++                reporter_module.requests.post = previous_post
++
++            delivery = json.loads((Path(temp_dir) / "camera_01" / "pfv2-alert-002" / "main_system_delivery.json").read_text(encoding="utf-8"))
++            self.assertEqual(delivery["status"], "retry_wait")
++            self.assertIn("ACK event_id mismatch", delivery["last_error"])
++
+     def _reporter(self) -> FallEventReporterService:
+         settings = replace(
+             Settings(),
+diff --git a/tests/test_integration_connection_status.py b/tests/test_integration_connection_status.py
+index df806ed..83404bd 100644
+--- a/tests/test_integration_connection_status.py
++++ b/tests/test_integration_connection_status.py
+@@ -51,12 +51,12 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
+             Settings(),
+             default_camera_id="camera_01",
+             vision_service_public_base_url="http://192.168.8.254:8000",
+-            main_system_base_url="http://192.168.8.253:8000/api/v1",
++            main_system_base_url="http://192.168.8.253:8000",
+             main_system_alert_timeout_ms=2500,
+         )
+ 
+         def fake_get(url: str, timeout: float):
+-            self.assertEqual(url, "http://192.168.8.253:8000/healthz")
++            self.assertEqual(url, "http://192.168.8.253:8000/api/integrations/fall-detection/health")
+             self.assertGreater(timeout, 0)
+             return _FakeResponse(200)
+ 
+@@ -84,7 +84,7 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
+             Settings(),
+             default_camera_id="camera_01",
+             vision_service_public_base_url="http://192.168.8.254:8000",
+-            main_system_base_url="http://192.168.8.253:8000/api/v1",
++            main_system_base_url="http://192.168.8.253:8000",
+             main_system_alert_timeout_ms=2500,
+         )
+ 
+@@ -112,7 +112,7 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
+             Settings(),
+             default_camera_id="camera_01",
+             vision_service_public_base_url="http://192.168.8.254:8000",
+-            main_system_base_url="http://192.168.8.253:8000/api/v1",
++            main_system_base_url="http://192.168.8.253:8000",
+             main_system_alert_timeout_ms=2500,
+         )
+ 
+@@ -140,7 +140,7 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
+             Settings(),
+             default_camera_id="camera_01",
+             vision_service_public_base_url="http://192.168.8.254:8000",
+-            main_system_base_url="http://192.168.8.253:8000/api/v1",
++            main_system_base_url="http://192.168.8.253:8000",
+             main_system_alert_timeout_ms=2500,
+         )
+ 
+diff --git a/tests/test_post_fall_v2_manual_control_and_archive.py b/tests/test_post_fall_v2_manual_control_and_archive.py
+index c7933cb..3ad05cf 100644
+--- a/tests/test_post_fall_v2_manual_control_and_archive.py
++++ b/tests/test_post_fall_v2_manual_control_and_archive.py
+@@ -18,6 +18,7 @@ from app.post_fall_v2.schemas import (
+     BinaryFrameResult,
+     FallDetailResult,
+     FallEvent,
++    FallSafetyDecision,
+     KeyframeItem,
+     KeyframePackage,
+ )
+@@ -229,6 +230,49 @@ def test_test_archive_keeps_binary_and_qwen_event_ids_matched(tmp_path) -> None:
+     assert (tmp_path / "event" / "qwen" / "deny" / event_b.incident_id / "qwen_review.json").exists()
+     assert (tmp_path / "event" / "qwen" / "review" / event_c.incident_id / "qwen_review.json").exists()
+     assert (tmp_path / "event" / "qwen" / "review" / event_d.incident_id / "qwen_review.json").exists()
++    qwen_review = json.loads(
++        (
++            tmp_path
++            / "event"
++            / "qwen"
++            / "confirm"
++            / event_a.incident_id
++            / "qwen_review.json"
++        ).read_text(encoding="utf-8")
++    )
++    assert set(qwen_review) == {
++        "occlusion",
++        "scene_risks",
++        "possible_help_gesture",
++        "summary",
++        "review_points",
++        "confidence",
++    }
++
++
++def test_test_archive_persists_final_safety_decision_with_qwen_result(tmp_path) -> None:
++    archive = PostFallTestArchiveService(str(tmp_path / "event"))
++    archive.start_test(60)
++    event = _event("pfv2-camera_01-final", "unclear")
++    event = replace(
++        event,
++        safety_decision=FallSafetyDecision(
++            outcome="alert",
++            path="post_fall_persistent_abnormality",
++            alert_level="high",
++            reason="persistent_post_fall_abnormality_without_intentional_evidence",
++            observation_elapsed_ms=15000,
++        ),
++    )
++    images = [QwenImageInput(offset_ms=0, role="trigger", image_bytes=b"jpeg")]
++
++    assert archive.archive_binary_event(event, _package(event), images)
++    assert archive.archive_qwen_result(event) == "review"
++
++    session_dir = tmp_path / "event" / "test_sessions" / archive.status().test_session_id
++    events = json.loads((session_dir / "events.json").read_text(encoding="utf-8"))
++    assert events[0]["event"]["safety_decision"]["outcome"] == "alert"
++    assert events[0]["event"]["safety_decision"]["path"] == "post_fall_persistent_abnormality"
+ 
+ 
+ def test_test_archive_records_binary_non_fall_without_creating_full_event(tmp_path) -> None:
+@@ -355,7 +399,14 @@ def test_stop_test_drain_timeout_keeps_event_and_completes_session(tmp_path) ->
+     incident = json.loads((tmp_path / "event" / "camera_01" / event.incident_id / "event.json").read_text(encoding="utf-8"))
+     assert summary["qwen_timeout"] == 1
+     assert events[0]["stage"] == "qwen_timeout"
+-    assert qwen["analysis_status"] == "timeout"
++    assert set(qwen) == {
++        "occlusion",
++        "scene_risks",
++        "possible_help_gesture",
++        "summary",
++        "review_points",
++        "confidence",
++    }
+     assert incident["analysis_status"] == "timeout"
+ 
+ 
+diff --git a/tests/test_post_fall_v2_qwen_fall_analyzer.py b/tests/test_post_fall_v2_qwen_fall_analyzer.py
+index afd369c..c40a8c4 100644
+--- a/tests/test_post_fall_v2_qwen_fall_analyzer.py
++++ b/tests/test_post_fall_v2_qwen_fall_analyzer.py
+@@ -44,14 +44,14 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
+     assert len(received) == 1
+     assert len(received[0]["messages"][1]["images"]) == 3
+     assert received[0]["format"]["required"] == [
+-        "schema_version", "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
+-        "positive_evidence", "negative_evidence", "activity", "posture_state",
++        "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
++        "activity", "posture_state",
+         "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
+         "persistent_ground_state", "posture", "summary", "confidence",
+     ]
+     assert set(received[0]["format"]["properties"]) == {
+-        "schema_version", "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
+-        "positive_evidence", "negative_evidence", "activity", "posture_state",
++        "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
++        "activity", "posture_state",
+         "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
+         "persistent_ground_state", "posture", "summary", "confidence",
+     }
+@@ -59,6 +59,7 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
+     assert received[0]["format"]["properties"]["posture"]["maxLength"] == 80
+     assert received[0]["format"]["properties"]["summary"]["maxLength"] == 160
+     assert received[0]["options"]["num_ctx"] == 8192
++    assert received[0]["options"]["num_predict"] == 192
+     assert received[0]["options"]["temperature"] == 0.1
+     request_text = json.dumps(received[0], ensure_ascii=False)
+     assert "最终是否告警由确定性事件状态机决定" in request_text
+@@ -66,9 +67,12 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
+     assert "示例 3 真实跌倒" in request_text
+     assert "示例 4 触发帧已在翻倒过程" in request_text
+     assert "若没有看到人物怎样进入低位，必须诚实输出 unclear" in request_text
++    assert "confirmed_fall 只允许两条证据路径" in request_text
++    assert "后帧持续异常卧地、未恢复且无主动行为证据" in request_text
+     assert "high_risk_fall" in request_text
+     assert "坐在椅子上休息" in request_text
+     assert "以下开始分析当前真实事件" in request_text
++    assert "只有真实看见较高姿态到明显非自主失衡" not in request_text
+     request_context = json.loads(received[0]["messages"][1]["content"])
+     assert request_context["keyframe_timeline"] == [
+         "图片 1：T0，候选事件触发附近，角色 trigger",
+@@ -228,6 +232,74 @@ def test_qwen_fall_analyzer_downgrades_high_risk_non_fall_contradiction() -> Non
+     assert detail.consistency_status == "corrected"
+ 
+ 
++def test_qwen_fall_analyzer_downgrades_non_fall_with_abnormal_ground_conflict() -> None:
++    analyzer = _analyzer(
++        lambda *_: {"message": {"content": json.dumps({
++            "schema_version": "pfv2_post_fall_detail.v1",
++            "high_risk_fall": 0,
++            "fall_verdict": "non_fall",
++            "scene_type": "unknown",
++            "recommended_action": "manual_review",
++            "positive_evidence": ["人物处于低位"],
++            "negative_evidence": ["未见明确正常活动证据"],
++            "activity": "低位状态不明",
++            "posture_state": "ground_low",
++            "fall_transition_visible": False,
++            "intentional_action_evidence": False,
++            "recovery_observed": False,
++            "persistent_ground_state": "observed",
++            "posture": "人物持续处于地面低位。",
++            "summary": "人物处于低位，但没有明确主动行为证据。",
++            "confidence": 0.6,
++        }, ensure_ascii=False)}} ,
++        images=[_image(-1000), _image(0), _image(3000)],
++    )
++
++    detail = analyzer.analyze_fall_event(_event(), _package())
++
++    assert detail.raw_fall_verdict == "non_fall"
++    assert detail.fall_verdict == "unclear"
++    assert detail.consistency_status == "corrected"
++
++
++def test_qwen_fall_analyzer_rejects_ground_low_rest_without_strong_support() -> None:
++    analyzer = _analyzer(
++        lambda *_: {"message": {"content": json.dumps({
++            "schema_version": "pfv2_post_fall_detail.v1",
++            "high_risk_fall": 0,
++            "fall_verdict": "non_fall",
++            "scene_type": "intentional_low_posture",
++            "recommended_action": "no_alert",
++            "positive_evidence": [
++                "人物从站立姿态主动弯腰并受控坐在地垫上",
++                "随后主动调整身体姿态平躺于地面",
++            ],
++            "negative_evidence": [
++                "未见突然失衡、急速下落或非自主翻倒过程",
++                "未见跌倒后的痛苦表情或静止状态",
++            ],
++            "activity": "主动弯腰后平躺休息",
++            "posture_state": "lying",
++            "fall_transition_visible": False,
++            "intentional_action_evidence": True,
++            "recovery_observed": False,
++            "persistent_ground_state": "observed",
++            "posture": "人物受控地从站立弯腰坐地，随后主动调整身体平躺于地面。",
++            "summary": "连续画面显示人物从站立姿态主动弯腰、坐下并调整至平躺，动作受控且无失衡迹象，属于正常休息行为。",
++            "confidence": 0.95,
++        }, ensure_ascii=False)}} ,
++        images=[_image(-1000), _image(0), _image(3000)],
++    )
++
++    detail = analyzer.analyze_fall_event(_event(), _package())
++
++    assert detail.analysis_status == "completed"
++    assert detail.raw_fall_verdict == "non_fall"
++    assert detail.fall_verdict == "unclear"
++    assert detail.intentional_action_evidence is False
++    assert detail.consistency_status == "corrected"
++
++
+ @pytest.mark.parametrize(
+     ("content", "expected"),
+     [
+diff --git a/tests/test_post_fall_v2_runtime_service.py b/tests/test_post_fall_v2_runtime_service.py
+index a48b16f..d688cd7 100644
+--- a/tests/test_post_fall_v2_runtime_service.py
++++ b/tests/test_post_fall_v2_runtime_service.py
+@@ -90,7 +90,7 @@ class _Analyzer:
+             "activity": "低位状态不明",
+             "posture_state": "ground_low",
+             "fall_transition_visible": False,
+-            "intentional_action_evidence": None,
++            "intentional_action_evidence": False,
+             "recovery_observed": False,
+             "persistent_ground_state": "observed",
+         }
+@@ -262,7 +262,7 @@ def test_qwen_confirmed_fall_reports_to_main_system_reporter() -> None:
+     assert outbox_records[0].metadata["qwen_review"]["high_risk_fall"] == 1
+ 
+ 
+-def test_unclear_qwen_persistent_post_fall_stays_observe_without_high_risk_gate() -> None:
++def test_unclear_qwen_persistent_post_fall_alerts_without_high_risk_gate() -> None:
+     reporter = _Reporter()
+     outbox_records = []
+     service, buffer, _analyzer, store = build_service(
+@@ -276,15 +276,17 @@ def test_unclear_qwen_persistent_post_fall_stays_observe_without_high_risk_gate(
+     for _ in range(12):
+         buffer.update(np.zeros((48, 64, 3), dtype=np.uint8))
+         time.sleep(0.03)
+-    wait_for(lambda: len(service.events()) == 1 and service.events()[0].safety_decision is not None)
++    wait_for(lambda: len(reporter.results) == 1 and len(outbox_records) == 1)
+     service.stop_all()
+ 
+-    assert reporter.results == []
+-    assert outbox_records == []
++    assert len(reporter.results) == 1
++    assert len(outbox_records) == 1
+     latest = store.latest_published("camera_01")
+     assert latest is not None
+-    assert latest.objects[0].fall_decision["safety_outcome"] == "observe"
+-    assert latest.objects[0].fall_decision["safety_path"] == "uncertain_evidence"
++    assert latest.objects[0].fall_decision["safety_outcome"] == "alert"
++    assert latest.objects[0].fall_decision["safety_path"] == "post_fall_persistent_abnormality"
++    assert latest.objects[0].fall_decision["fall_state"] == "fallen_confirmed"
++    assert latest.objects[0].alarm_preview["requires_attention"] is True
+ 
+ 
+ def test_running_qwen_prevents_premature_persistent_post_fall_alert() -> None:
+@@ -303,9 +305,10 @@ def test_running_qwen_prevents_premature_persistent_post_fall_alert() -> None:
+     wait_for(lambda: len(service.events()) == 1)
+ 
+     assert reporter.results == []
++    wait_for(lambda: len(reporter.results) == 1)
+     service.stop_all()
+ 
+-    assert reporter.results == []
++    assert len(reporter.results) == 1
+ 
+ 
+ def test_vlm_failure_does_not_remove_fall_event() -> None:
+diff --git a/tests/test_post_fall_v2_safety_decision.py b/tests/test_post_fall_v2_safety_decision.py
+index cb91260..82f709e 100644
+--- a/tests/test_post_fall_v2_safety_decision.py
++++ b/tests/test_post_fall_v2_safety_decision.py
+@@ -41,6 +41,7 @@ def test_explicit_non_fall_is_the_only_semantic_veto(verdict: str) -> None:
+         _detail(
+             verdict,
+             activity="正常行走" if verdict == "normal_activity" else "主动躺卧阅读",
++            scene_type="walking" if verdict == "normal_activity" else "intentional_low_posture",
+             posture_state="upright" if verdict == "normal_activity" else "lying",
+             intentional_action_evidence=verdict == "intentional_low_posture",
+         )
+@@ -109,6 +110,48 @@ def test_persistent_abnormality_with_completed_visual_evidence_stays_observe_wit
+     assert decision.review_required is True
+ 
+ 
++def test_non_fall_ground_conflict_falls_back_to_persistent_abnormality() -> None:
++    detail = _detail(
++        "unclear",
++        posture_state="ground_low",
++        persistent_ground_state="observed",
++        recovery_observed=False,
++        intentional_action_evidence=False,
++        scene_type="unknown",
++    )
++    event = _event(detail)
++
++    decision = evaluate_fall_safety(
++        event,
++        binary_state="EVENT_ACTIVE",
++        observation_elapsed_ms=15000,
++        post_fall_alert_min_ms=10000,
++    )
++
++    assert decision.outcome == "alert"
++    assert decision.path == "post_fall_persistent_abnormality"
++    assert decision.reason == "persistent_post_fall_abnormality_without_intentional_evidence"
++
++
++def test_conflicting_intentional_scene_without_intent_evidence_alerts_on_persistent_abnormality() -> None:
++    event = _event(
++        _detail(
++            "non_fall",
++            posture_state="lying",
++            persistent_ground_state="observed",
++            recovery_observed=False,
++            intentional_action_evidence=False,
++            scene_type="intentional_low_posture",
++        )
++    )
++
++    decision = _evaluate(event, elapsed_ms=15000)
++
++    assert decision.outcome == "alert"
++    assert decision.path == "post_fall_persistent_abnormality"
++    assert decision.qwen_verdict == "unclear"
++
++
+ @pytest.mark.parametrize("status", ["failed", "timeout"])
+ def test_failed_semantic_review_without_valid_visual_evidence_stays_observe(status: str) -> None:
+     event = _event(
+@@ -294,6 +337,24 @@ def test_observed_recovery_prevents_post_fall_escalation() -> None:
+     assert decision.outcome == "observe"
+ 
+ 
++def test_missing_semantic_detail_stays_observe_without_crashing() -> None:
++    event = FallEvent(
++        incident_id="incident-1",
++        camera_id="camera-01",
++        state="fall_candidate",
++        started_at="2026-08-28T00:00:00+00:00",
++        confirmed_at="2026-08-28T00:00:01+00:00",
++        binary_evidence={"candidate_duration_ms": 1000},
++        vlm_status="disabled",
++        vlm_analysis=None,
++    )
++
++    decision = _evaluate(event, elapsed_ms=30000)
++
++    assert decision.outcome == "observe"
++    assert decision.path == "uncertain_evidence"
++
++
+ def _evaluate(event: FallEvent, *, elapsed_ms: int):
+     return evaluate_fall_safety(
+         event,

@@ -10,21 +10,46 @@ const EVENT_STATUS_REFRESH_MS = 5000;
 const EVENT_LATEST_REFRESH_MS = 3000;
 const EVENT_LATEST_DISABLED_REFRESH_MS = 15000;
 const EVENT_RECENT_REFRESH_MS = 5000;
+const SESSION_STATUS_REFRESH_MS = 1000;
 const EVENT_TIMELINE_OFFSETS = [-3000, -1000, 0, 1000, 3000, 5000];
 const FRAME_FALLBACK_REFRESH_MS = 300;
 const FRAME_FALLBACK_RECENT_MS = 2500;
+const FRAME_FALLBACK_STREAM_ERROR_RETRY_MS = 1500;
 const VIDEO_PROGRESS_RECENT_MS = 2200;
+const WEBRTC_MIN_ACCEPTABLE_FPS = 8;
+const WEBRTC_FPS_RECENT_MS = 3000;
+const DISPLAY_MJPEG_FALLBACK_ENABLED = true;
+const DISPLAY_MJPEG_DEFAULT_FPS = 12;
 const VIDEO_BLACK_LUMA_THRESHOLD = 8;
 const ANNOTATED_OVERLAY_ENABLED = false;
 const WEBRTC_DEFAULT_ICE_SERVERS = [];
 const ALARM_INDICATOR_RESET_MS = 5000;
 const ALARM_INDICATOR_MARGIN_PX = 22;
+const ACKNOWLEDGED_FALL_EVENTS_KEY = "vision-dashboard-acknowledged-fall-events-v1";
+const ACKNOWLEDGED_FALL_EVENTS_MAX = 30;
 const ALARM_INDICATOR_TITLES = {
   idle: "等待事件",
   candidate: "疑似跌倒，等待复核",
   dismissed: "本次事件未触发最终告警",
   confirmed: "确认跌倒，已触发最终告警",
 };
+const DEMO_FALL_STAGE_MS = {
+  analyzing: 500,
+  suspected: 1500,
+  reviewing: 2600,
+  completed: 4600,
+  description: 4850,
+  json: 5150,
+};
+
+function loadAcknowledgedFallEventIds() {
+  try {
+    const values = JSON.parse(window.sessionStorage.getItem(ACKNOWLEDGED_FALL_EVENTS_KEY) || "[]");
+    return new Set(Array.isArray(values) ? values.filter(Boolean).map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
 
 const state = {
   pc: null,
@@ -33,7 +58,9 @@ const state = {
   lastResult: null,
   lastStatus: null,
   lastControlStatus: null,
+  lastSessionStatus: null,
   lastEvent: null,
+  lastDashboardEvent: null,
   pendingResult: null,
   pendingIceCandidates: [],
   poseCache: new Map(),
@@ -55,6 +82,8 @@ const state = {
     lastAt: null,
     lastTotalFrames: null,
     lastDroppedFrames: null,
+    lastMeasuredFps: null,
+    lastMeasuredAt: null,
   },
   videoPaint: {
     canvas: null,
@@ -82,6 +111,25 @@ const state = {
   },
   userEditedRtspUrl: false,
   lastPlayError: null,
+  sessionHotkeyBusy: false,
+  acknowledgedFallEventIds: loadAcknowledgedFallEventIds(),
+  demoFall: {
+    active: false,
+    scenario: null,
+    phase: "idle",
+    incidentId: null,
+    startedAt: null,
+    presentation: null,
+    revealDescription: false,
+    revealJson: false,
+    timers: [],
+  },
+  visualHistory: {
+    lastAppendAt: 0,
+    binaryProbability: [],
+    videoFps: [],
+    frameAge: [],
+  },
   eventReview: {
     status: null,
     latestRefreshMs: EVENT_LATEST_REFRESH_MS,
@@ -156,6 +204,11 @@ debugState.reset = () => {
   };
   state.overlayFps.lastAt = null;
   state.overlayFps.lastFrames = 0;
+  state.videoFps.lastAt = null;
+  state.videoFps.lastTotalFrames = null;
+  state.videoFps.lastDroppedFrames = null;
+  state.videoFps.lastMeasuredFps = null;
+  state.videoFps.lastMeasuredAt = null;
   state.pendingResult = null;
   state.lastResult = null;
   state.poseCache.clear();
@@ -242,7 +295,20 @@ function webrtcIceServers() {
 }
 
 function latestFrameUrl(cameraId) {
-  return `${apiBase()}/stream/latest-frame.jpg?camera_id=${encodeURIComponent(cameraId)}&t=${Date.now()}`;
+  return `${apiBase()}/stream/latest-frame.jpg?camera_id=${encodeURIComponent(cameraId)}&display=1&t=${Date.now()}`;
+}
+
+function displayStreamUrl(cameraId) {
+  const fps = displayMjpegTargetFps();
+  return `${apiBase()}/stream/display.mjpg?camera_id=${encodeURIComponent(cameraId)}&fps=${encodeURIComponent(fps)}&t=${Date.now()}`;
+}
+
+function displayMjpegTargetFps(status = state.lastStatus) {
+  const configured = Number(status?.configuration?.effective_config?.display_mjpeg_fps);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.min(30, configured));
+  }
+  return DISPLAY_MJPEG_DEFAULT_FPS;
 }
 
 function preloadFrameFallback(url) {
@@ -271,12 +337,51 @@ function isBackendFrameFresh(status, cameraId = currentCameraId()) {
     || (Number.isFinite(frameAgeMs) && frameAgeMs <= FRAME_FALLBACK_RECENT_MS);
 }
 
-function shouldPollFrameFallback() {
-  return state.pc?.connectionState !== "connected" || !isVideoVisiblyHealthy();
+function isStreamHealthy(stream) {
+  if (!stream) {
+    return false;
+  }
+  return stream.stream_state === "connected"
+    || stream.stream_state === "streaming"
+    || stream.frame_status === "fresh"
+    || (stream.connected === true && stream.is_stale !== true);
 }
 
-function syncFrameFallbackLoop() {
-  if (shouldPollFrameFallback()) {
+function backendHasDisplayFrame(status, cameraId = currentCameraId()) {
+  const camera = getStatusCamera(status, cameraId);
+  return Boolean(
+    camera?.raw_jpeg_available
+    || status?.main_stream?.raw_jpeg_available
+    || status?.analysis_stream?.raw_jpeg_available
+    || Number.isFinite(Number(camera?.frame_seq))
+  );
+}
+
+function shouldPreferMjpegDisplay(status = state.lastStatus, cameraId = currentCameraId()) {
+  if (!DISPLAY_MJPEG_FALLBACK_ENABLED || !status) {
+    return false;
+  }
+  const camera = getStatusCamera(status, cameraId);
+  const protocol = camera?.source_protocol
+    || status?.main_stream?.source_protocol
+    || status?.analysis_stream?.source_protocol
+    || camera?.source;
+  return String(protocol || "").toLowerCase() === "mjpeg";
+}
+
+function shouldPollFrameFallback(status = state.lastStatus) {
+  const hasViewerConnectionIntent = Boolean(
+    state.userConnected
+    || state.autoReconnect.connecting
+    || state.pc
+  );
+  const backendCanServeFrame = Boolean(status && (isBackendFrameFresh(status) || backendHasDisplayFrame(status)));
+  return (hasViewerConnectionIntent || backendCanServeFrame || shouldPreferMjpegDisplay(status))
+    && (state.pc?.connectionState !== "connected" || !isVideoVisiblyHealthy());
+}
+
+function syncFrameFallbackLoop(status = state.lastStatus) {
+  if (shouldPollFrameFallback(status)) {
     startFrameFallbackLoop();
   } else {
     stopFrameFallbackLoop();
@@ -307,7 +412,18 @@ async function refreshFrameFallback() {
   }
   if (!shouldPollFrameFallback()) {
     setFrameFallbackVisible(false);
+    stopFrameFallbackStream();
     stopFrameFallbackLoop();
+    return;
+  }
+  if (DISPLAY_MJPEG_FALLBACK_ENABLED) {
+    startFrameFallbackStream();
+    if (image.naturalWidth && image.naturalHeight) {
+      state.frameFallback.lastOkAt = Date.now();
+      state.frameFallback.naturalWidth = image.naturalWidth;
+      state.frameFallback.naturalHeight = image.naturalHeight;
+    }
+    updateFrameFallbackVisibility();
     return;
   }
   const cameraId = currentCameraId();
@@ -331,6 +447,48 @@ async function refreshFrameFallback() {
     state.frameFallback.loading = false;
     updateFrameFallbackVisibility();
   }
+}
+
+function startFrameFallbackStream() {
+  const image = $("frameFallback");
+  if (!image) {
+    return;
+  }
+  const now = Date.now();
+  if (
+    state.frameFallback.lastErrorAt
+    && now - state.frameFallback.lastErrorAt < FRAME_FALLBACK_STREAM_ERROR_RETRY_MS
+  ) {
+    return;
+  }
+  const cameraId = currentCameraId();
+  if (state.frameFallback.cameraId === cameraId && state.frameFallback.lastUrl?.includes("/stream/display.mjpg")) {
+    return;
+  }
+  const url = displayStreamUrl(cameraId);
+  image.onload = () => {
+    state.frameFallback.lastOkAt = Date.now();
+    state.frameFallback.naturalWidth = image.naturalWidth || image.width;
+    state.frameFallback.naturalHeight = image.naturalHeight || image.height;
+    updateFrameFallbackVisibility();
+  };
+  image.onerror = (error) => {
+    state.frameFallback.lastErrorAt = Date.now();
+    state.frameFallback.lastUrl = null;
+    pushDebugError("frameFallbackStream", error);
+  };
+  image.src = url;
+  state.frameFallback.cameraId = cameraId;
+  state.frameFallback.lastUrl = url;
+}
+
+function stopFrameFallbackStream() {
+  const image = $("frameFallback");
+  if (!image || !state.frameFallback.lastUrl?.includes("/stream/display.mjpg")) {
+    return;
+  }
+  image.removeAttribute("src");
+  state.frameFallback.lastUrl = null;
 }
 
 function setFrameFallbackVisible(visible) {
@@ -403,7 +561,20 @@ function isVideoVisiblyHealthy() {
   const paintLooksLive = !Number.isFinite(luma)
     || luma >= VIDEO_BLACK_LUMA_THRESHOLD
     || Boolean(state.videoPaint.lastBrightAt && now - state.videoPaint.lastBrightAt <= VIDEO_PROGRESS_RECENT_MS);
-  return hasProgress && paintLooksLive;
+  return hasProgress && paintLooksLive && isWebRtcFpsHealthy();
+}
+
+function isWebRtcFpsHealthy() {
+  if (state.pc?.connectionState !== "connected") {
+    return false;
+  }
+  const now = Date.now();
+  const measuredAt = Number(state.videoFps.lastMeasuredAt);
+  if (!Number.isFinite(measuredAt) || now - measuredAt > WEBRTC_FPS_RECENT_MS) {
+    return true;
+  }
+  const fps = Number(state.videoFps.lastMeasuredFps);
+  return Number.isFinite(fps) && fps >= WEBRTC_MIN_ACCEPTABLE_FPS;
 }
 
 function updateFrameFallbackVisibility(status = state.lastStatus) {
@@ -416,16 +587,22 @@ function updateFrameFallbackVisibility(status = state.lastStatus) {
     state.frameFallback.lastOkAt
     && now - state.frameFallback.lastOkAt <= FRAME_FALLBACK_RECENT_MS
   );
-  const backendFresh = !status || isBackendFrameFresh(status);
+  const hasLoadedFallbackFrame = Boolean(
+    (image.complete || state.frameFallback.lastUrl?.includes("/stream/display.mjpg"))
+    && image.naturalWidth > 0
+    && image.naturalHeight > 0
+    && (state.frameFallback.lastOkAt || state.frameFallback.lastUrl || image.currentSrc || image.src)
+  );
+  const backendCanShowLiveFrame = !status || isBackendFrameFresh(status);
   const videoHealthy = isVideoVisiblyHealthy();
   const webrtcConnected = state.pc?.connectionState === "connected";
-  const shouldShowFallback = hasRecentFallbackFrame && backendFresh && (!videoHealthy || !webrtcConnected);
+  const shouldShowFallback = (hasRecentFallbackFrame || hasLoadedFallbackFrame) && backendCanShowLiveFrame && (!videoHealthy || !webrtcConnected);
   setFrameFallbackVisible(shouldShowFallback);
   const empty = document.querySelector(".viewer-empty");
   if (empty) {
     empty.hidden = shouldShowFallback || videoHealthy;
   }
-  syncFrameFallbackLoop();
+  syncFrameFallbackLoop(status);
 }
 
 function maybeAutoConnectFrontend(status = state.lastStatus) {
@@ -441,6 +618,12 @@ function maybeAutoConnectFrontend(status = state.lastStatus) {
   if (!isBackendFrameFresh(status)) {
     return;
   }
+  if (shouldPreferMjpegDisplay(status)) {
+    state.autoFrontendConnectAttempted = true;
+    syncFrameFallbackLoop(status);
+    updateFrameFallbackVisibility(status);
+    return;
+  }
   state.autoFrontendConnectAttempted = true;
   setTimeout(() => {
     if (!state.userConnected && !state.pc) {
@@ -452,6 +635,8 @@ function maybeAutoConnectFrontend(status = state.lastStatus) {
 const DEFAULT_MANUAL_ALERT_IP = "192.168.8.253";
 const LEGACY_MANUAL_ALERT_IPS = new Set(["172.18.33.66", "192.168.8.254"]);
 const MANUAL_ALERT_IP_STORAGE_KEY = "vision.manualAlertTargetIp";
+const MAIN_SYSTEM_BASE_URL_STORAGE_KEY = "vision.mainSystemBaseUrl";
+const MAIN_SYSTEM_ALERT_PATH = "/api/integrations/fall-detection/alerts";
 
 function initializeManualAlertControls() {
   const input = $("manualAlertIp");
@@ -467,6 +652,78 @@ function initializeManualAlertControls() {
     window.localStorage?.setItem(MANUAL_ALERT_IP_STORAGE_KEY, DEFAULT_MANUAL_ALERT_IP);
   }
   button.addEventListener("click", sendManualAlert);
+  initializeMainSystemUrlControls();
+}
+
+function initializeMainSystemUrlControls() {
+  const input = $("mainSystemBaseUrl");
+  const saveButton = $("saveMainSystemUrlBtn");
+  const healthButton = $("testMainSystemHealthBtn");
+  if (!input) {
+    return;
+  }
+  const savedUrl = window.localStorage?.getItem(MAIN_SYSTEM_BASE_URL_STORAGE_KEY);
+  if (savedUrl) {
+    input.value = savedUrl;
+  }
+  saveButton?.addEventListener("click", saveMainSystemUrl);
+  healthButton?.addEventListener("click", testMainSystemHealth);
+}
+
+async function saveMainSystemUrl() {
+  const input = $("mainSystemBaseUrl");
+  const baseUrl = normalizeHttpBaseUrl(input?.value || "");
+  if (!baseUrl) {
+    setDiscoveryResult("失败：请输入 http://主系统IPv4:8000", "error");
+    input?.focus();
+    return false;
+  }
+  try {
+    const response = await fetch(`${apiBase()}/alerting/endpoint`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl, path: MAIN_SYSTEM_ALERT_PATH, enabled: true }),
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    window.localStorage?.setItem(MAIN_SYSTEM_BASE_URL_STORAGE_KEY, baseUrl);
+    setDiscoveryResult(`已保存：${baseUrl}`, "success");
+    await refreshDeviceDiscoveryStatus();
+    return true;
+  } catch (error) {
+    setDiscoveryResult(`保存失败：${error}`, "error");
+    return false;
+  }
+}
+
+async function testMainSystemHealth() {
+  const saved = await saveMainSystemUrl();
+  if (!saved) {
+    return;
+  }
+  try {
+    const response = await fetch(`${apiBase()}/alerting/main-system/health`);
+    const payload = await safeJson(response);
+    if (response.ok && payload?.ok) {
+      setDiscoveryResult(`连接成功：${payload.url}`, "success");
+      $("statusBox").textContent = JSON.stringify(payload, null, 2);
+      return;
+    }
+    setDiscoveryResult(`连接失败：${payload?.error || payload?.status_code || response.status}`, "error");
+    $("statusBox").textContent = JSON.stringify(payload, null, 2);
+  } catch (error) {
+    setDiscoveryResult(`连接失败：${error}`, "error");
+  }
+}
+
+function normalizeHttpBaseUrl(value) {
+  const text = String(value || "").trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/[^/\s]+(?::\d+)?$/.test(text)) {
+    return "";
+  }
+  return text;
 }
 
 async function sendManualAlert() {
@@ -529,6 +786,15 @@ function isLikelyIpv4(value) {
 
 function setManualAlertResult(message, kind) {
   const result = $("manualAlertResult");
+  if (!result) {
+    return;
+  }
+  result.textContent = message;
+  result.dataset.state = kind;
+}
+
+function setDiscoveryResult(message, kind) {
+  const result = $("discoveryResult");
   if (!result) {
     return;
   }
@@ -614,15 +880,15 @@ async function connectWebRTC() {
   closeConnections();
   stopOverlayLoop();
   $("connectBtn").disabled = true;
-  $("webrtcState").textContent = "connecting";
+  setText("webrtcState", "connecting");
   updatePeerDebugState();
-  $("wsState").textContent = "idle";
+  setText("wsState", "idle");
   updateRecoveryBanner();
 
   try {
     await startStreamRequest({ updateUi: false });
   } catch (error) {
-    $("webrtcState").textContent = "failed";
+    setText("webrtcState", "failed");
     $("statusBox").textContent = `stream start failed before WebRTC: ${error}`;
     state.autoReconnect.connecting = false;
     $("connectBtn").disabled = false;
@@ -672,7 +938,7 @@ async function connectWebRTC() {
   };
   pc.onconnectionstatechange = () => {
     if (state.pc === pc) {
-      $("webrtcState").textContent = pc.connectionState;
+      setText("webrtcState", pc.connectionState);
       updatePeerDebugState();
       updateRecoveryBanner();
       updateFrameFallbackVisibility();
@@ -740,7 +1006,7 @@ async function connectWebRTC() {
     connectResults(cameraId);
   } catch (error) {
     if (state.pc === pc) {
-      $("webrtcState").textContent = "failed";
+      setText("webrtcState", "failed");
       $("statusBox").textContent = String(error);
       updatePeerDebugState();
       closeConnections();
@@ -773,6 +1039,11 @@ function closeConnections() {
   state.peerId = null;
   state.pendingIceCandidates = [];
   state.connectedDisplaySource = null;
+  state.videoFps.lastAt = null;
+  state.videoFps.lastTotalFrames = null;
+  state.videoFps.lastDroppedFrames = null;
+  state.videoFps.lastMeasuredFps = null;
+  state.videoFps.lastMeasuredAt = null;
   updateFrameFallbackVisibility();
   updatePeerDebugState();
 }
@@ -829,19 +1100,19 @@ function connectResults(cameraId) {
   const ws = new WebSocket(`${wsBase()}/ws/results?camera_id=${encodeURIComponent(cameraId)}`);
   state.ws = ws;
   ws.onopen = () => {
-    $("wsState").textContent = "connected";
+    setText("wsState", "connected");
     state.autoReconnect.wsAttempts = 0;
     updateRecoveryBanner();
   };
   ws.onclose = () => {
     if (state.ws === ws) {
-      $("wsState").textContent = "closed";
+      setText("wsState", "closed");
       scheduleWebSocketReconnect("websocket closed");
     }
   };
   ws.onerror = () => {
     if (state.ws === ws) {
-      $("wsState").textContent = "error";
+      setText("wsState", "error");
       scheduleWebSocketReconnect("websocket error");
     }
   };
@@ -860,6 +1131,7 @@ function connectResults(cameraId) {
     $("latency").textContent = `${result.detector?.latency_ms ?? "-"} ms`;
     updateTargetDetails(composedResult);
     updateAlarmIndicatorFromResult(composedResult);
+    renderDashboard();
     debugState.counters.wsMessages += 1;
     pushLimited(debugState.wsSamples, {
       at: Date.now(),
@@ -1256,7 +1528,7 @@ function scheduleWebRTCReconnect(reason) {
   const attempt = state.autoReconnect.webrtcAttempts++;
   const delay = reconnectDelayMs(attempt);
   debugState.counters.webrtcReconnects += 1;
-  $("webrtcState").textContent = `重连中 ${Math.round(delay / 1000)}s`;
+  setText("webrtcState", `重连中 ${Math.round(delay / 1000)}s`);
   updateRecoveryBanner(reason);
   state.autoReconnect.webrtcTimer = setTimeout(() => {
     state.autoReconnect.webrtcTimer = null;
@@ -1272,7 +1544,7 @@ function scheduleWebSocketReconnect(reason) {
   const attempt = state.autoReconnect.wsAttempts++;
   const delay = reconnectDelayMs(attempt);
   debugState.counters.wsReconnects += 1;
-  $("wsState").textContent = `重连中 ${Math.round(delay / 1000)}s`;
+  setText("wsState", `重连中 ${Math.round(delay / 1000)}s`);
   updateRecoveryBanner(reason);
   state.autoReconnect.wsTimer = setTimeout(() => {
     state.autoReconnect.wsTimer = null;
@@ -1309,10 +1581,10 @@ function updateRecoveryBanner(extraMessage = null) {
   }
   if (status.display_fallback_active || status.display_source_current === "analysis") {
     messages.push("高清流恢复中，已切换到稳定分析流显示");
-  } else if (main && main.stream_state !== "connected") {
+  } else if (main && !isStreamHealthy(main)) {
     messages.push("高清流恢复中");
   }
-  if (analysis && analysis.stream_state !== "connected") {
+  if (analysis && !isStreamHealthy(analysis)) {
     messages.push("AI 分析流恢复中");
   }
   if (extraMessage) {
@@ -1342,16 +1614,15 @@ async function refreshStatus() {
     }
     const rawJsonMs = performance.now() - jsonStartedAt;
     updateStreamState(data);
-    void refreshControlStatus(cameraId);
     updateFrameFallbackVisibility(data);
     maybeAutoConnectFrontend(data);
     updateBackendSource(data);
-    void refreshDeviceDiscoveryStatus();
     syncRtspInputFromStatus(data);
     if (isResultExpired(state.lastResult)) {
       expireOverlayResult();
     }
     updateMetricPanel(data);
+    renderDashboard();
     debugState.counters.statusUpdates += 1;
     pushLimited(debugState.statusSamples, {
       at: Date.now(),
@@ -1359,6 +1630,7 @@ async function refreshStatus() {
       rawJsonMs,
       frameAgeMs: data.cameras?.[0]?.frame_age_ms ?? null,
       publishFps: data.pipeline?.result_publish_fps ?? null,
+      displayFps: getDisplayStreamStatus(data)?.display_mjpeg_served_fps ?? getDisplayStreamStatus(data)?.display_served_fps ?? null,
       poseFps: data.pose?.pose_fps ?? null,
     });
   } catch (error) {
@@ -1420,7 +1692,7 @@ function updateStreamState(status) {
   const cameraId = $("cameraId").value.trim() || "camera_01";
   const camera = (status.cameras || []).find((item) => item.camera_id === cameraId);
   if (!camera) {
-    $("streamState").textContent = "未连接";
+    setText("streamState", "未连接");
     updateFrameFallbackVisibility(status);
     updateRecoveryBanner();
     return;
@@ -1435,7 +1707,7 @@ function updateStreamState(status) {
     : status.diagnostics?.capture_stale
       ? "采集停滞 / 等待新帧"
       : streamStateLabel(camera.stream_state);
-  $("streamState").textContent = `${staleLabel} (${age} / ${protocol})${suffix}`;
+  setText("streamState", `${staleLabel} (${age} / ${protocol})${suffix}`);
   maybeReconnectForDisplaySource(status);
   updateFrameFallbackVisibility(status);
   updateRecoveryBanner();
@@ -1509,6 +1781,7 @@ function renderControlStatus(control) {
   } else if (state.lastControlStatus?.test?.remaining_seconds === 0 && test.test_session_id) {
     setControlResult("testControlResult", `测试已结束：Session ${test.test_session_id}`, "success");
   }
+  renderDashboard();
 }
 
 function renderTestMetrics(test, runtimePerformance = {}) {
@@ -1615,6 +1888,778 @@ async function stopTimedTest() {
   } finally {
     await refreshControlStatus();
   }
+}
+
+async function refreshSessionStatus(cameraId = currentCameraId()) {
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/session/status?camera_id=${encodeURIComponent(cameraId)}`);
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    state.lastSessionStatus = payload;
+    renderSessionStatus(payload);
+    if (state.demoFall.active) {
+      renderDemoVisualState();
+    }
+  } catch (error) {
+    setControlResult("sessionControlResult", `Session状态读取失败：${error}`, "error");
+    if (state.demoFall.active) {
+      renderDemoVisualState();
+    }
+  }
+}
+
+async function toggleDetectionSession() {
+  const session = state.lastSessionStatus || {};
+  const current = String(session.state || "IDLE").toUpperCase();
+  if (["STARTING", "STOPPING"].includes(current)) {
+    return;
+  }
+  if (current === "RUNNING") {
+    await stopDetectionSession();
+    return;
+  }
+  await startDetectionSession();
+}
+
+async function startDetectionSession() {
+  const button = $("sessionToggleBtn");
+  if (button) button.disabled = true;
+  setControlResult("sessionControlResult", "正在启动完整检测链路...", "pending");
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/session/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        camera_id: currentCameraId(),
+        source_url: $("rtspUrl")?.value?.trim() || null,
+      }),
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    state.lastSessionStatus = payload;
+    renderSessionStatus(payload);
+    setControlResult("sessionControlResult", payload.failure_reason ? `启动失败：${payload.failure_reason}` : "完整检测已启动", payload.failure_reason ? "error" : "success");
+    await Promise.all([refreshControlStatus(), refreshStatus()]);
+  } catch (error) {
+    setControlResult("sessionControlResult", `启动失败：${error}`, "error");
+  } finally {
+    if (button) button.disabled = false;
+    await refreshSessionStatus();
+  }
+}
+
+async function stopDetectionSession() {
+  const button = $("sessionToggleBtn");
+  if (button) button.disabled = true;
+  setControlResult("sessionControlResult", "正在保存最后结果，请等待当前千问复核归档...", "pending");
+  try {
+    const response = await fetch(`${apiBase()}/runtime-control/session/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ camera_id: currentCameraId() }),
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `HTTP ${response.status}`);
+    }
+    state.lastSessionStatus = payload;
+    renderSessionStatus(payload);
+    setControlResult("sessionControlResult", "本次检测已请求结束，结果正在归档。", "success");
+    await Promise.all([refreshControlStatus(), refreshStatus()]);
+  } catch (error) {
+    setControlResult("sessionControlResult", `停止失败：${error}`, "error");
+  } finally {
+    if (button) button.disabled = false;
+    await refreshSessionStatus();
+  }
+}
+
+function renderSessionStatus(session) {
+  const normalized = String(session?.state || "IDLE").toUpperCase();
+  const archive = session?.archive || {};
+  const presentation = session?.presentation_result || archive.presentation_result || null;
+  const button = $("sessionToggleBtn");
+  const interactive = !["STARTING", "STOPPING"].includes(normalized);
+  const running = normalized === "RUNNING";
+  const stopping = normalized === "STOPPING";
+  const failed = normalized === "FAILED";
+  setText("sessionStateLabel", sessionStateLabel(normalized));
+  setText("sessionElapsed", formatHms(session?.elapsed_seconds || 0));
+  setText("sessionIdDisplay", session?.session_id || "-");
+  setStateText("sessionSaveState", sessionSaveState(session), stopping ? "running" : (failed ? "error" : ""));
+  if (button) {
+    button.disabled = !interactive;
+    button.textContent = running ? "结束并保存检测" : (stopping ? "正在保存最后结果..." : "开始完整检测");
+    button.dataset.mode = running ? "stop" : "start";
+  }
+  renderPresentationResult(presentation, session);
+}
+
+function renderPresentationResult(presentation, session) {
+  const control = state.lastControlStatus || {};
+  const result = state.lastResult || {};
+  const incomingPresentation = presentation;
+  const incomingDecision = targetFallDecision(result);
+  const presentationAcknowledged = isAcknowledgedFallEventId(incomingPresentation?.event_id);
+  const decisionAcknowledged = isAcknowledgedFallEventId(incomingDecision?.incident_id);
+  const suppressStaleRuntime = presentationAcknowledged && (!incomingDecision?.incident_id || decisionAcknowledged);
+  presentation = presentationAcknowledged ? null : incomingPresentation;
+  const decision = decisionAcknowledged ? null : incomingDecision;
+  const qwenActive = suppressStaleRuntime
+    ? false
+    : Number(session?.components?.qwen?.active_count || control?.runtime?.vlm_active_count || 0) > 0;
+  const binaryLabel = suppressStaleRuntime
+    ? ""
+    : String(decision?.binary_label || control?.runtime?.binary_last_label || "").toUpperCase();
+  setAcknowledgeFallButton(incomingPresentation);
+  let label = presentation?.fall_label_zh || "";
+  let resultState = "idle";
+  if (presentation?.analysis_status === "no_event" || !presentation?.event_id) {
+    if (qwenActive) {
+      label = "正在复核";
+      resultState = "reviewing";
+    } else if (binaryLabel === "FALL") {
+      label = "疑似跌倒";
+      resultState = "candidate";
+    } else {
+      label = "持续监测中";
+      resultState = "idle";
+    }
+  } else if (presentation.is_real_fall === true) {
+    label = "真实跌倒";
+    resultState = "fall";
+  } else if (presentation.is_real_fall === false) {
+    label = "非真实跌倒";
+    resultState = "non_fall";
+  } else if (presentation.fall_label_zh === "视觉证据不足") {
+    resultState = "unknown";
+  } else {
+    label = presentation.fall_label_zh || "无法明确判断";
+    resultState = "unknown";
+  }
+  const panel = $("presentationResultPanel");
+  if (panel) panel.dataset.resultState = resultState;
+  setText("presentationAnalysisStatus", presentationStatusText(presentation, qwenActive));
+  setText("realFallVerdict", label);
+  setText("realFallVerdictMeta", presentation?.event_id ? `${presentationShortId(presentation.event_id)} · ${presentation.fall_verdict || "-"}` : "暂无跌倒事件");
+  setText("realFallBoolean", realFallBooleanText(presentation));
+  const demoPresentation = state.demoFall.active && state.demoFall.presentation === presentation;
+  renderQwenDescription(demoPresentation && !state.demoFall.revealDescription ? null : presentation);
+  setText("presentationBinaryState", control?.binary_enabled ? (binaryLabel || "RUNNING") : "OFF");
+  setText("presentationQwenState", control?.qwen_enabled ? (qwenActive ? "REVIEWING" : "STANDBY") : "OFF");
+  setText("presentationEventId", presentation?.event_id ? presentationShortId(presentation.event_id) : (decision?.incident_id ? presentationShortId(decision.incident_id) : "--"));
+  setText("presentationAlarmState", presentation?.is_real_fall === true ? "等待/已推送" : "--");
+  renderCoreJson(demoPresentation && !state.demoFall.revealJson ? null : presentation);
+}
+
+function setAcknowledgeFallButton(presentation) {
+  const button = $("acknowledgeFallBtn");
+  if (!button) return;
+  const eventId = normalizedIncidentId(presentation?.event_id);
+  const visible = Boolean(
+    eventId
+    && presentation?.is_real_fall === true
+    && !isAcknowledgedFallEventId(eventId),
+  );
+  button.hidden = !visible;
+  button.dataset.eventId = visible ? eventId : "";
+}
+
+function isAcknowledgedFallEventId(value) {
+  const eventId = normalizedIncidentId(value);
+  return Boolean(eventId && state.acknowledgedFallEventIds.has(eventId));
+}
+
+function persistAcknowledgedFallEventIds() {
+  const values = Array.from(state.acknowledgedFallEventIds).slice(-ACKNOWLEDGED_FALL_EVENTS_MAX);
+  state.acknowledgedFallEventIds = new Set(values);
+  try {
+    window.sessionStorage.setItem(ACKNOWLEDGED_FALL_EVENTS_KEY, JSON.stringify(values));
+  } catch {
+    // The acknowledgement still remains active in memory when storage is unavailable.
+  }
+}
+
+function acknowledgeCurrentFall() {
+  const button = $("acknowledgeFallBtn");
+  const eventId = normalizedIncidentId(button?.dataset.eventId);
+  if (!eventId) return;
+  state.acknowledgedFallEventIds.add(eventId);
+  persistAcknowledgedFallEventIds();
+  forceIdleAlarmIndicator();
+  setViewerAlertState("idle");
+  if (state.demoFall.active && state.demoFall.incidentId === eventId) {
+    resetDemoFall("模拟跌倒信息已确认收到，页面恢复持续监测状态。");
+    return;
+  }
+  renderDashboard();
+  setControlResult("sessionControlResult", "跌倒信息已确认收到，当前事件告警已解除。", "success");
+}
+
+function renderQwenDescription(presentation) {
+  const description = qwenChineseDescription(presentation);
+  const panel = $("qwenDescriptionPanel");
+  if (panel) {
+    panel.dataset.state = description ? "filled" : "empty";
+  }
+  setText("timeDescriptionZh", description || "");
+}
+
+function qwenChineseDescription(presentation) {
+  if (!presentation?.event_id) {
+    return "";
+  }
+  const qwen = presentation?.qwen_analysis || presentation?.qwen || presentation?.analysis || {};
+  const qwenStatus = String(qwen.analysis_status || presentation?.analysis_status || "").toLowerCase();
+  if (qwenStatus && !["completed", "timeout", "failed", "parse_failed"].includes(qwenStatus)) {
+    return "";
+  }
+  return String(
+    qwen.summary
+      || qwen.time_description_zh
+      || presentation?.time_description_zh
+      || qwen.posture
+      || presentation?.summary
+      || "",
+  ).trim();
+}
+
+function renderCoreJson(presentation) {
+  const empty = $("coreJsonEmpty");
+  const box = $("coreJsonBox");
+  if (!box || !empty) return;
+  if (!presentation?.event_id) {
+    empty.hidden = false;
+    box.hidden = true;
+    const button = $("toggleFullJsonBtn");
+    if (button) {
+      button.dataset.fullJson = "0";
+      button.textContent = "完整 JSON";
+    }
+    return;
+  }
+  const qwen = presentation.qwen_analysis || null;
+  const core = qwen ? {
+    qwen_analysis: {
+      incident_id: qwen.incident_id || presentation.event_id,
+      analysis_status: qwen.analysis_status || presentation.analysis_status,
+      fall_verdict: qwen.fall_verdict || presentation.fall_verdict,
+      posture: qwen.posture || null,
+      movement_level: qwen.movement_level || null,
+      attempt_to_stand: qwen.attempt_to_stand || null,
+      persistent_ground_state: qwen.persistent_ground_state || null,
+      visibility: qwen.visibility || null,
+      occlusion: qwen.occlusion || null,
+      scene_risks: qwen.scene_risks || [],
+      possible_help_gesture: qwen.possible_help_gesture || null,
+      summary: qwen.summary || qwenChineseDescription(presentation) || null,
+      review_points: qwen.review_points || [],
+      confidence: qwen.confidence ?? presentation.confidence ?? null,
+      latency_ms: qwen.latency_ms ?? null,
+    },
+    is_real_fall: presentation.is_real_fall,
+    confidence: presentation.confidence ?? null,
+    source: presentation.source || undefined,
+  } : {
+    time_description_zh: presentation.time_description_zh,
+    is_real_fall: presentation.is_real_fall,
+    fall_verdict: presentation.fall_verdict,
+    confidence: presentation.confidence ?? null,
+    analysis_status: presentation.analysis_status,
+  };
+  empty.hidden = true;
+  box.hidden = false;
+  box.textContent = JSON.stringify(core, null, 2);
+}
+
+function toggleFullJson() {
+  const presentation = currentPresentationForJson();
+  const box = $("coreJsonBox");
+  const button = $("toggleFullJsonBtn");
+  if (!box || !presentation?.event_id) return;
+  const showingFull = button?.dataset.fullJson === "1";
+  if (showingFull) {
+    renderCoreJson(presentation);
+    if (button) {
+      button.dataset.fullJson = "0";
+      button.textContent = "完整 JSON";
+    }
+    return;
+  }
+  box.hidden = false;
+  box.textContent = JSON.stringify(presentation, null, 2);
+  if (button) {
+    button.dataset.fullJson = "1";
+    button.textContent = "收起 JSON";
+  }
+}
+
+function currentPresentationForJson() {
+  return state.demoFall.active && state.demoFall.presentation?.event_id
+    ? state.demoFall.presentation
+    : state.lastSessionStatus?.presentation_result || state.lastSessionStatus?.archive?.presentation_result;
+}
+
+function toggleDemoFall() {
+  toggleDemoScenario("fall");
+}
+
+function toggleDemoLowPosture() {
+  toggleDemoScenario("low_posture");
+}
+
+function toggleDemoScenario(scenario) {
+  if (state.demoFall.active && state.demoFall.scenario === scenario) {
+    resetDemoFall("模拟展示已重置，页面恢复真实系统状态。");
+    return;
+  }
+  startDemoScenario(scenario);
+}
+
+function startDemoScenario(scenario) {
+  clearDemoFallTimers();
+  const lowPosture = scenario === "low_posture";
+  const incidentId = `${lowPosture ? "demo-low-posture" : "demo-fall"}-${currentCameraId()}-${Date.now().toString(16)}`;
+  state.demoFall.active = true;
+  state.demoFall.scenario = lowPosture ? "low_posture" : "fall";
+  state.demoFall.phase = "analyzing";
+  state.demoFall.incidentId = incidentId;
+  state.demoFall.startedAt = Date.now();
+  state.demoFall.presentation = null;
+  state.demoFall.revealDescription = false;
+  state.demoFall.revealJson = false;
+  setControlResult(
+    "sessionControlResult",
+    lowPosture
+      ? "DEMO 2：主动坐下低姿态已进入二分类初筛，不写入真实记录。"
+      : "DEMO：模拟事件已进入二分类初筛，不写入真实记录。",
+    "pending",
+  );
+  scheduleDemoFallPhase("suspected", DEMO_FALL_STAGE_MS.suspected);
+  scheduleDemoFallPhase("reviewing", DEMO_FALL_STAGE_MS.reviewing);
+  scheduleDemoFallPhase("completed", DEMO_FALL_STAGE_MS.completed);
+  scheduleDemoEvidenceReveal("description", DEMO_FALL_STAGE_MS.description);
+  scheduleDemoEvidenceReveal("json", DEMO_FALL_STAGE_MS.json);
+  renderDemoVisualState();
+}
+
+function scheduleDemoFallPhase(phase, delayMs) {
+  const timer = window.setTimeout(() => {
+    if (!state.demoFall.active) {
+      return;
+    }
+    state.demoFall.phase = phase;
+    if (phase === "completed") {
+      state.demoFall.presentation = buildDemoPresentation();
+      setControlResult(
+        "sessionControlResult",
+        state.demoFall.scenario === "low_posture"
+          ? "DEMO 2：千问已排除真实跌倒，已生成非跌倒 JSON 与中文事件描述。"
+          : "DEMO：千问复核完成，已生成模拟 JSON 与中文事件描述。",
+        "success",
+      );
+    }
+    renderDemoVisualState();
+  }, delayMs);
+  state.demoFall.timers.push(timer);
+}
+
+function scheduleDemoEvidenceReveal(kind, delayMs) {
+  const timer = window.setTimeout(() => {
+    if (!state.demoFall.active || !state.demoFall.presentation) {
+      return;
+    }
+    if (kind === "description") {
+      state.demoFall.revealDescription = true;
+      renderQwenDescription(state.demoFall.presentation);
+      return;
+    }
+    state.demoFall.revealJson = true;
+    renderCoreJson(state.demoFall.presentation);
+  }, delayMs);
+  state.demoFall.timers.push(timer);
+}
+
+function resetDemoFall(message = "") {
+  clearDemoFallTimers();
+  state.demoFall.active = false;
+  state.demoFall.scenario = null;
+  state.demoFall.phase = "idle";
+  state.demoFall.incidentId = null;
+  state.demoFall.startedAt = null;
+  state.demoFall.presentation = null;
+  state.demoFall.revealDescription = false;
+  state.demoFall.revealJson = false;
+  updateDemoButtons();
+  if (message) {
+    setControlResult("sessionControlResult", message, "success");
+  }
+  renderDashboard();
+}
+
+function clearDemoFallTimers() {
+  for (const timer of state.demoFall.timers || []) {
+    window.clearTimeout(timer);
+  }
+  state.demoFall.timers = [];
+}
+
+function renderDemoVisualState() {
+  if (state.demoFall.active && hasRealActiveEventSignal()) {
+    resetDemoFall("检测到真实跌倒事件，模拟展示已自动结束。");
+    return;
+  }
+  updateDemoButtons();
+  if (!state.demoFall.active) {
+    setPipelineAlarmLabel("Alarm API");
+    renderRealModelSentinels();
+    return;
+  }
+  const phase = state.demoFall.phase;
+  if (phase === "completed" && state.demoFall.presentation) {
+    renderPresentationResult(state.demoFall.presentation, demoSessionSnapshot());
+    renderDemoCompletedState();
+    return;
+  }
+  renderDemoProgressState(phase);
+}
+
+function renderDemoProgressState(phase) {
+  const lowPosture = state.demoFall.scenario === "low_posture";
+  const suspected = phase === "suspected" || phase === "reviewing";
+  const reviewing = phase === "reviewing";
+  setAcknowledgeFallButton(null);
+  setViewerAlertState(suspected ? "warning" : "idle", reviewing ? "reviewing" : "candidate");
+  setModelSentinel(
+    "binaryModelNode",
+    suspected ? "warning" : "active",
+    "binaryModelState",
+    "binaryModelMeta",
+    suspected ? (lowPosture ? "检测到低姿态" : "高度疑似跌倒") : "正在分析",
+    suspected ? (lowPosture ? "LOW POSTURE 0.91" : "FALL 0.94") : "跌倒检测模型",
+  );
+  setModelSentinel("qwenModelNode", reviewing ? "warning" : "idle", "qwenModelState", "qwenModelMeta", reviewing ? "正在复核" : "默认待机", reviewing ? "REVIEWING" : "千问大模型");
+  setSummaryDemoState(phase);
+  setPipelineDemoState(phase);
+  renderQwenDescription(null);
+  renderCoreJson(null);
+  setText("presentationAnalysisStatus", reviewing ? "千问复核中" : (suspected ? "等待复核" : "二分类分析"));
+  setText("realFallVerdict", reviewing ? "正在复核" : (suspected ? (lowPosture ? "疑似低姿态" : "高度疑似跌倒") : "正在分析"));
+  setText("realFallVerdictMeta", reviewing ? "千问正在进行场景语义复核" : (suspected ? "等待千问复核" : "二分类模型正在初筛"));
+  setText("realFallBoolean", "--");
+  setText("presentationBinaryState", suspected ? (lowPosture ? "LOW_POSTURE 0.91" : "FALL 0.94") : "ANALYZING");
+  setText("presentationQwenState", reviewing ? "REVIEWING" : "STANDBY");
+  setText("presentationEventId", presentationShortId(state.demoFall.incidentId));
+  setText("presentationAlarmState", "DEMO未投递");
+  setText("videoOverlayBinary", suspected ? (lowPosture ? "Binary: LOW_POSTURE 0.91" : "Binary: FALL 0.94") : "Binary: ANALYZING");
+  setText("videoOverlayQwen", reviewing ? "Qwen: REVIEWING" : "Qwen: STANDBY");
+  setText("videoOverlayIncident", `Event: ${presentationShortId(state.demoFall.incidentId)}`);
+  const panel = $("presentationResultPanel");
+  if (panel) panel.dataset.resultState = reviewing ? "reviewing" : (suspected ? "candidate" : "idle");
+  appendDemoTrendPoint(phase);
+}
+
+function renderDemoCompletedState() {
+  if (state.demoFall.scenario === "low_posture") {
+    setViewerAlertState("idle", "cleared");
+    setModelSentinel("binaryModelNode", "warning", "binaryModelState", "binaryModelMeta", "检测到低姿态", "LOW POSTURE 0.91");
+    setModelSentinel("qwenModelNode", "success", "qwenModelState", "qwenModelMeta", "已排除真实跌倒", "intentional_low_posture");
+    setSummaryDemoState("completed");
+    setPipelineDemoState("completed");
+    setText("presentationBinaryState", "LOW_POSTURE 0.91");
+    setText("presentationQwenState", "INTENTIONAL_LOW_POSTURE");
+    setText("presentationAlarmState", "无需告警");
+    setText("videoOverlayBinary", "Binary: LOW_POSTURE 0.91");
+    setText("videoOverlayQwen", "Qwen: NOT A FALL");
+    setText("videoOverlayIncident", `Event: ${presentationShortId(state.demoFall.incidentId)}`);
+    appendDemoTrendPoint("completed");
+    return;
+  }
+  setViewerAlertState("danger", "confirmed");
+  setModelSentinel("binaryModelNode", "warning", "binaryModelState", "binaryModelMeta", "高度疑似跌倒", "FALL 0.94");
+  setModelSentinel("qwenModelNode", "danger", "qwenModelState", "qwenModelMeta", "确认真实跌倒", "confirmed_fall");
+  setSummaryDemoState("completed");
+  setPipelineDemoState("completed");
+  setText("presentationBinaryState", "FALL 0.94");
+  setText("presentationQwenState", "CONFIRMED_FALL");
+  setText("presentationAlarmState", "DEMO模拟联动");
+  setText("videoOverlayBinary", "Binary: FALL 0.94");
+  setText("videoOverlayQwen", "Qwen: CONFIRMED_FALL");
+  setText("videoOverlayIncident", `Event: ${presentationShortId(state.demoFall.incidentId)}`);
+  appendDemoTrendPoint("completed");
+}
+
+function renderRealModelSentinels() {
+  const control = state.lastControlStatus || {};
+  const result = state.lastResult || {};
+  const session = state.lastSessionStatus || {};
+  const incomingPresentation = session.presentation_result || session.archive?.presentation_result || null;
+  const incomingDecision = targetFallDecision(result) || {};
+  const presentationAcknowledged = isAcknowledgedFallEventId(incomingPresentation?.event_id);
+  const decisionAcknowledged = isAcknowledgedFallEventId(incomingDecision.incident_id);
+  const suppressStaleRuntime = presentationAcknowledged && (!incomingDecision.incident_id || decisionAcknowledged);
+  const presentation = presentationAcknowledged ? null : incomingPresentation;
+  const decision = decisionAcknowledged ? {} : incomingDecision;
+  const binaryLabel = suppressStaleRuntime
+    ? ""
+    : String(decision.binary_label || control.runtime?.binary_last_label || "").toUpperCase();
+  const probability = numberOrNull(decision.binary_probability ?? decision.fall_probability ?? control.runtime?.binary_last_probability);
+  const qwenActive = suppressStaleRuntime
+    ? false
+    : Number(session.components?.qwen?.active_count || control.runtime?.vlm_active_count || 0) > 0;
+  const binaryEnabled = Boolean(control.binary_enabled);
+  const qwenEnabled = Boolean(control.qwen_enabled);
+  const binaryWarning = binaryLabel === "FALL";
+  setModelSentinel(
+    "binaryModelNode",
+    binaryWarning ? "warning" : (binaryEnabled ? "active" : "idle"),
+    "binaryModelState",
+    "binaryModelMeta",
+    binaryWarning ? "高度疑似跌倒" : (binaryEnabled ? "默认监测" : "默认状态"),
+    binaryWarning ? probabilityText("FALL", probability) : "跌倒检测模型",
+  );
+  const qwenState = presentation?.is_real_fall === true ? "danger" : (qwenActive ? "warning" : (qwenEnabled ? "active" : "idle"));
+  const qwenLabel = presentation?.is_real_fall === true ? "确认真实跌倒" : (qwenActive ? "正在复核" : (qwenEnabled ? "默认待机" : "默认状态"));
+  const qwenMeta = presentation?.fall_verdict || (qwenActive ? "REVIEWING" : "千问大模型");
+  setModelSentinel("qwenModelNode", qwenState, "qwenModelState", "qwenModelMeta", qwenLabel, qwenMeta);
+  if (presentation?.is_real_fall === true) {
+    setViewerAlertState("danger", "confirmed");
+  } else if (binaryWarning || qwenActive) {
+    setViewerAlertState("warning", qwenActive ? "reviewing" : "candidate");
+  } else {
+    setViewerAlertState("idle");
+  }
+}
+
+function setSummaryDemoState(phase) {
+  const lowPosture = state.demoFall.scenario === "low_posture";
+  setDemoCard("cardBinary", "summaryBinaryValue", "summaryBinaryMeta", phase === "analyzing" ? "正在分析" : (lowPosture ? "检测到低姿态" : "高度疑似跌倒"), phase === "analyzing" ? "DEMO analyzing" : (lowPosture ? "LOW POSTURE / 0.91" : "FALL / 0.94"), phase === "analyzing" ? "active" : "warning");
+  setDemoCard("cardQwen", "summaryQwenValue", "summaryQwenMeta", phase === "reviewing" ? "复核中" : (phase === "completed" ? (lowPosture ? "已排除跌倒" : "确认真实跌倒") : "待机"), phase === "completed" ? (lowPosture ? "intentional_low_posture" : "confirmed_fall") : (phase === "reviewing" ? "qwen reviewing" : "qwen3.5:4b"), phase === "completed" ? (lowPosture ? "success" : "danger") : (phase === "reviewing" ? "warning" : "idle"));
+  setDemoCard("cardEvent", "summaryEventValue", "summaryEventMeta", phase === "completed" ? (lowPosture ? "已排除跌倒" : "确认跌倒") : (phase === "analyzing" ? "模拟事件进入" : (lowPosture ? "疑似低姿态" : "疑似跌倒")), presentationShortId(state.demoFall.incidentId), phase === "completed" ? (lowPosture ? "success" : "danger") : "warning");
+  setDemoCard("cardAlarm", "summaryAlarmValue", "summaryAlarmMeta", phase === "completed" ? (lowPosture ? "无需告警" : "模拟联动") : "未投递", "DEMO，不发送真实告警", phase === "completed" ? (lowPosture ? "success" : "warning") : "idle");
+}
+
+function setPipelineDemoState(phase) {
+  const lowPosture = state.demoFall.scenario === "low_posture";
+  setElementState("pipeVideo", "active");
+  setElementState("pipeBinary", phase === "analyzing" ? "active" : "warning");
+  setElementState("pipeQwen", phase === "reviewing" ? "warning" : (phase === "completed" ? (lowPosture ? "success" : "danger") : "idle"));
+  setElementState("pipeJson", phase === "completed" ? "success" : "idle");
+  setElementState("pipeAlarm", phase === "completed" ? (lowPosture ? "success" : "warning") : "idle");
+  setPipelineAlarmLabel(phase === "completed" && lowPosture ? "无需告警" : "Alarm API");
+}
+
+function buildDemoPresentation() {
+  return state.demoFall.scenario === "low_posture"
+    ? buildDemoLowPosturePresentation()
+    : buildDemoFallPresentation();
+}
+
+function buildDemoFallPresentation() {
+  const incidentId = state.demoFall.incidentId || `demo-fall-${currentCameraId()}-${Date.now().toString(16)}`;
+  const qwenAnalysis = {
+    incident_id: incidentId,
+    analysis_status: "completed",
+    fall_verdict: "confirmed_fall",
+    posture: "人物由站立姿态突然失衡并急速向地面倾倒，呈现非自主倒地过程。",
+    movement_level: "unknown",
+    attempt_to_stand: "unknown",
+    persistent_ground_state: "unknown",
+    visibility: "unknown",
+    occlusion: "unknown",
+    scene_risks: [],
+    possible_help_gesture: "unknown",
+    summary: "画面显示人物从站立位置突然失去平衡，身体快速下坠至地面，动作具有明显的失控特征，符合真实跌倒判定标准。",
+    review_points: [
+      "建议人工复核事件关键帧。",
+    ],
+  };
+  return {
+    event_id: incidentId,
+    camera_id: currentCameraId(),
+    source: "demo",
+    is_demo: true,
+    analysis_status: "completed",
+    fall_verdict: "confirmed_fall",
+    fall_label_zh: "真实跌倒",
+    is_real_fall: true,
+    confidence: 0.94,
+    time_description_zh: qwenAnalysis.summary,
+    qwen_analysis: qwenAnalysis,
+    generated_at: new Date().toISOString(),
+  };
+}
+
+function buildDemoLowPosturePresentation() {
+  const incidentId = state.demoFall.incidentId || `demo-low-posture-${currentCameraId()}-${Date.now().toString(16)}`;
+  const qwenAnalysis = {
+    incident_id: incidentId,
+    analysis_status: "completed",
+    fall_verdict: "intentional_low_posture",
+    posture: "人物从站立姿态主动受控地坐下并阅读。",
+    movement_level: "unknown",
+    attempt_to_stand: "unknown",
+    persistent_ground_state: "observed",
+    visibility: "unknown",
+    occlusion: "unknown",
+    scene_risks: [],
+    possible_help_gesture: "unknown",
+    summary: "连续画面显示人物主动弯腰、屈膝受控坐在地垫上，随后盘腿阅读文件，未见失衡或失控倒地过程。",
+    review_points: [],
+    confidence: 0.94,
+    latency_ms: 5686.6,
+  };
+  return {
+    event_id: incidentId,
+    camera_id: currentCameraId(),
+    source: "demo",
+    is_demo: true,
+    analysis_status: "completed",
+    fall_verdict: "intentional_low_posture",
+    fall_label_zh: "非真实跌倒",
+    is_real_fall: false,
+    confidence: 0.94,
+    time_description_zh: qwenAnalysis.summary,
+    qwen_analysis: qwenAnalysis,
+    generated_at: new Date().toISOString(),
+  };
+}
+
+function demoSessionSnapshot() {
+  const elapsedSeconds = state.demoFall.startedAt ? Math.max(0, (Date.now() - state.demoFall.startedAt) / 1000) : 0;
+  return {
+    state: "RUNNING",
+    elapsed_seconds: elapsedSeconds,
+    components: { qwen: { active_count: state.demoFall.phase === "reviewing" ? 1 : 0 } },
+  };
+}
+
+function updateDemoButtons() {
+  const fallButton = $("demoFallBtn");
+  const lowPostureButton = $("demoLowPostureBtn");
+  const fallActive = state.demoFall.active && state.demoFall.scenario === "fall";
+  const lowPostureActive = state.demoFall.active && state.demoFall.scenario === "low_posture";
+  if (fallButton) {
+    fallButton.dataset.active = fallActive ? "1" : "0";
+    fallButton.innerHTML = `${fallActive ? "重置跌倒模拟" : "DEMO 模拟跌倒"} <kbd>F9</kbd>`;
+  }
+  if (lowPostureButton) {
+    lowPostureButton.dataset.active = lowPostureActive ? "1" : "0";
+    lowPostureButton.innerHTML = `${lowPostureActive ? "重置低姿态模拟" : "DEMO 模拟低姿态"} <kbd>F10</kbd>`;
+  }
+}
+
+function setPipelineAlarmLabel(label) {
+  const target = document.querySelector("#pipeAlarm strong");
+  if (target) {
+    target.textContent = label;
+  }
+}
+
+function setDemoCard(cardId, valueId, metaId, value, meta, cardState) {
+  setElementState(cardId, cardState);
+  setText(valueId, value);
+  setText(metaId, meta);
+}
+
+function setModelSentinel(nodeId, stateName, titleId, metaId, title, meta) {
+  setElementState(nodeId, stateName);
+  setText(titleId, title);
+  setText(metaId, meta);
+}
+
+function setElementState(id, stateName) {
+  const element = $(id);
+  if (element) {
+    element.dataset.state = stateName || "idle";
+  }
+}
+
+function setViewerAlertState(stateName, phaseName = "") {
+  const viewer = document.querySelector(".viewer");
+  if (viewer) {
+    viewer.dataset.alertState = stateName || "idle";
+    viewer.dataset.alertPhase = phaseName || "";
+  }
+  const alertCopy = phaseName === "confirmed"
+    ? ["确认真实跌倒", "千问复核完成，请立即关注现场"]
+    : phaseName === "reviewing"
+      ? ["疑似跌倒 · 千问复核中", "大模型正在分析关键画面"]
+      : ["检测到疑似跌倒", "二分类模型已触发，正在等待千问复核"];
+  setText("viewerAlertTitle", alertCopy[0]);
+  setText("viewerAlertMeta", alertCopy[1]);
+}
+
+function appendDemoTrendPoint(phase) {
+  const probability = phase === "analyzing" ? 0.28 : (phase === "suspected" ? 0.94 : (phase === "reviewing" ? 0.94 : 0.96));
+  appendVisualHistory({ binaryProbability: probability, videoFps: null, frameAge: null });
+  setText("trendBinaryValue", probability.toFixed(2));
+  renderLineTrend("binaryProbabilityTrend", state.visualHistory.binaryProbability, { min: 0, max: 1, color: "rgba(255, 202, 69, 0.96)" });
+}
+
+function hasRealActiveEventSignal() {
+  const decision = targetFallDecision(state.lastResult) || {};
+  const eventId = normalizedIncidentId(decision.incident_id);
+  return Boolean(
+    eventId
+    && decision.event_created === true
+    && !String(eventId).startsWith("demo-fall-")
+    && !isAcknowledgedFallEventId(eventId),
+  );
+}
+
+function sessionStateLabel(stateName) {
+  const labels = {
+    IDLE: "未开始",
+    STARTING: "正在启动",
+    RUNNING: "完整检测中",
+    STOPPING: "正在保存",
+    COMPLETED: "本次检测已保存",
+    FAILED: "启动失败",
+  };
+  return labels[stateName] || stateName;
+}
+
+function sessionSaveState(session) {
+  const stateName = String(session?.state || "IDLE").toUpperCase();
+  if (stateName === "STOPPING") {
+    return `等待归档：${session?.archive?.qwen_unresolved_count || 0} 个复核`;
+  }
+  if (stateName === "COMPLETED") {
+    return "已保存到 Session 文件夹";
+  }
+  if (stateName === "FAILED") {
+    return session?.failure_reason || "启动失败";
+  }
+  if (stateName === "RUNNING") {
+    return "记录中";
+  }
+  return "等待开始";
+}
+
+function presentationStatusText(presentation, qwenActive) {
+  if (qwenActive) return "千问复核中";
+  if (!presentation?.event_id) return "持续监测";
+  const status = String(presentation.analysis_status || "").toLowerCase();
+  if (status === "completed") return "复核完成";
+  if (status === "timeout") return "复核超时";
+  if (status === "failed" || status === "parse_failed") return "复核失败";
+  return status || "已生成";
+}
+
+function targetFallDecision(result) {
+  const objects = result?.objects || [];
+  const target = objects.find((item) => item?.is_target === true) || objects[0];
+  return target?.fall_decision || null;
+}
+
+function presentationShortId(value) {
+  const text = String(value || "--");
+  return text.length > 22 ? `${text.slice(0, 10)}...${text.slice(-8)}` : text;
 }
 
 function readDurationInputs() {
@@ -1872,13 +2917,16 @@ function alarmIndicatorSignalFromResult(result) {
   for (const object of objects) {
     const decision = object?.fall_decision || {};
     const eventId = normalizedIncidentId(decision.incident_id);
+    if (isAcknowledgedFallEventId(eventId)) {
+      continue;
+    }
     if (eventId && decision.event_created === true) {
       return { state: "candidate", eventId };
     }
   }
 
   const currentEventId = state.alarmIndicator.currentEventId;
-  if (!currentEventId) {
+  if (!currentEventId || isAcknowledgedFallEventId(currentEventId)) {
     return null;
   }
   for (const object of objects) {
@@ -2038,10 +3086,16 @@ function updateMetricPanel(status) {
   const trackingFps = status.pipeline?.tracking_worker_fps ?? status.tracking?.tracking_fps ?? null;
   const poseFps = status.pose?.pose_fps ?? null;
   const publishFps = status.pipeline?.result_publish_fps ?? null;
+  const display = getDisplayStreamStatus(status);
   $("detectionFps").textContent = formatFps(detectionFps);
   $("trackingFps").textContent = formatFps(trackingFps);
   $("poseFps").textContent = formatFps(poseFps);
   $("aiFps").textContent = `D:${formatFps(detectionFps)} T:${formatFps(trackingFps)} P:${formatFps(poseFps)} R:${formatFps(publishFps)}`;
+  $("displayBackendFps").textContent = display
+    ? `mjpeg ${formatFps(display.display_mjpeg_served_fps)} / all ${formatFps(display.display_served_fps)} / encoded ${formatFps(display.display_encode_fps)}`
+    : "-";
+  $("displayEncodeMs").textContent = display ? `${formatMs(display.encode_ms)} / max ${formatMs(display.encode_ms_max)}` : "-";
+  $("displayCacheInfo").textContent = display ? `encoded ${display.encoded_frames ?? 0} / hit ${display.cache_hits ?? 0}` : "-";
   updateWsFps();
   updateOverlayAge();
   updatePeerDebugState();
@@ -2053,6 +3107,14 @@ function updateMetricPanel(status) {
   if (!$("targetTrackId").textContent || $("targetTrackId").textContent === "-") {
     $("targetTrackId").textContent = latest.track_id == null ? "-" : `#${latest.track_id}`;
   }
+}
+
+function getDisplayStreamStatus(status, cameraId = currentCameraId()) {
+  const cameras = status?.display_stream?.cameras || {};
+  if (cameraId && cameras[cameraId]) {
+    return cameras[cameraId];
+  }
+  return Object.values(cameras)[0] || null;
 }
 
 function attachVideoFrameLoop() {
@@ -2228,6 +3290,11 @@ function formatScore(value) {
     return "-";
   }
   return Number(value).toFixed(2);
+}
+
+function probabilityText(label, value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${label} ${number.toFixed(2)}` : label;
 }
 
 function formatProbability(value) {
@@ -2463,12 +3530,17 @@ function sampleVideoQuality() {
   noteVideoProgress(quality);
   sampleVideoPaint(video);
   updateVideoFps(quality);
+  renderDashboard();
   updateFrameFallbackVisibility();
 }
 
 function updateVideoFps(quality) {
   const target = $("videoFps");
   if (!target) {
+    return;
+  }
+  if (state.pc?.connectionState !== "connected") {
+    target.textContent = "--";
     return;
   }
   if (!quality || !Number.isFinite(quality.totalVideoFrames)) {
@@ -2501,6 +3573,8 @@ function updateVideoFps(quality) {
     return;
   }
   const fps = frameDelta / elapsedSec;
+  previous.lastMeasuredFps = fps;
+  previous.lastMeasuredAt = Date.now();
   target.textContent = `${fps.toFixed(1)} (drop ${Math.round(dropDelta)})`;
   const videoFrames = $("videoFrames");
   if (videoFrames) {
@@ -2975,6 +4049,7 @@ function normalizeDelivery(delivery, event, status) {
 }
 
 function renderEventPanel(model) {
+  state.lastDashboardEvent = model;
   renderEventHealth(model.status, model.state);
   setEventPipelineState(model.state === "api_error" ? "error" : (model.enabled ? "enabled" : "disabled"));
   setText("eventIncidentId", model.incident_id);
@@ -3012,6 +4087,185 @@ function renderEventPanel(model) {
   renderEventEmptyState(model);
   renderTimelineImage(model.timeline_image);
   renderEventTimeline(model.keyframes);
+  renderDashboard();
+}
+
+function renderDashboard() {
+  window.__VISION_DASHBOARD__?.render?.({
+    status: state.lastStatus,
+    control: state.lastControlStatus,
+    result: state.lastResult,
+    event: state.lastDashboardEvent,
+  });
+  if (state.lastSessionStatus) {
+    renderSessionStatus(state.lastSessionStatus);
+  } else {
+    renderPresentationResult(null, null);
+  }
+  renderVisualMetrics();
+  renderDemoVisualState();
+}
+
+function renderVisualMetrics() {
+  const status = state.lastStatus || {};
+  const control = state.lastControlStatus || {};
+  const session = state.lastSessionStatus || {};
+  const camera = currentCameraSnapshot(status);
+  const perf = control.performance || {};
+  const runtime = control.runtime || {};
+  const videoReady = Boolean(control.stream_connected || camera?.connected);
+  const binaryReady = Boolean(control.binary_enabled);
+  const qwenReady = Boolean(control.qwen_enabled);
+  const videoFps = videoReady ? numberOrNull(camera?.mjpeg_publish_fps ?? camera?.capture_fps ?? perf.capture_fps ?? state.videoFps.lastMeasuredFps) : null;
+  const sampleFps = numberOrNull(perf.sample_fps ?? runtime.binary_sample_fps ?? runtime.sample_fps);
+  const frameAge = videoReady ? numberOrNull(camera?.frame_age_ms ?? perf.frame_age_ms) : null;
+  const binaryLatency = binaryReady ? numberOrNull(perf.binary_inference_ms_avg ?? runtime.binary_inference_latency_avg_ms ?? runtime.binary_inference_latency_ms) : null;
+  const qwenQueue = qwenReady ? numberOrNull(runtime.vlm_queue_depth ?? perf.qwen?.queue_depth) : null;
+  const sessionElapsed = numberOrNull(session.elapsed_seconds);
+  const fallProbability = currentFallProbability();
+
+  setHexMetric("hexVideoFps", videoFps, videoFps == null ? "--" : `${videoFps.toFixed(1)}`, "FPS", metricStateFromNumber(videoFps, { good: 8, warn: 3 }, true));
+  setHexMetric("hexSampleFps", sampleFps, sampleFps == null ? "--" : `${sampleFps.toFixed(1)}`, "SPS", metricStateFromNumber(sampleFps, { good: 2, warn: 0.5 }, true));
+  setHexMetric("hexFrameAge", frameAge, frameAge == null ? "--" : `${Math.round(frameAge)}ms`, "AGE", metricStateFromNumber(frameAge, { good: 800, warn: 2500 }, false));
+  setHexMetric("hexBinaryLatency", binaryLatency, binaryLatency == null ? "--" : `${Math.round(binaryLatency)}ms`, "AI", metricStateFromNumber(binaryLatency, { good: 80, warn: 180 }, false));
+  setHexMetric("hexQwenQueue", qwenQueue, qwenQueue == null ? "--" : String(qwenQueue), "QUEUE", metricStateFromNumber(qwenQueue, { good: 0, warn: 2 }, false));
+  setHexMetric("hexSessionTime", sessionElapsed, sessionElapsed == null ? "00:00" : formatCompactDuration(sessionElapsed), "TIME", String(session.state || "IDLE").toUpperCase() === "RUNNING" ? "active" : "idle");
+
+  appendVisualHistory({
+    binaryProbability: fallProbability,
+    videoFps,
+    frameAge,
+  });
+  setText("trendBinaryValue", fallProbability == null ? "--" : fallProbability.toFixed(2));
+  setText("trendVideoValue", compactJoin([
+    videoFps == null ? "" : `${videoFps.toFixed(1)} FPS`,
+    frameAge == null ? "" : `${Math.round(frameAge)}ms`,
+  ]) || "--");
+  renderLineTrend("binaryProbabilityTrend", state.visualHistory.binaryProbability, { min: 0, max: 1, color: "rgba(255, 202, 69, 0.96)" });
+  renderLineTrend("videoFpsTrend", state.visualHistory.videoFps, { min: 0, color: "rgba(46, 229, 157, 0.94)" });
+}
+
+function setHexMetric(id, rawValue, displayValue, title, metricState) {
+  const element = $(id);
+  if (!element) return;
+  element.textContent = displayValue;
+  element.title = `${title}: ${rawValue == null ? "--" : rawValue}`;
+  const card = element.closest(".hex-kpi");
+  if (card) card.dataset.state = metricState || "idle";
+}
+
+function appendVisualHistory(values) {
+  const now = Date.now();
+  if (now - state.visualHistory.lastAppendAt < 900) {
+    return;
+  }
+  state.visualHistory.lastAppendAt = now;
+  for (const [key, value] of Object.entries(values)) {
+    const bucket = state.visualHistory[key];
+    if (!bucket || value == null || !Number.isFinite(Number(value))) {
+      continue;
+    }
+    bucket.push(Number(value));
+    while (bucket.length > 48) {
+      bucket.shift();
+    }
+  }
+}
+
+function renderLineTrend(id, values, options = {}) {
+  const element = $(id);
+  if (!element) return;
+  const series = (values || []).filter((value) => Number.isFinite(Number(value))).map(Number);
+  if (!series.length) {
+    element.classList.add("is-empty");
+    element.textContent = "等待真实数据";
+    return;
+  }
+  element.classList.remove("is-empty");
+  const width = 100;
+  const height = 54;
+  const padding = 5;
+  const min = options.min ?? Math.min(...series);
+  const max = Math.max(options.max ?? Math.max(...series), min + 0.001);
+  const points = series.map((value, index) => {
+    const x = series.length === 1 ? width : (index / (series.length - 1)) * width;
+    const clamped = Math.max(min, Math.min(max, value));
+    const y = height - padding - ((clamped - min) / (max - min)) * (height - padding * 2);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  const color = options.color || "rgba(24, 191, 255, 0.92)";
+  element.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" y1="${height - padding}" x2="${width}" y2="${height - padding}" stroke="rgba(143,176,199,.24)" stroke-width="1"></line>
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    </svg>
+  `;
+}
+
+function currentCameraSnapshot(status) {
+  const cameraId = currentCameraId();
+  return (status?.cameras || []).find((item) => item.camera_id === cameraId)
+    || status?.cameras?.[0]
+    || null;
+}
+
+function currentFallProbability() {
+  const control = state.lastControlStatus || {};
+  const result = state.lastResult || {};
+  const objects = result.objects || [];
+  const target = objects.find((item) => item?.is_target === true) || objects[0] || {};
+  const decision = target.fall_decision || {};
+  if (!control.binary_enabled && !decision.binary_label && !decision.fall_probability) {
+    return null;
+  }
+  return numberOrNull(
+    decision.binary_probability
+      ?? decision.fall_probability
+      ?? target.temporal?.fall_probability
+      ?? control.runtime?.binary_last_probability,
+  );
+}
+
+function realFallBooleanText(presentation) {
+  if (!presentation?.event_id || presentation.is_real_fall == null) {
+    return "--";
+  }
+  return presentation.is_real_fall ? "YES" : "NO";
+}
+
+function metricStateFromNumber(value, thresholds, higherIsBetter) {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return "idle";
+  }
+  const number = Number(value);
+  if (higherIsBetter) {
+    if (number >= thresholds.good) return "active";
+    if (number >= thresholds.warn) return "warning";
+    return "error";
+  }
+  if (number <= thresholds.good) return "active";
+  if (number <= thresholds.warn) return "warning";
+  return "error";
+}
+
+function formatCompactDuration(totalSeconds) {
+  const safe = Math.max(0, Number(totalSeconds) || 0);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = Math.floor(safe % 60);
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function compactJoin(items) {
+  return items.filter((item) => item !== null && item !== undefined && item !== "").join(" / ");
 }
 
 function renderEventHealth(status, eventState) {
@@ -3572,6 +4826,58 @@ function currentCameraId() {
   return $("cameraId")?.value.trim() || state.lastStatus?.cameras?.[0]?.camera_id || "camera_01";
 }
 
+function moveEngineeringColumnsToDrawer() {
+  const drawer = document.querySelector(".engineering-drawer .drawer-grid");
+  if (!drawer) {
+    return;
+  }
+  for (const selector of [".dashboard-grid > .left-column", ".dashboard-grid > .right-column"]) {
+    const column = document.querySelector(selector);
+    if (column && column.parentElement !== drawer) {
+      drawer.appendChild(column);
+    }
+  }
+}
+
+function handleSessionHotkey(event) {
+  if (event.key !== "F8") {
+    return;
+  }
+  const target = event.target;
+  const tagName = String(target?.tagName || "").toLowerCase();
+  if (tagName === "input" || tagName === "textarea" || tagName === "select" || target?.isContentEditable) {
+    return;
+  }
+  event.preventDefault();
+  if (state.sessionHotkeyBusy) {
+    return;
+  }
+  state.sessionHotkeyBusy = true;
+  Promise.resolve(toggleDetectionSession()).finally(() => {
+    state.sessionHotkeyBusy = false;
+  });
+}
+
+function handleDemoHotkey(event) {
+  if (event.key !== "F9" && event.key !== "F10") {
+    return;
+  }
+  const target = event.target;
+  const tagName = String(target?.tagName || "").toLowerCase();
+  if (tagName === "input" || tagName === "textarea" || tagName === "select" || target?.isContentEditable) {
+    return;
+  }
+  event.preventDefault();
+  if (event.repeat) {
+    return;
+  }
+  if (event.key === "F10") {
+    toggleDemoLowPosture();
+    return;
+  }
+  toggleDemoFall();
+}
+
 function startEventReviewPolling() {
   void refreshEventStatus().then(() => Promise.all([
     refreshRecentEvents(currentCameraId()),
@@ -3593,12 +4899,18 @@ $("binaryToggleBtn")?.addEventListener("click", toggleBinaryModel);
 $("qwenToggleBtn")?.addEventListener("click", toggleQwenModel);
 $("startTestBtn")?.addEventListener("click", startTimedTest);
 $("stopTestBtn")?.addEventListener("click", stopTimedTest);
+$("sessionToggleBtn")?.addEventListener("click", toggleDetectionSession);
+$("toggleFullJsonBtn")?.addEventListener("click", toggleFullJson);
+$("demoFallBtn")?.addEventListener("click", toggleDemoFall);
+$("demoLowPostureBtn")?.addEventListener("click", toggleDemoLowPosture);
+$("acknowledgeFallBtn")?.addEventListener("click", acknowledgeCurrentFall);
 $("cameraId")?.addEventListener("change", () => {
   state.autoFrontendConnectAttempted = false;
   state.frameFallback.lastOkAt = null;
   setFrameFallbackVisible(false);
   void refreshStatus();
   void refreshControlStatus();
+  void refreshSessionStatus();
   void refreshFrameFallback();
 });
 $("rescanDevicesBtn")?.addEventListener("click", rescanDevices);
@@ -3628,6 +4940,8 @@ window.addEventListener("resize", () => {
   }
 });
 window.addEventListener("scroll", syncAlarmIndicatorPosition, { passive: true });
+window.addEventListener("keydown", handleSessionHotkey);
+window.addEventListener("keydown", handleDemoHotkey);
 window.addEventListener("error", (event) => pushDebugError("error", event));
 window.addEventListener("unhandledrejection", (event) => pushDebugError("unhandledrejection", event));
 if ("PerformanceObserver" in window) {
@@ -3647,13 +4961,25 @@ if ("PerformanceObserver" in window) {
     // Long-task telemetry is best-effort and must never affect playback.
   }
 }
-setInterval(refreshStatus, 2000);
-setInterval(refreshControlStatus, 1000);
-setInterval(sampleVideoQuality, 1000);
-setInterval(sampleRtcStats, 1000);
-startFrameFallbackLoop();
+
+function startRuntimePollingAfterFirstPaint() {
+  moveEngineeringColumnsToDrawer();
+  setInterval(refreshStatus, 2000);
+  setInterval(refreshControlStatus, 1000);
+  setInterval(refreshSessionStatus, SESSION_STATUS_REFRESH_MS);
+  setInterval(sampleVideoQuality, 1000);
+  setInterval(sampleRtcStats, 1000);
+  syncFrameFallbackLoop();
+  refreshStatus();
+  refreshControlStatus();
+  refreshSessionStatus();
+  refreshDeviceDiscoveryStatus();
+  startEventReviewPolling();
+}
+
 syncAlarmIndicatorPosition();
-refreshStatus();
-refreshControlStatus();
-refreshDeviceDiscoveryStatus();
-startEventReviewPolling();
+if ("requestAnimationFrame" in window) {
+  requestAnimationFrame(() => window.setTimeout(startRuntimePollingAfterFirstPaint, 0));
+} else {
+  window.setTimeout(startRuntimePollingAfterFirstPaint, 0);
+}

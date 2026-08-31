@@ -118,8 +118,8 @@ def _state_from_error(value: str | None) -> str | None:
     lowered = value.lower()
     if any(token in lowered for token in ("auth", "401", "403", "unauthorized", "password")):
         return "authentication_failed"
-    if any(token in lowered for token in ("decode", "protocol", "jpeg")):
-        return "decode_error"
-    if any(token in lowered for token in ("open failed", "unreachable", "timed out", "timeout", "connect")):
+    if any(token in lowered for token in ("stream closed", "closed", "eof", "open failed", "unreachable", "timed out", "timeout", "connect")):
         return "unreachable"
+    if any(token in lowered for token in ("decode", "protocol", "invalid jpeg", "jpeg decode", "decode jpeg")):
+        return "decode_error"
     return None

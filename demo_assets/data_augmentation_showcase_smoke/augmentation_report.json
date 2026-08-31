@@ -1,0 +1,42 @@
+{
+  "status": "PASS",
+  "model_target": "EfficientNet-B0",
+  "task": "FALL_NON_FALL_BINARY_CLASSIFICATION",
+  "source_dataset": "E:\\国赛\\_uploaded_binary_model_audit_20260810_01\\dog\\data_processed",
+  "demo_dataset": "E:\\国赛\\camera-service\\demo_assets\\data_augmentation_showcase_smoke\\demo_training_dataset",
+  "original_total": 75,
+  "generated_total": 5,
+  "generated_this_run": 5,
+  "final_total": 80,
+  "class_counts_before": {
+    "FALL": 26,
+    "NON_FALL": 49
+  },
+  "class_counts_after": {
+    "FALL": 31,
+    "NON_FALL": 49
+  },
+  "augmentation_methods": {
+    "rotation_degrees": [
+      -12,
+      12
+    ],
+    "horizontal_flip": true,
+    "brightness_factor": [
+      0.75,
+      1.25
+    ],
+    "contrast_factor": [
+      0.8,
+      1.2
+    ],
+    "light_zoom_crop": true,
+    "gaussian_blur_low_probability": true,
+    "gaussian_noise_low_probability": true
+  },
+  "seed": 42,
+  "validation_augmented": false,
+  "test_augmented": false,
+  "data_leakage_guard": true,
+  "created_at": "2026-08-31T07:02:33.929742+00:00"
+}

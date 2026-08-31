@@ -41,6 +41,7 @@ def test_explicit_non_fall_is_the_only_semantic_veto(verdict: str) -> None:
         _detail(
             verdict,
             activity="正常行走" if verdict == "normal_activity" else "主动躺卧阅读",
+            scene_type="walking" if verdict == "normal_activity" else "intentional_low_posture",
             posture_state="upright" if verdict == "normal_activity" else "lying",
             intentional_action_evidence=verdict == "intentional_low_posture",
         )
@@ -107,6 +108,48 @@ def test_persistent_abnormality_with_completed_visual_evidence_stays_observe_wit
     assert decision.path == "uncertain_evidence"
     assert decision.alert_level == "none"
     assert decision.review_required is True
+
+
+def test_non_fall_ground_conflict_falls_back_to_persistent_abnormality() -> None:
+    detail = _detail(
+        "unclear",
+        posture_state="ground_low",
+        persistent_ground_state="observed",
+        recovery_observed=False,
+        intentional_action_evidence=False,
+        scene_type="unknown",
+    )
+    event = _event(detail)
+
+    decision = evaluate_fall_safety(
+        event,
+        binary_state="EVENT_ACTIVE",
+        observation_elapsed_ms=15000,
+        post_fall_alert_min_ms=10000,
+    )
+
+    assert decision.outcome == "alert"
+    assert decision.path == "post_fall_persistent_abnormality"
+    assert decision.reason == "persistent_post_fall_abnormality_without_intentional_evidence"
+
+
+def test_conflicting_intentional_scene_without_intent_evidence_alerts_on_persistent_abnormality() -> None:
+    event = _event(
+        _detail(
+            "non_fall",
+            posture_state="lying",
+            persistent_ground_state="observed",
+            recovery_observed=False,
+            intentional_action_evidence=False,
+            scene_type="intentional_low_posture",
+        )
+    )
+
+    decision = _evaluate(event, elapsed_ms=15000)
+
+    assert decision.outcome == "alert"
+    assert decision.path == "post_fall_persistent_abnormality"
+    assert decision.qwen_verdict == "unclear"
 
 
 @pytest.mark.parametrize("status", ["failed", "timeout"])
@@ -292,6 +335,24 @@ def test_observed_recovery_prevents_post_fall_escalation() -> None:
     decision = _evaluate(event, elapsed_ms=15000)
 
     assert decision.outcome == "observe"
+
+
+def test_missing_semantic_detail_stays_observe_without_crashing() -> None:
+    event = FallEvent(
+        incident_id="incident-1",
+        camera_id="camera-01",
+        state="fall_candidate",
+        started_at="2026-08-28T00:00:00+00:00",
+        confirmed_at="2026-08-28T00:00:01+00:00",
+        binary_evidence={"candidate_duration_ms": 1000},
+        vlm_status="disabled",
+        vlm_analysis=None,
+    )
+
+    decision = _evaluate(event, elapsed_ms=30000)
+
+    assert decision.outcome == "observe"
+    assert decision.path == "uncertain_evidence"
 
 
 def _evaluate(event: FallEvent, *, elapsed_ms: int):

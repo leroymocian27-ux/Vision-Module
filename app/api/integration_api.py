@@ -24,7 +24,17 @@ router = APIRouter(prefix="/integration", tags=["integration"])
 def connection_status(runtime: Runtime = Depends(get_runtime)) -> IntegrationConnectionStatusResponse:
     settings = runtime.settings
     vision_base_url = settings.vision_service_public_base_url.rstrip("/")
-    main_base_url = _origin_from_base_url(settings.main_system_base_url)
+    main_base_url = _origin_from_base_url(settings.main_system_base_url).rstrip("/")
+    reporter = getattr(runtime, "fall_event_reporter", None)
+    if reporter is not None and hasattr(reporter, "check_health"):
+        health = reporter.check_health()
+        main_status = "online" if health.get("ok") else "unavailable"
+    else:
+        main_status = _main_system_status(
+            main_base_url,
+            health_path=getattr(settings, "main_system_health_path", "/api/integrations/fall-detection/health"),
+            timeout_seconds=max(0.2, float(getattr(settings, "main_system_read_timeout_sec", settings.main_system_alert_timeout_ms / 1000))),
+        )
     return IntegrationConnectionStatusResponse(
         vision_service=ConnectionStatusEndpoint(
             base_url=vision_base_url,
@@ -32,7 +42,7 @@ def connection_status(runtime: Runtime = Depends(get_runtime)) -> IntegrationCon
         ),
         main_system=ConnectionStatusEndpoint(
             base_url=main_base_url,
-            status=_main_system_status(main_base_url, timeout_seconds=max(0.2, settings.main_system_alert_timeout_ms / 1000)),
+            status=main_status,
         ),
         camera=ConnectionStatusCamera(camera_id=settings.default_camera_id),
         timestamp=utc_now_iso(),
@@ -264,8 +274,11 @@ def _vision_service_status(runtime: Runtime) -> str:
     return "degraded"
 
 
-def _main_system_status(main_base_url: str, *, timeout_seconds: float) -> str:
-    healthz_url = f"{main_base_url.rstrip('/')}/healthz"
+def _main_system_status(main_base_url: str, *, health_path: str, timeout_seconds: float) -> str:
+    path = health_path.strip() or "/api/integrations/fall-detection/health"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    healthz_url = f"{main_base_url.rstrip('/')}{path}"
     try:
         response = requests.get(healthz_url, timeout=timeout_seconds)
     except requests.Timeout:

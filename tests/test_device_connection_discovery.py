@@ -26,7 +26,7 @@ def _settings(config_path: str) -> Settings:
         device_discovery_config_path=config_path,
         device_discovery_enabled=True,
         main_system_default_port=8000,
-        main_system_base_prefix="/api/v1",
+        main_system_base_prefix="",
         camera_rtsp_username="admin",
         camera_rtsp_password="secret",
         camera_rtsp_port=10554,
@@ -54,7 +54,7 @@ def _main(ip: str = "192.168.8.254") -> DeviceProbeResult:
         status="connected",
         open_ports=[8000],
         evidence=["tcp_port_open", "health_endpoint_success", "response_signature_matched"],
-        main_system_base_url=f"http://{ip}:8000/api/v1",
+        main_system_base_url=f"http://{ip}:8000",
     )
 
 
@@ -83,7 +83,7 @@ class DeviceConnectionDiscoveryTest(unittest.TestCase):
             ):
                 result = service.resolve(force_scan=False, scan_main=True, scan_camera=True)
 
-            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.254:8000/api/v1")
+            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.254:8000")
             self.assertEqual(result.settings.default_rtsp_url, "rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1")
             self.assertEqual(result.status["main_system"]["status"], "connected")
             self.assertEqual(result.status["camera"]["status"], "connected")
@@ -106,7 +106,7 @@ class DeviceConnectionDiscoveryTest(unittest.TestCase):
                 result = service.resolve(force_scan=False, scan_main=True, scan_camera=True)
 
             self.assertEqual(calls, [{"main": True, "camera": False}])
-            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.253:8000/api/v1")
+            self.assertEqual(result.settings.main_system_base_url, "http://192.168.8.253:8000")
             self.assertEqual(result.settings.default_rtsp_url, "rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1")
 
     def test_both_invalid_scans_both_and_saves_new_config(self) -> None:
@@ -266,15 +266,15 @@ class DeviceDiscoveryApiTest(unittest.TestCase):
         response = client.post("/device-discovery/rescan")
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000/api/v1")
+        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000")
         self.assertEqual(runtime.stream_service.started, [])
-        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000/api/v1"])
+        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000"])
         self.assertEqual(
             runtime.fall_event_reporter.endpoint_updates,
             [
                 {
-                    "base_url": "http://192.168.8.252:8000/api/v1",
-                    "path": "/video-bridge/fall-events",
+                    "base_url": "http://192.168.8.252:8000",
+                    "path": "/api/integrations/fall-detection/alerts",
                     "enabled": True,
                     "dry_run": False,
                 }
@@ -289,9 +289,9 @@ class DeviceDiscoveryApiTest(unittest.TestCase):
         response = client.post("/device-discovery/connect-main-system")
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000/api/v1")
+        self.assertEqual(runtime.settings.main_system_base_url, "http://192.168.8.252:8000")
         self.assertEqual(runtime.stream_service.started, [])
-        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000/api/v1"])
+        self.assertEqual(runtime.fall_event_reporter.base_updates, ["http://192.168.8.252:8000"])
         self.assertEqual(runtime.fall_event_reporter.endpoint_updates[0]["dry_run"], False)
 
     def test_connect_camera_endpoint_is_removed(self) -> None:
@@ -385,7 +385,7 @@ class _DeviceConnectionServiceStub:
     def manual_rescan(self) -> DeviceResolutionResult:
         settings = replace(
             self.settings,
-            main_system_base_url="http://192.168.8.254:8000/api/v1",
+            main_system_base_url="http://192.168.8.254:8000",
             default_rtsp_url="rtsp://admin:secret@192.168.8.250:10554/tcp/av0_1",
             mock_camera_enabled=False,
         )
@@ -395,7 +395,7 @@ class _DeviceConnectionServiceStub:
     def connect_main_system(self) -> DeviceResolutionResult:
         settings = replace(
             self.settings,
-            main_system_base_url="http://192.168.8.252:8000/api/v1",
+            main_system_base_url="http://192.168.8.252:8000",
         )
         self.settings = settings
         status = _status_payload()

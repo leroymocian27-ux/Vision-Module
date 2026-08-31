@@ -118,11 +118,47 @@ class AsyncWorkersAndOutboxTest(unittest.TestCase):
 
             outbox.record_result(payload, "request_error", "timeout")
             failed_status = outbox.status()
-            self.assertEqual(failed_status.failed_count, 1)
-            self.assertEqual(failed_status.last_status, "failed")
-            retry_payloads = outbox.pending_payloads()
+            self.assertEqual(failed_status.retry_wait_count, 1)
+            self.assertEqual(failed_status.last_status, "retry_wait")
+
+    def test_alert_outbox_records_result_without_existing_pending_row(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            settings = replace(
+                Settings(),
+                alert_outbox_enabled=True,
+                alert_outbox_path=str(Path(temp_dir) / "outbox.sqlite3"),
+                main_system_retry_backoff_seconds="0",
+            )
+            outbox = AlertOutboxService(settings)
+            payload = {"event_id": "manual-1", "camera_id": "camera_01", "track_id": "manual"}
+
+            outbox.record_result(payload, "request_error", "timeout")
+
+            status = outbox.status()
+            self.assertEqual(status.retry_wait_count, 1)
+            pending_payloads = outbox.pending_payloads()
+            self.assertEqual(len(pending_payloads), 1)
+            self.assertEqual(pending_payloads[0]["event_id"], "manual-1")
+
+    def test_alert_outbox_manual_retry_can_include_failed_records(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            settings = replace(
+                Settings(),
+                alert_outbox_enabled=True,
+                alert_outbox_path=str(Path(temp_dir) / "outbox.sqlite3"),
+                alert_outbox_retry_limit=1,
+            )
+            outbox = AlertOutboxService(settings)
+            payload = {"event_id": "event-1", "camera_id": "camera_01"}
+
+            outbox.record_pending(payload)
+            outbox.record_result(payload, "request_error", "timeout")
+
+            self.assertEqual(outbox.status().failed_count, 1)
+            self.assertEqual(outbox.pending_payloads(), [])
+            retry_payloads = outbox.pending_payloads(include_failed=True)
             self.assertEqual(len(retry_payloads), 1)
-            self.assertEqual(retry_payloads[0]["incident_id"], "incident-1")
+            self.assertEqual(retry_payloads[0]["event_id"], "event-1")
 
 
 if __name__ == "__main__":

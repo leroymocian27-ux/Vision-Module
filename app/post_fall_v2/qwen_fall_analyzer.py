@@ -14,7 +14,7 @@ from app.events.qwen_keyframe import (
 )
 from app.events.schemas import EventSemantics, QwenKeyframeAdvisory
 from app.post_fall_v2.model_log_bus import model_log_bus
-from app.post_fall_v2.schemas import FallDetailResult, FallEvent, KeyframePackage
+from app.post_fall_v2.schemas import FallDetailResult, FallEvent, KeyframePackage, utc_now_iso as event_now_iso
 
 
 QwenImageProvider = Callable[[str], tuple[list[QwenImageInput], list[str]]]
@@ -46,6 +46,7 @@ class PFV2QwenFallAnalyzer:
         timeout_seconds: float,
         image_provider: QwenImageProvider,
         num_ctx: int = 8192,
+        max_output_tokens: int = 192,
         temperature: float = 0.1,
         context_retry_enabled: bool = True,
     ) -> "PFV2QwenFallAnalyzer":
@@ -58,6 +59,7 @@ class PFV2QwenFallAnalyzer:
                 model_name=model_name,
                 timeout_seconds=timeout_seconds,
                 num_ctx=num_ctx,
+                max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 context_retry_enabled=context_retry_enabled,
             ),
@@ -65,6 +67,7 @@ class PFV2QwenFallAnalyzer:
         )
 
     def analyze_fall_event(self, event: FallEvent, keyframes: KeyframePackage) -> FallDetailResult:
+        request_started_at = event_now_iso()
         images, missing_reasons = self.image_provider(event.incident_id)
         if not images:
             model_log_bus.publish(
@@ -83,6 +86,8 @@ class PFV2QwenFallAnalyzer:
                 review_points=["检查关键帧采集链路是否可用。"],
                 model_name=self.analyzer.model_name,
                 error_message="no_qwen_keyframe_images",
+                request_started_at=request_started_at,
+                completed_at=event_now_iso(),
             )
         try:
             model_log_bus.publish(
@@ -219,6 +224,8 @@ class PFV2QwenFallAnalyzer:
             fall_transition_visible=detail.fall_transition_visible,
             intentional_action_evidence=detail.intentional_action_evidence,
             recovery_observed=detail.recovery_observed,
+            request_started_at=request_started_at,
+            completed_at=event_now_iso(),
         )
 
 
@@ -305,6 +312,8 @@ def _failure(
         confidence=None,
         model_name=model_name,
         error_message=message or reason,
+        request_started_at=event_now_iso(),
+        completed_at=event_now_iso(),
     )
 
 

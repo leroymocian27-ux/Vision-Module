@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from pathlib import Path
 
@@ -57,6 +58,7 @@ class FallBinaryClassifierService:
         self.load_timings_ms: dict[str, float] = {}
         self.loaded = False
         self.last_error: str | None = None
+        self._dll_directories: list[object] = []
         self._session = None
         self.load()
 
@@ -79,7 +81,11 @@ class FallBinaryClassifierService:
         if wants_cuda:
             preload_started = time.monotonic()
             try:
-                import torch  # noqa: F401
+                import torch
+
+                torch_lib = Path(torch.__file__).resolve().parent / "lib"
+                if torch_lib.is_dir() and hasattr(os, "add_dll_directory"):
+                    self._dll_directories.append(os.add_dll_directory(str(torch_lib)))
             except Exception as exc:  # pragma: no cover - depends on deployment env
                 logger.warning("post_fall_v2_binary_torch_cuda_dll_preload_skipped error=%s", exc)
             timings["torch_cuda_preload"] = round((time.monotonic() - preload_started) * 1000, 2)

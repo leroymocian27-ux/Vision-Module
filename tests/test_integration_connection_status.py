@@ -51,12 +51,12 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
             Settings(),
             default_camera_id="camera_01",
             vision_service_public_base_url="http://192.168.8.254:8000",
-            main_system_base_url="http://192.168.8.253:8000/api/v1",
+            main_system_base_url="http://192.168.8.253:8000",
             main_system_alert_timeout_ms=2500,
         )
 
         def fake_get(url: str, timeout: float):
-            self.assertEqual(url, "http://192.168.8.253:8000/healthz")
+            self.assertEqual(url, "http://192.168.8.253:8000/api/integrations/fall-detection/health")
             self.assertGreater(timeout, 0)
             return _FakeResponse(200)
 
@@ -84,7 +84,7 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
             Settings(),
             default_camera_id="camera_01",
             vision_service_public_base_url="http://192.168.8.254:8000",
-            main_system_base_url="http://192.168.8.253:8000/api/v1",
+            main_system_base_url="http://192.168.8.253:8000",
             main_system_alert_timeout_ms=2500,
         )
 
@@ -112,7 +112,7 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
             Settings(),
             default_camera_id="camera_01",
             vision_service_public_base_url="http://192.168.8.254:8000",
-            main_system_base_url="http://192.168.8.253:8000/api/v1",
+            main_system_base_url="http://192.168.8.253:8000",
             main_system_alert_timeout_ms=2500,
         )
 
@@ -140,7 +140,7 @@ class IntegrationConnectionStatusTest(unittest.TestCase):
             Settings(),
             default_camera_id="camera_01",
             vision_service_public_base_url="http://192.168.8.254:8000",
-            main_system_base_url="http://192.168.8.253:8000/api/v1",
+            main_system_base_url="http://192.168.8.253:8000",
             main_system_alert_timeout_ms=2500,
         )
 

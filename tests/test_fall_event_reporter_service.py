@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from app.core.config import Settings
 from app.schemas.vision_result import DetectedObject, VisionResult
@@ -63,8 +65,8 @@ class FallEventReporterServiceTest(unittest.TestCase):
             main_system_report_dry_run=False,
             main_system_alert_token="unit-test-token",
             main_system_alert_token_header="X-Vision-Service-Token",
-            main_system_base_url="http://192.168.8.254:8000/api/v1",
-            main_system_fall_event_path="/video-bridge/fall-events",
+            main_system_base_url="http://192.168.8.254:8000",
+            main_system_alert_path="/api/integrations/fall-detection/alerts",
         )
         reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
         calls: list[dict] = []
@@ -92,9 +94,12 @@ class FallEventReporterServiceTest(unittest.TestCase):
             reporter_module.requests.post = previous_post
 
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["url"], "http://192.168.8.254:8000/api/v1/video-bridge/fall-events")
+        self.assertEqual(calls[0]["url"], "http://192.168.8.254:8000/api/integrations/fall-detection/alerts")
         self.assertEqual(calls[0]["headers"], {"X-Vision-Service-Token": "unit-test-token"})
-        self.assertEqual(reporter.status()["last_post_status"], "http_200")
+        self.assertEqual(calls[0]["json"]["schema_version"], "1.0")
+        self.assertEqual(calls[0]["json"]["event_id"], "post-incident")
+        self.assertEqual(calls[0]["json"]["safety_outcome"], "alert")
+        self.assertEqual(reporter.status()["last_post_status"], "delivered")
 
     def test_active_confirmed_fall_backfills_snapshot_after_initial_miss(self) -> None:
         settings = replace(
@@ -448,6 +453,147 @@ class FallEventReporterServiceTest(unittest.TestCase):
         self.assertEqual(latest["incident_id"], "pfv2-go2-front-001")
         self.assertEqual(latest["description_zh"], "画面显示人员失衡后倒地，建议立即查看现场。")
         self.assertEqual(latest["qwen_review"]["fall_verdict"], "confirmed_fall")
+
+    def test_post_fall_v2_safety_deny_does_not_queue_main_system_alert(self) -> None:
+        settings = replace(Settings(), main_system_alert_enabled=True, main_system_report_dry_run=False)
+        reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
+        result = self._confirmed_result()
+        obj = result.objects[0]
+        result.objects[0] = obj.model_copy(
+            update={
+                "fall_decision": {
+                    **(obj.fall_decision or {}),
+                    "pipeline": "post_fall_v2",
+                    "decision_authority": "event_state_machine",
+                    "safety_outcome": "dismiss",
+                    "fall_verdict": "confirmed_fall",
+                    "high_risk_fall": 1,
+                    "incident_id": "pfv2-deny-001",
+                }
+            }
+        )
+
+        reporter.inspect_result(result)
+
+        self.assertEqual(reporter._queue.qsize(), 0)  # type: ignore[attr-defined]
+        self.assertIsNone(reporter.latest_alert("camera_01"))
+
+    def test_delivered_ack_writes_main_system_files_in_event_directory(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            settings = replace(
+                Settings(),
+                main_system_alert_enabled=True,
+                main_system_report_dry_run=False,
+                main_system_base_url="http://192.168.8.254:8000",
+                main_system_alert_path="/api/integrations/fall-detection/alerts",
+                test_event_root=temp_dir,
+            )
+            reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
+
+            class FakeResponse:
+                status_code = 200
+                text = '{"ok":true,"event_id":"pfv2-alert-001","duplicate":false}'
+
+            def fake_post(url: str, json: dict, headers: dict, timeout) -> FakeResponse:
+                del url, json, headers, timeout
+                return FakeResponse()
+
+            previous_post = reporter_module.requests.post
+            reporter_module.requests.post = fake_post
+            try:
+                reporter._post_payload(
+                    {
+                        "event_type": "fall_confirmed",
+                        "camera_id": "go2_front_camera",
+                        "track_id": "0",
+                        "incident_id": "pfv2-alert-001",
+                        "timestamp": "2026-08-29T09:10:00+00:00",
+                        "fall_prob": 0.93,
+                        "qwen_review": {"analysis_status": "completed", "fall_verdict": "confirmed_fall", "high_risk_fall": 1},
+                    }
+                )
+            finally:
+                reporter_module.requests.post = previous_post
+
+            event_dir = Path(temp_dir) / "go2_front_camera" / "pfv2-alert-001"
+            alert = json.loads((event_dir / "main_system_alert.json").read_text(encoding="utf-8"))
+            delivery = json.loads((event_dir / "main_system_delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(alert["schema_version"], "1.0")
+            self.assertEqual(alert["event_id"], "pfv2-alert-001")
+            self.assertEqual(delivery["status"], "delivered")
+            self.assertEqual(delivery["last_http_status"], 200)
+
+    def test_post_fall_v2_external_qwen_review_is_compact(self) -> None:
+        settings = replace(Settings(), main_system_alert_enabled=True)
+        reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
+
+        payload = reporter._external_alert_payload(  # type: ignore[attr-defined]
+            {
+                "event_type": "fall_confirmed",
+                "camera_id": "camera_01",
+                "incident_id": "incident-compact-001",
+                "timestamp": "2026-08-30T03:18:03+00:00",
+                "fall_prob": 0.97,
+                "metadata": {
+                    "event": {
+                        "qwen_review": {
+                            "analysis_status": "completed",
+                            "fall_verdict": "confirmed_fall",
+                            "high_risk_fall": 1,
+                            "occlusion": "unknown",
+                            "scene_risks": ["通行区域"],
+                            "possible_help_gesture": "unknown",
+                            "summary": "连续画面显示人员异常倒地。",
+                            "review_points": ["建议人工复核事件关键帧。"],
+                            "confidence": 0.92,
+                            "snapshot_path": "E:\\internal\\snapshot.jpg",
+                        }
+                    }
+                },
+            }
+        )
+
+        assert set(payload["qwen_review"]) == {
+            "occlusion",
+            "scene_risks",
+            "possible_help_gesture",
+            "summary",
+            "review_points",
+            "confidence",
+        }
+        assert payload["qwen_review"]["confidence"] == 0.92
+        assert "snapshot_path" not in payload["qwen_review"]
+
+    def test_ack_event_id_mismatch_is_not_delivered(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            settings = replace(
+                Settings(),
+                main_system_alert_enabled=True,
+                main_system_report_dry_run=False,
+                main_system_base_url="http://192.168.8.254:8000",
+                main_system_alert_path="/api/integrations/fall-detection/alerts",
+                test_event_root=temp_dir,
+            )
+            reporter = FallEventReporterService(settings=settings, source_manager=_StubSourceManager())
+
+            class FakeResponse:
+                status_code = 200
+                text = '{"ok":true,"event_id":"different-event"}'
+
+            def fake_post(url: str, json: dict, headers: dict, timeout) -> FakeResponse:
+                del url, json, headers, timeout
+                return FakeResponse()
+
+            previous_post = reporter_module.requests.post
+            reporter_module.requests.post = fake_post
+            try:
+                reporter._post_payload({"camera_id": "camera_01", "incident_id": "pfv2-alert-002"})
+            finally:
+                reporter_module.requests.post = previous_post
+
+            delivery = json.loads((Path(temp_dir) / "camera_01" / "pfv2-alert-002" / "main_system_delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(delivery["status"], "retry_wait")
+            self.assertIn("ACK event_id mismatch", delivery["last_error"])
 
     def _reporter(self) -> FallEventReporterService:
         settings = replace(

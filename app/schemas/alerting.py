@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class AlertEndpointConfig(BaseModel):
     base_url: str
-    path: str = "/video-bridge/fall-events"
+    path: str = "/api/integrations/fall-detection/alerts"
     enabled: bool = True
     dry_run: bool = False
     token_header: str | None = None
@@ -13,7 +13,7 @@ class AlertEndpointConfig(BaseModel):
 
 class AlertEndpointUpdateRequest(BaseModel):
     base_url: str
-    path: str = "/video-bridge/fall-events"
+    path: str = "/api/integrations/fall-detection/alerts"
     enabled: bool = True
 
 
@@ -28,7 +28,9 @@ class AlertSimulationStartRequest(BaseModel):
 
 
 class AlertSimulationSendOnceRequest(BaseModel):
-    target_ip: str = Field(min_length=1)
+    target_ip: str | None = None
+    base_url: str | None = None
+    event_id: str | None = None
     camera_id: str = "camera_01"
     track_id: str = "manual-console-probe"
     fall_prob: float = Field(default=0.91, ge=0.0, le=1.0)

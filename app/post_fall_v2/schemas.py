@@ -314,6 +314,11 @@ class FallDetailResult:
     fall_transition_visible: bool | None = None
     intentional_action_evidence: bool | None = None
     recovery_observed: bool | None = None
+    request_started_at: str | None = None
+    completed_at: str | None = None
+    qwen_start_frames_received: int | None = None
+    qwen_end_frames_received: int | None = None
+    frames_received_during_qwen: int | None = None
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)

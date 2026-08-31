@@ -1,0 +1,45 @@
+## main...origin/main
+ M .env.example
+ M app/api/alerting_api.py
+ M app/api/device_discovery_api.py
+ M app/api/integration_api.py
+ M app/core/config.py
+ M app/events/delivery.py
+ M app/events/qwen_keyframe.py
+ M app/main.py
+ M app/network/device_discovery.py
+ M app/post_fall_v2/post_fall_runtime_service.py
+ M app/post_fall_v2/qwen_fall_analyzer.py
+ M app/post_fall_v2/safety_decision.py
+ M app/post_fall_v2/schemas.py
+ M app/post_fall_v2/test_archive_service.py
+ M app/schemas/alerting.py
+ M app/schemas/status.py
+ M app/services/alert_outbox_service.py
+ M app/services/alert_simulator_service.py
+ M app/services/fall_event_reporter_service.py
+ M configs/original_camera_79.env
+ M configs/post_fall_v2_candidate.env
+ M configs/production_candidate.env
+ M configs/safe_demo.env
+ M frontend_demo/app.js
+ M frontend_demo/index.html
+ M frontend_demo/styles.css
+ M scripts/start_current_camera.py
+ M tests/test_alerting_manual_send.py
+ M tests/test_async_workers_and_outbox.py
+ M tests/test_device_connection_discovery.py
+ M tests/test_fall_event_reporter_service.py
+ M tests/test_integration_connection_status.py
+ M tests/test_post_fall_v2_manual_control_and_archive.py
+ M tests/test_post_fall_v2_qwen_fall_analyzer.py
+ M tests/test_post_fall_v2_runtime_service.py
+ M tests/test_post_fall_v2_safety_decision.py
+?? demo_assets/
+?? docs/dashboard/
+?? docs/integration/
+?? scripts/demo_data_augmentation.py
+?? scripts/demo_qwen_ollama_connection.py
+?? scripts/run_system_e2e_test.py
+?? scripts/run_video_batch_test.py
+?? tests/test_run_video_batch_test_report.py

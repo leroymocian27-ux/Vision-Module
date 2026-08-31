@@ -18,6 +18,7 @@ from app.post_fall_v2.schemas import (
     BinaryFrameResult,
     FallDetailResult,
     FallEvent,
+    FallSafetyDecision,
     KeyframeItem,
     KeyframePackage,
 )
@@ -229,6 +230,98 @@ def test_test_archive_keeps_binary_and_qwen_event_ids_matched(tmp_path) -> None:
     assert (tmp_path / "event" / "qwen" / "deny" / event_b.incident_id / "qwen_review.json").exists()
     assert (tmp_path / "event" / "qwen" / "review" / event_c.incident_id / "qwen_review.json").exists()
     assert (tmp_path / "event" / "qwen" / "review" / event_d.incident_id / "qwen_review.json").exists()
+    qwen_review = json.loads(
+        (
+            tmp_path
+            / "event"
+            / "qwen"
+            / "confirm"
+            / event_a.incident_id
+            / "qwen_review.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert {
+        "occlusion",
+        "scene_risks",
+        "possible_help_gesture",
+        "summary",
+        "review_points",
+        "confidence",
+    }.issubset(set(qwen_review))
+    assert qwen_review["analysis_status"] == "completed"
+    assert qwen_review["fall_verdict"] == "confirmed_fall"
+
+
+def test_manual_session_does_not_auto_complete_at_zero_seconds(tmp_path) -> None:
+    archive = PostFallTestArchiveService(str(tmp_path / "event"))
+
+    status = archive.start_manual_session("camera_01")
+    time.sleep(0.05)
+    refreshed = archive.status()
+
+    assert status.manual_session is True
+    assert refreshed.running is True
+    assert refreshed.state == "running"
+    assert refreshed.remaining_seconds == 0
+    assert (tmp_path / "event" / "test_sessions" / status.test_session_id / "session.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected_label", "expected_real_fall"),
+    [
+        ("confirmed_fall", "真实跌倒", True),
+        ("intentional_low_posture", "非真实跌倒", False),
+        ("normal_activity", "非真实跌倒", False),
+        ("non_fall", "非真实跌倒", False),
+        ("unclear", "无法明确判断", None),
+        ("uncertain", "无法明确判断", None),
+        ("insufficient_visual_evidence", "视觉证据不足", None),
+    ],
+)
+def test_presentation_result_maps_qwen_verdict_without_false_unknowns(
+    tmp_path,
+    verdict,
+    expected_label,
+    expected_real_fall,
+) -> None:
+    archive = PostFallTestArchiveService(str(tmp_path / "event"))
+    status = archive.start_manual_session("camera_01")
+    event = _event(f"pfv2-camera_01-{verdict}", verdict)
+
+    assert archive.archive_binary_event(event, _package(event), [])
+    archive.archive_qwen_result(event)
+
+    session_dir = tmp_path / "event" / "test_sessions" / status.test_session_id
+    presentation = json.loads((session_dir / "presentation_result.json").read_text(encoding="utf-8"))
+    assert presentation["fall_label_zh"] == expected_label
+    assert presentation["is_real_fall"] is expected_real_fall
+    assert presentation["fall_verdict"] == verdict
+    assert "time_description_zh" in presentation
+
+
+def test_test_archive_persists_final_safety_decision_with_qwen_result(tmp_path) -> None:
+    archive = PostFallTestArchiveService(str(tmp_path / "event"))
+    archive.start_test(60)
+    event = _event("pfv2-camera_01-final", "unclear")
+    event = replace(
+        event,
+        safety_decision=FallSafetyDecision(
+            outcome="alert",
+            path="post_fall_persistent_abnormality",
+            alert_level="high",
+            reason="persistent_post_fall_abnormality_without_intentional_evidence",
+            observation_elapsed_ms=15000,
+        ),
+    )
+    images = [QwenImageInput(offset_ms=0, role="trigger", image_bytes=b"jpeg")]
+
+    assert archive.archive_binary_event(event, _package(event), images)
+    assert archive.archive_qwen_result(event) == "review"
+
+    session_dir = tmp_path / "event" / "test_sessions" / archive.status().test_session_id
+    events = json.loads((session_dir / "events.json").read_text(encoding="utf-8"))
+    assert events[0]["event"]["safety_decision"]["outcome"] == "alert"
+    assert events[0]["event"]["safety_decision"]["path"] == "post_fall_persistent_abnormality"
 
 
 def test_test_archive_records_binary_non_fall_without_creating_full_event(tmp_path) -> None:
@@ -355,7 +448,14 @@ def test_stop_test_drain_timeout_keeps_event_and_completes_session(tmp_path) -> 
     incident = json.loads((tmp_path / "event" / "camera_01" / event.incident_id / "event.json").read_text(encoding="utf-8"))
     assert summary["qwen_timeout"] == 1
     assert events[0]["stage"] == "qwen_timeout"
-    assert qwen["analysis_status"] == "timeout"
+    assert set(qwen) == {
+        "occlusion",
+        "scene_risks",
+        "possible_help_gesture",
+        "summary",
+        "review_points",
+        "confidence",
+    }
     assert incident["analysis_status"] == "timeout"
 
 

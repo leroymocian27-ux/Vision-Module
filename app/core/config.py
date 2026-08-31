@@ -411,6 +411,7 @@ class Settings:
     post_fall_v2_qwen_jpeg_quality: int = _get_int("POST_FALL_V2_QWEN_JPEG_QUALITY", 85)
     post_fall_v2_qwen_queue_capacity: int = _get_int("POST_FALL_V2_QWEN_QUEUE_CAPACITY", 2)
     post_fall_v2_qwen_num_ctx: int = _get_int("POST_FALL_V2_QWEN_NUM_CTX", 8192)
+    post_fall_v2_qwen_max_output_tokens: int = _get_int("POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS", 192)
     post_fall_v2_qwen_temperature: float = _get_float("POST_FALL_V2_QWEN_TEMPERATURE", 0.1)
     post_fall_v2_qwen_context_retry_enabled: bool = _get_bool("POST_FALL_V2_QWEN_CONTEXT_RETRY_ENABLED", True)
     post_fall_v2_evidence_export_enabled: bool = _get_bool("POST_FALL_V2_EVIDENCE_EXPORT_ENABLED", False)
@@ -457,22 +458,36 @@ class Settings:
         "stun:stun.l.google.com:19302",
     )
     webrtc_video_fps: int = _get_int("WEBRTC_VIDEO_FPS", 15)
+    display_mjpeg_fps: float = _get_float("DISPLAY_MJPEG_FPS", 12.0)
+    display_frame_height: int = _get_int("DISPLAY_FRAME_HEIGHT", 540)
+    display_jpeg_quality: int = _get_int("DISPLAY_JPEG_QUALITY", 72)
 
     main_system_alert_enabled: bool = _get_bool("MAIN_SYSTEM_ALERT_ENABLED", False)
     main_system_report_dry_run: bool = _get_bool("MAIN_SYSTEM_REPORT_DRY_RUN", False)
-    main_system_base_url: str = os.getenv("MAIN_SYSTEM_BASE_URL", "http://127.0.0.1:8090/api/v1")
-    main_system_fall_event_path: str = os.getenv("MAIN_SYSTEM_FALL_EVENT_PATH", "/video-bridge/fall-events")
+    main_system_base_url: str = os.getenv("MAIN_SYSTEM_BASE_URL", "").rstrip("/")
+    main_system_alert_path: str = os.getenv(
+        "MAIN_SYSTEM_ALERT_PATH",
+        os.getenv("MAIN_SYSTEM_FALL_EVENT_PATH", "/api/integrations/fall-detection/alerts"),
+    )
+    main_system_health_path: str = os.getenv(
+        "MAIN_SYSTEM_HEALTH_PATH",
+        "/api/integrations/fall-detection/health",
+    )
+    main_system_fall_event_path: str = main_system_alert_path
     main_system_alert_timeout_ms: int = _get_int("MAIN_SYSTEM_ALERT_TIMEOUT_MS", 10000)
+    main_system_connect_timeout_sec: float = _get_float("MAIN_SYSTEM_CONNECT_TIMEOUT_SEC", 2.0)
+    main_system_read_timeout_sec: float = _get_float("MAIN_SYSTEM_READ_TIMEOUT_SEC", 5.0)
+    main_system_retry_backoff_seconds: str = os.getenv("MAIN_SYSTEM_RETRY_BACKOFF_SECONDS", "1,2,5")
     main_system_alert_cooldown_seconds: float = _get_float("MAIN_SYSTEM_ALERT_COOLDOWN_SECONDS", 90.0)
-    main_system_alert_token: str = os.getenv("MAIN_SYSTEM_ALERT_TOKEN", "")
+    main_system_alert_token: str = os.getenv("MAIN_SYSTEM_INTEGRATION_TOKEN", os.getenv("MAIN_SYSTEM_ALERT_TOKEN", ""))
     main_system_alert_token_header: str = os.getenv("MAIN_SYSTEM_ALERT_TOKEN_HEADER", "X-Vision-Service-Token")
     main_system_default_port: int = _get_int("MAIN_SYSTEM_DEFAULT_PORT", 8000)
-    main_system_base_prefix: str = os.getenv("MAIN_SYSTEM_BASE_PREFIX", "/api/v1")
+    main_system_base_prefix: str = os.getenv("MAIN_SYSTEM_BASE_PREFIX", "")
     vision_service_public_base_url: str = os.getenv("VISION_SERVICE_PUBLIC_BASE_URL", "http://127.0.0.1:8000")
     fall_event_snapshot_dir: str = os.getenv("FALL_EVENT_SNAPSHOT_DIR", "logs/fall_events/snapshots")
-    alert_outbox_enabled: bool = _get_bool("ALERT_OUTBOX_ENABLED", False)
+    alert_outbox_enabled: bool = _get_bool("ALERT_OUTBOX_ENABLED", True)
     alert_outbox_path: str = os.getenv("ALERT_OUTBOX_PATH", "data/alert_outbox.sqlite3")
-    alert_outbox_retry_limit: int = _get_int("ALERT_OUTBOX_RETRY_LIMIT", 10)
+    alert_outbox_retry_limit: int = _get_int("ALERT_OUTBOX_RETRY_LIMIT", 4)
 
     # The event-semantic pipeline is additive and intentionally disabled until
     # its evidence and delivery behavior is explicitly enabled for a deployment.
@@ -628,6 +643,12 @@ class Settings:
             raise ValueError("MJPEG_CHUNK_BYTES must be at least 1024")
         if self.mjpeg_max_buffer_bytes < self.mjpeg_chunk_bytes:
             raise ValueError("MJPEG_MAX_BUFFER_BYTES must be at least MJPEG_CHUNK_BYTES")
+        if self.display_mjpeg_fps <= 0:
+            raise ValueError("DISPLAY_MJPEG_FPS must be positive")
+        if self.display_frame_height < 0:
+            raise ValueError("DISPLAY_FRAME_HEIGHT must be non-negative")
+        if not 40 <= self.display_jpeg_quality <= 95:
+            raise ValueError("DISPLAY_JPEG_QUALITY must be between 40 and 95")
         if self.robot_assist_mode not in {"mock", "go2"}:
             raise ValueError("ROBOT_ASSIST_MODE must be mock or go2")
         if self.post_fall_v2_input_policy not in {"FULL_FRAME_TRAIN_MATCHED", "EXPERIMENTAL_PERSON_ROI"}:
@@ -682,6 +703,8 @@ class Settings:
             raise ValueError("POST_FALL_V2_QWEN_QUEUE_CAPACITY must be at least 1")
         if self.post_fall_v2_qwen_num_ctx < 4096:
             raise ValueError("POST_FALL_V2_QWEN_NUM_CTX must be at least 4096")
+        if self.post_fall_v2_qwen_max_output_tokens < 64 or self.post_fall_v2_qwen_max_output_tokens > 1024:
+            raise ValueError("POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS must be between 64 and 1024")
         if self.post_fall_v2_qwen_temperature < 0:
             raise ValueError("POST_FALL_V2_QWEN_TEMPERATURE must be non-negative")
         if self.test_drain_timeout_seconds <= 0:
@@ -760,6 +783,14 @@ _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
     "pipeline_mode": ("PIPELINE_MODE", "pipeline_mode"),
     "auto_start_stream": ("AUTO_START_STREAM", "auto_start_stream"),
     "video_source_mode": ("VIDEO_SOURCE_MODE", "video_source_mode"),
+    "mjpeg_read_timeout_sec": ("MJPEG_READ_TIMEOUT_SEC", "mjpeg_read_timeout_sec"),
+    "mjpeg_reconnect_initial_sec": ("MJPEG_RECONNECT_INITIAL_SEC", "mjpeg_reconnect_initial_sec"),
+    "mjpeg_reconnect_max_sec": ("MJPEG_RECONNECT_MAX_SEC", "mjpeg_reconnect_max_sec"),
+    "mjpeg_stale_frame_ms": ("MJPEG_STALE_FRAME_MS", "mjpeg_stale_frame_ms"),
+    "webrtc_video_fps": ("WEBRTC_VIDEO_FPS", "webrtc_video_fps"),
+    "display_mjpeg_fps": ("DISPLAY_MJPEG_FPS", "display_mjpeg_fps"),
+    "display_frame_height": ("DISPLAY_FRAME_HEIGHT", "display_frame_height"),
+    "display_jpeg_quality": ("DISPLAY_JPEG_QUALITY", "display_jpeg_quality"),
     "main_system_alert_enabled": ("MAIN_SYSTEM_ALERT_ENABLED", "main_system_alert_enabled"),
     "event_pipeline_enabled": ("EVENT_PIPELINE_ENABLED", "event_pipeline_enabled"),
     "event_ring_buffer_enabled": ("EVENT_RING_BUFFER_ENABLED", "event_ring_buffer_enabled"),

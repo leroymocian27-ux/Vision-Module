@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +36,15 @@ class ArchiveStatus:
     tracked_binary_event_ids: list[str]
     state: str = "idle"
     started_at: str | None = None
+    running_at: str | None = None
     stopped_at: str | None = None
+    finalized_at: str | None = None
     session_dir: str | None = None
+    camera_id: str | None = None
+    manual_session: bool = False
+    failure_stage: str | None = None
+    failure_reason: str | None = None
+    presentation_result: dict[str, Any] | None = None
     binary_fall_count: int = 0
     binary_non_fall_count: int = 0
     binary_unknown_count: int = 0
@@ -72,12 +80,18 @@ class PostFallTestArchiveService:
         self.test_sessions_dir = self.event_root / "test_sessions"
         self._performance_interval = max(0.5, float(performance_sample_interval_seconds))
         self._drain_timeout_seconds = max(1.0, float(drain_timeout_seconds))
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._state = "idle"
         self._running = False
         self._session_id: str | None = None
         self._started_at: str | None = None
+        self._running_at: str | None = None
         self._stopped_at: str | None = None
+        self._finalized_at: str | None = None
+        self._camera_id: str | None = None
+        self._manual_session = False
+        self._failure_stage: str | None = None
+        self._failure_reason: str | None = None
         self._ends_at_monotonic: float | None = None
         self._drain_deadline_monotonic: float | None = None
         self._total_seconds = 0
@@ -101,6 +115,8 @@ class PostFallTestArchiveService:
         self._event_created_at: dict[str, str] = {}
         self._qwen_images: dict[str, list[QwenImageInput]] = {}
         self._event_records: dict[str, dict[str, Any]] = {}
+        self._session_manifest: dict[str, Any] | None = None
+        self._trace_records: list[dict[str, Any]] = []
         self._performance_samples_count = 0
         self._latest_performance: dict[str, Any] | None = None
         self._performance_summary: dict[str, Any] = {}
@@ -116,12 +132,118 @@ class PostFallTestArchiveService:
             self.qwen_deny_dir,
             self.qwen_review_dir,
             self.test_sessions_dir,
+            self.event_root / "system_e2e_tests",
         ):
             directory.mkdir(parents=True, exist_ok=True)
+
+    def _session_manifest_path_locked(self) -> Path:
+        return self._session_dir_locked() / "SESSION_MANIFEST.json"
+
+    def _trace_path_locked(self) -> Path:
+        return self._session_dir_locked() / "TRACE_TIMELINE.jsonl"
+
+    def _summary_path_locked(self) -> Path:
+        return self._session_dir_locked() / "SUMMARY.json"
+
+    def _report_path_locked(self) -> Path:
+        return self._session_dir_locked() / "TEST_REPORT.md"
+
+    def _build_session_manifest(self, started_at: datetime, total_seconds: int) -> dict[str, Any]:
+        session_id = self._session_id or f"test_{started_at.strftime('%Y%m%d_%H%M%S')}"
+        session_dir = self.test_sessions_dir / session_id
+        return {
+            "schema_version": "post_fall_v2_test_session_manifest.v1",
+            "test_session_id": session_id,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "total_seconds": int(total_seconds),
+            "manual_session": bool(self._manual_session),
+            "camera_id": self._camera_id,
+            "event_root": str(self.event_root),
+            "session_dir": str(session_dir),
+            "paths": {
+                "session_summary_json": str(session_dir / "session_summary.json"),
+                "summary_json": str(session_dir / "SUMMARY.json"),
+                "trace_timeline_jsonl": str(session_dir / "TRACE_TIMELINE.jsonl"),
+                "test_report_md": str(session_dir / "TEST_REPORT.md"),
+                "events_json": str(session_dir / "events.json"),
+                "binary_predictions_csv": str(session_dir / "binary_predictions.csv"),
+                "performance_csv": str(session_dir / "performance.csv"),
+                "presentation_result_json": str(session_dir / "presentation_result.json"),
+                "session_json": str(session_dir / "session.json"),
+            },
+            "timers": {
+                "performance_sample_interval_seconds": self._performance_interval,
+                "drain_timeout_seconds": self._drain_timeout_seconds,
+            },
+            "directories": {
+                "binary_full": str(self.binary_full_dir),
+                "binary_other": str(self.binary_other_dir),
+                "qwen_confirm": str(self.qwen_confirm_dir),
+                "qwen_deny": str(self.qwen_deny_dir),
+                "qwen_review": str(self.qwen_review_dir),
+            },
+        }
 
     def start_test(self, total_seconds: int) -> ArchiveStatus:
         if total_seconds <= 0:
             raise ValueError("test duration must be greater than zero")
+        return self._start_session(total_seconds=total_seconds, camera_id=None, manual_session=False)
+
+    def start_manual_session(self, camera_id: str | None = None) -> ArchiveStatus:
+        return self._start_session(total_seconds=0, camera_id=camera_id, manual_session=True)
+
+    def mark_running(self) -> ArchiveStatus:
+        with self._lock:
+            if self._session_id and self._running_at is None:
+                self._running_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                self._append_trace_locked(
+                    "session_runtime_ready",
+                    {
+                        "test_session_id": self._session_id,
+                        "running_at": self._running_at,
+                    },
+                )
+                self._write_session_summary_locked()
+        return self.status()
+
+    def mark_failed(self, stage: str, reason: str) -> ArchiveStatus:
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            self._running = False
+            self._ends_at_monotonic = None
+            self._stopped_at = self._stopped_at or now
+            self._finalized_at = now
+            self._state = "failed"
+            self._failure_stage = str(stage or "unknown")
+            self._failure_reason = str(reason or "unknown failure")
+            self._drain_deadline_monotonic = None
+            self._stop_performance_monitor_locked()
+            self._append_log_locked(f"session_failed stage={self._failure_stage} reason={self._failure_reason}")
+            self._append_trace_locked(
+                "session_failed",
+                {
+                    "test_session_id": self._session_id,
+                    "stage": self._failure_stage,
+                    "reason": self._failure_reason,
+                    "finalized_at": self._finalized_at,
+                },
+            )
+            self._write_session_summary_locked()
+        return self.status()
+
+    def latest_presentation_result(self) -> dict[str, Any] | None:
+        with self._lock:
+            if not self._session_id:
+                return None
+            return self._build_presentation_result_locked()
+
+    def _start_session(
+        self,
+        *,
+        total_seconds: int,
+        camera_id: str | None,
+        manual_session: bool,
+    ) -> ArchiveStatus:
         now = datetime.now(timezone.utc)
         session_id = "test_" + now.strftime("%Y%m%d_%H%M%S")
         with self._lock:
@@ -130,8 +252,14 @@ class PostFallTestArchiveService:
             self._running = True
             self._session_id = session_id
             self._started_at = now.isoformat(timespec="seconds")
+            self._running_at = None
             self._stopped_at = None
-            self._ends_at_monotonic = time.monotonic() + int(total_seconds)
+            self._finalized_at = None
+            self._camera_id = camera_id
+            self._manual_session = bool(manual_session)
+            self._failure_stage = None
+            self._failure_reason = None
+            self._ends_at_monotonic = None if manual_session else time.monotonic() + int(total_seconds)
             self._drain_deadline_monotonic = None
             self._total_seconds = int(total_seconds)
             self._binary_full_ids.clear()
@@ -154,6 +282,8 @@ class PostFallTestArchiveService:
             self._event_created_at.clear()
             self._qwen_images.clear()
             self._event_records.clear()
+            self._trace_records.clear()
+            self._session_manifest = self._build_session_manifest(now, total_seconds)
             self._performance_samples_count = 0
             self._latest_performance = None
             self._performance_summary = {}
@@ -161,6 +291,16 @@ class PostFallTestArchiveService:
             self._start_performance_monitor_locked()
         self.ensure_directories()
         self._write_session_summary()
+        self._append_trace_locked(
+            "test_started",
+            {
+                "test_session_id": session_id,
+                "started_at": self._started_at,
+                "total_seconds": self._total_seconds,
+                "manual_session": self._manual_session,
+                "camera_id": self._camera_id,
+            },
+        )
         return self.status()
 
     def stop_test(self) -> ArchiveStatus:
@@ -174,10 +314,19 @@ class PostFallTestArchiveService:
                 self._drain_deadline_monotonic = time.monotonic() + self._drain_timeout_seconds
             else:
                 self._state = "completed"
+                self._finalized_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 self._drain_deadline_monotonic = None
             if self._state == "completed":
                 self._stop_performance_monitor_locked()
             self._append_log_locked("stop_test_requested")
+            self._append_trace_locked(
+                "test_stop_requested",
+                {
+                    "test_session_id": self._session_id,
+                    "stopped_at": self._stopped_at,
+                    "state": self._state,
+                },
+            )
         self._write_session_summary()
         return self.status()
 
@@ -192,8 +341,15 @@ class PostFallTestArchiveService:
                 event_root=str(self.event_root),
                 state=self._state,
                 started_at=self._started_at,
+                running_at=self._running_at,
                 stopped_at=self._stopped_at,
+                finalized_at=self._finalized_at,
                 session_dir=str(self._session_dir_locked()) if self._session_id else None,
+                camera_id=self._camera_id,
+                manual_session=self._manual_session,
+                failure_stage=self._failure_stage,
+                failure_reason=self._failure_reason,
+                presentation_result=self._build_presentation_result_locked() if self._session_id else None,
                 binary_full_count=len(self._binary_full_ids),
                 binary_other_count=self._binary_other_count,
                 qwen_confirm_count=len(self._qwen_confirm_ids),
@@ -228,6 +384,31 @@ class PostFallTestArchiveService:
             session_id = self._session_id
             self._observe_binary_prediction_locked(binary, decision)
             self._append_binary_prediction_locked(binary, decision, raw, sampled)
+            performance = getattr(raw, "performance", None)
+            captured_monotonic = getattr(sampled, "captured_monotonic", None)
+            frame_age_ms = None
+            if captured_monotonic is not None:
+                try:
+                    frame_age_ms = round((time.monotonic() - float(captured_monotonic)) * 1000, 2)
+                except (TypeError, ValueError):
+                    frame_age_ms = None
+            self._append_trace_locked(
+                "binary_frame",
+                {
+                    "incident_id": decision.incident_id,
+                    "camera_id": binary.camera_id,
+                    "frame_id": binary.frame_id,
+                    "frame_seq": binary.frame_seq,
+                    "decision_label": binary.decision_label,
+                    "fall_probability": binary.fall_probability,
+                    "aggregate_state": decision.state,
+                    "frame_age_ms": frame_age_ms,
+                    "queue_delay_ms": getattr(performance, "queue_delay_ms", None),
+                    "inference_ms": getattr(performance, "inference_ms", None),
+                    "total_ms": getattr(performance, "total_ms", None),
+                    "provider": getattr(getattr(raw, "model", None), "provider", None),
+                },
+            )
             if binary.decision_label != "NON_FALL":
                 return
             self._binary_other_count += 1
@@ -270,6 +451,21 @@ class PostFallTestArchiveService:
                 package,
                 "binary_full",
                 list(missing_reasons or []),
+            )
+            self._append_trace_locked(
+                "binary_event",
+                {
+                    "incident_id": event.incident_id,
+                    "camera_id": event.camera_id,
+                    "event_created_at": event.created_at,
+                    "confirmed_at": event.confirmed_at,
+                    "vlm_status": event.vlm_status,
+                    "candidate_duration_ms": event.binary_evidence.get("candidate_duration_ms") if isinstance(event.binary_evidence, dict) else None,
+                    "window_size": event.binary_evidence.get("window_size") if isinstance(event.binary_evidence, dict) else None,
+                    "positive_count": event.binary_evidence.get("positive_count") if isinstance(event.binary_evidence, dict) else None,
+                    "consecutive_positive_count": event.binary_evidence.get("consecutive_positive_count") if isinstance(event.binary_evidence, dict) else None,
+                    "reason": event.binary_evidence.get("reason") if isinstance(event.binary_evidence, dict) else None,
+                },
             )
             self._append_log_locked(f"binary_event_archived incident_id={event.incident_id}")
             self._write_session_events_locked()
@@ -315,7 +511,7 @@ class PostFallTestArchiveService:
             bucket = "confirm"
             with self._lock:
                 self._qwen_confirm_ids.add(event.incident_id)
-        elif detail.analysis_status == "completed" and verdict in {"normal_activity", "intentional_low_posture"}:
+        elif detail.analysis_status == "completed" and verdict in {"normal_activity", "intentional_low_posture", "non_fall"}:
             root = self.qwen_deny_dir
             bucket = "deny"
             with self._lock:
@@ -329,37 +525,70 @@ class PostFallTestArchiveService:
         event_dir = root / _safe_name(event.incident_id)
         event_dir.mkdir(parents=True, exist_ok=True)
         image_files = _write_images(event_dir, images)
+        completed_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        qwen_review = _compact_qwen_review(detail)
+        _write_json(event_dir / "qwen_review.json", qwen_review)
         payload = {
             "schema_version": "post_fall_v2_test_qwen_review.v1",
             "test_session_id": session_id,
             "created_during_test": True,
             "event_created_at": self._event_created_at.get(event.incident_id, event.created_at),
-            "qwen_completed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "qwen_request_started_at": detail.request_started_at,
+            "qwen_completed_at": completed_at,
+            "qwen_elapsed_ms": detail.latency_ms,
             "stage": f"qwen_{bucket}",
             "incident_id": event.incident_id,
             "camera_id": event.camera_id,
             "fall_verdict": detail.fall_verdict,
             "analysis_status": detail.analysis_status,
+            "confidence": detail.confidence,
+            "high_risk_fall": detail.high_risk_fall,
+            "error_message": detail.error_message,
+            "qwen_start_frames_received": detail.qwen_start_frames_received,
+            "qwen_end_frames_received": detail.qwen_end_frames_received,
+            "frames_received_during_qwen": detail.frames_received_during_qwen,
+            "safety_decision": event.safety_decision.to_record() if event.safety_decision is not None else None,
             "qwen_analysis": detail.to_record(),
             "keyframes": image_files,
+            "qwen_review": qwen_review,
         }
-        _write_json(event_dir / "qwen_review.json", payload)
         with self._lock:
             record = self._event_records.get(event.incident_id, {})
             record.update(
                 {
                     "stage": f"qwen_{bucket}",
                     "qwen_bucket": bucket,
+                    "qwen_request_started_at": detail.request_started_at,
                     "qwen_completed_at": payload["qwen_completed_at"],
+                    "qwen_elapsed_ms": detail.latency_ms,
                     "qwen_analysis": detail.to_record(),
+                    "event": event.to_record(),
                 }
             )
             self._event_records[event.incident_id] = record
             if not self._running and not self._qwen_unresolved_ids:
                 self._state = "completed"
+                self._finalized_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 self._drain_deadline_monotonic = None
                 self._stop_performance_monitor_locked()
             self._append_log_locked(f"qwen_result_archived incident_id={event.incident_id} bucket={bucket}")
+            self._append_trace_locked(
+                "qwen_result",
+                {
+                    "incident_id": event.incident_id,
+                    "camera_id": event.camera_id,
+                    "bucket": bucket,
+                    "analysis_status": detail.analysis_status,
+                    "fall_verdict": detail.fall_verdict,
+                    "request_started_at": detail.request_started_at,
+                    "completed_at": completed_at,
+                    "latency_ms": detail.latency_ms,
+                    "request_to_complete_ms": _elapsed_ms_since(detail.request_started_at) if detail.request_started_at else None,
+                    "qwen_start_frames_received": detail.qwen_start_frames_received,
+                    "qwen_end_frames_received": detail.qwen_end_frames_received,
+                    "frames_received_during_qwen": detail.frames_received_during_qwen,
+                },
+            )
             self._write_session_events_locked()
             self._write_session_summary_locked()
         self._write_incident_event_json(event, {**payload, "event": event.to_record()})
@@ -372,6 +601,8 @@ class PostFallTestArchiveService:
                 return
         if not self._running:
             return
+        if self._ends_at_monotonic is None:
+            return
         if self._remaining_seconds_locked() > 0:
             return
         self._running = False
@@ -382,6 +613,7 @@ class PostFallTestArchiveService:
             self._drain_deadline_monotonic = time.monotonic() + self._drain_timeout_seconds
         else:
             self._state = "completed"
+            self._finalized_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             self._drain_deadline_monotonic = None
         if self._state == "completed":
             self._stop_performance_monitor_locked()
@@ -397,6 +629,7 @@ class PostFallTestArchiveService:
         timed_out_ids = sorted(self._qwen_unresolved_ids)
         if not timed_out_ids:
             self._state = "completed"
+            self._finalized_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             self._drain_deadline_monotonic = None
             self._stop_performance_monitor_locked()
             self._write_session_summary_locked()
@@ -416,6 +649,14 @@ class PostFallTestArchiveService:
                 "fall_verdict": "unclear",
                 "error_message": "test_drain_timeout",
             }
+            qwen_review = {
+                "occlusion": "unknown",
+                "scene_risks": [],
+                "possible_help_gesture": "unknown",
+                "summary": "千问分析超时，建议人工复核事件关键帧。",
+                "review_points": ["建议人工复核事件关键帧。"],
+                "confidence": None,
+            }
             payload = {
                 "schema_version": "post_fall_v2_test_qwen_review.v1",
                 "test_session_id": session_id,
@@ -429,9 +670,10 @@ class PostFallTestArchiveService:
                 "analysis_status": "timeout",
                 "qwen_analysis": qwen_analysis,
                 "keyframes": [],
+                "qwen_review": qwen_review,
             }
             qwen_dir = self.qwen_review_dir / _safe_name(incident_id)
-            _write_json(qwen_dir / "qwen_review.json", payload)
+            _write_json(qwen_dir / "qwen_review.json", qwen_review)
             record.update(
                 {
                     "stage": "qwen_timeout",
@@ -441,9 +683,19 @@ class PostFallTestArchiveService:
                 }
             )
             self._event_records[incident_id] = record
+            self._append_trace_locked(
+                "qwen_timeout",
+                {
+                    "incident_id": incident_id,
+                    "camera_id": camera_id,
+                    "completed_at": completed_at,
+                    "event_created_at": self._event_created_at.get(incident_id),
+                },
+            )
             self._write_incident_payload(camera_id, incident_id, {**payload, "event": event_record})
             self._append_log_locked(f"qwen_timeout incident_id={incident_id}")
         self._state = "completed"
+        self._finalized_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._drain_deadline_monotonic = None
         self._stop_performance_monitor_locked()
         self._write_session_events_locked()
@@ -455,17 +707,33 @@ class PostFallTestArchiveService:
     def _initialise_session_files_locked(self) -> None:
         session_dir = self._session_dir_locked()
         session_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(self._session_manifest_path_locked(), self._session_manifest or {})
         _write_text_if_missing(
             session_dir / "binary_predictions.csv",
-            "created_at,camera_id,frame_seq,frame_id,frame_age_ms,decision_label,fall_probability,non_fall_probability,provider,inference_ms,total_ms,aggregate_state,window_size,positive_count,consecutive_positive_count,candidate_duration_ms,incident_id,event_created,reason,inference_at\n",
+            "created_at,camera_id,frame_seq,frame_id,frame_age_ms,queue_delay_ms,decision_label,fall_probability,non_fall_probability,provider,inference_ms,total_ms,aggregate_state,window_size,positive_count,consecutive_positive_count,candidate_duration_ms,incident_id,event_created,reason,inference_at\n",
         )
         _write_text_if_missing(
             session_dir / "performance.csv",
             "created_at,cpu_percent,memory_percent,memory_used_mb,process_cpu_percent,process_rss_mb,gpu_util_percent,gpu_memory_used_mb,gpu_memory_total_mb,gpu_memory_percent\n",
         )
+        _write_text_if_missing(self._trace_path_locked(), "")
         _write_json(session_dir / "events.json", [])
+        _write_json(session_dir / "presentation_result.json", self._build_presentation_result_locked())
         self._write_session_summary_locked()
         self._append_log_locked("start_test")
+
+    def _append_trace_locked(self, stage: str, payload: dict[str, Any]) -> None:
+        if not self._session_id:
+            return
+        record: dict[str, Any] = {
+            "seq": len(self._trace_records) + 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "stage": stage,
+        }
+        record.update({str(key): _jsonable(value) for key, value in payload.items()})
+        self._trace_records.append(record)
+        with self._trace_path_locked().open("a", encoding="utf-8", newline="") as handle:
+            handle.write(json.dumps(_jsonable(record), ensure_ascii=False) + "\n")
 
     def _append_binary_prediction_locked(
         self,
@@ -490,6 +758,7 @@ class PostFallTestArchiveService:
                 binary.frame_seq,
                 binary.frame_id,
                 frame_age_ms,
+                getattr(performance, "queue_delay_ms", None),
                 binary.decision_label,
                 binary.fall_probability,
                 binary.non_fall_probability,
@@ -621,7 +890,13 @@ class PostFallTestArchiveService:
             "state": self._state,
             "running": self._running,
             "started_at": self._started_at,
+            "running_at": self._running_at,
             "stopped_at": self._stopped_at,
+            "finalized_at": self._finalized_at,
+            "camera_id": self._camera_id,
+            "manual_session": self._manual_session,
+            "failure_stage": self._failure_stage,
+            "failure_reason": self._failure_reason,
             "total_seconds": self._total_seconds,
             "remaining_seconds": self._remaining_seconds_locked(),
             "event_root": str(self.event_root),
@@ -647,13 +922,158 @@ class PostFallTestArchiveService:
             "archive_failed": self._archive_failed_count,
             "performance_samples_count": self._performance_samples_count,
             "latest_performance": self._latest_performance,
+            "trace_count": len(self._trace_records),
+            "last_trace": self._trace_records[-1] if self._trace_records else None,
+            "manifest": self._session_manifest,
+            "artifacts": {
+                "session_manifest": str(self._session_manifest_path_locked()),
+                "trace_timeline": str(self._trace_path_locked()),
+                "summary": str(self._summary_path_locked()),
+                "report": str(self._report_path_locked()),
+                "session_summary": str(self._session_dir_locked() / "session_summary.json"),
+                "session_json": str(self._session_dir_locked() / "session.json"),
+                "presentation_result": str(self._session_dir_locked() / "presentation_result.json"),
+            },
             "performance": {
                 key: value
                 for key, value in self._performance_summary.items()
                 if not key.startswith("_")
             },
         }
+        report = self._build_session_report_locked(summary)
+        session_json = {
+            "schema_version": "post_fall_v2_detection_session.v1",
+            "session_id": self._session_id,
+            "test_session_id": self._session_id,
+            "camera_id": self._camera_id,
+            "started_at": self._started_at,
+            "running_at": self._running_at,
+            "stop_requested_at": self._stopped_at,
+            "finalized_at": self._finalized_at,
+            "duration_seconds": _elapsed_seconds(self._started_at, ended_at=self._finalized_at or self._stopped_at),
+            "status": self._state,
+            "manual_session": self._manual_session,
+            "failure_stage": self._failure_stage,
+            "failure_reason": self._failure_reason,
+        }
+        presentation = self._build_presentation_result_locked()
         _write_json(self._session_dir_locked() / "session_summary.json", summary)
+        _write_json(self._session_dir_locked() / "session.json", session_json)
+        _write_json(self._session_dir_locked() / "presentation_result.json", presentation)
+        _write_json(self._summary_path_locked(), summary)
+        self._report_path_locked().write_text(report, encoding="utf-8")
+        _write_json(self._session_manifest_path_locked(), self._session_manifest or {})
+
+    def _build_presentation_result_locked(self) -> dict[str, Any]:
+        latest = self._latest_qwen_event_record_locked()
+        if latest is None:
+            return {
+                "schema_version": "post_fall_v2_presentation_result.v1",
+                "test_session_id": self._session_id,
+                "session_id": self._session_id,
+                "camera_id": self._camera_id,
+                "analysis_status": "failed" if self._state == "failed" else "no_event",
+                "event_id": None,
+                "event_time": None,
+                "time_description_zh": self._failure_reason if self._state == "failed" else "暂无跌倒事件，检测到候选事件后将在这里显示最终结构化结果。",
+                "is_real_fall": None,
+                "fall_verdict": None,
+                "confidence": None,
+                "source": "presentation_adapter",
+            }
+        qwen = latest.get("qwen_analysis") if isinstance(latest.get("qwen_analysis"), dict) else {}
+        event = latest.get("event") if isinstance(latest.get("event"), dict) else {}
+        incident_id = str(latest.get("incident_id") or event.get("incident_id") or qwen.get("incident_id") or "")
+        event_time = (
+            latest.get("event_created_at")
+            or event.get("created_at")
+            or event.get("confirmed_at")
+            or event.get("started_at")
+            or qwen.get("request_started_at")
+        )
+        verdict = str(qwen.get("fall_verdict") or latest.get("fall_verdict") or "unclear").strip().lower()
+        analysis_status = str(qwen.get("analysis_status") or latest.get("analysis_status") or "completed").strip().lower()
+        mapped = _map_verdict_for_presentation(verdict)
+        summary = str(qwen.get("summary") or latest.get("summary") or "").strip()
+        return {
+            "schema_version": "post_fall_v2_presentation_result.v1",
+            "test_session_id": self._session_id,
+            "session_id": self._session_id,
+            "camera_id": str(latest.get("camera_id") or event.get("camera_id") or self._camera_id or ""),
+            "analysis_status": analysis_status,
+            "event_id": incident_id or None,
+            "event_time": event_time,
+            "time_description_zh": _build_time_description_zh(event_time, mapped["label"], summary),
+            "is_real_fall": mapped["is_real_fall"],
+            "fall_verdict": verdict,
+            "fall_label_zh": mapped["label"],
+            "confidence": _as_float(qwen.get("confidence") if qwen else latest.get("confidence")),
+            "source": "presentation_adapter",
+        }
+
+    def _latest_qwen_event_record_locked(self) -> dict[str, Any] | None:
+        candidates = []
+        for record in self._event_records.values():
+            qwen = record.get("qwen_analysis") if isinstance(record.get("qwen_analysis"), dict) else None
+            if qwen is None:
+                continue
+            order_key = str(record.get("qwen_completed_at") or record.get("event_created_at") or "")
+            candidates.append((order_key, record))
+        if not candidates:
+            return None
+        return dict(sorted(candidates, key=lambda item: item[0])[-1][1])
+
+    def _build_session_report_locked(self, summary: dict[str, Any]) -> str:
+        lines = [
+            "# SYSTEM E2E TEST REPORT",
+            "",
+            f"- session_id: `{summary['test_session_id']}`",
+            f"- state: `{summary['state']}`",
+            f"- started_at: `{summary.get('started_at')}`",
+            f"- stopped_at: `{summary.get('stopped_at')}`",
+            f"- total_seconds: `{summary.get('total_seconds')}`",
+            f"- remaining_seconds: `{summary.get('remaining_seconds')}`",
+            "",
+            "## Counts",
+            f"- binary_full: `{summary.get('binary_full_count')}`",
+            f"- binary_other: `{summary.get('binary_other_count')}`",
+            f"- binary_fall: `{summary.get('binary_fall_count')}`",
+            f"- binary_non_fall: `{summary.get('binary_non_fall_count')}`",
+            f"- binary_unknown: `{summary.get('binary_unknown_count')}`",
+            f"- candidate_count: `{summary.get('candidate_count')}`",
+            f"- qwen_requested: `{summary.get('qwen_requested')}`",
+            f"- qwen_completed: `{summary.get('qwen_completed')}`",
+            f"- qwen_failed: `{summary.get('qwen_failed')}`",
+            f"- qwen_timeout: `{summary.get('qwen_timeout')}`",
+            f"- trace_count: `{summary.get('trace_count')}`",
+            "",
+            "## Performance",
+            f"- latest_performance: `{summary.get('latest_performance')}`",
+            f"- performance: `{summary.get('performance')}`",
+            "",
+            "## Trace",
+        ]
+        if self._trace_records:
+            for record in self._trace_records[-20:]:
+                payload = {k: v for k, v in record.items() if k not in {"timestamp", "stage", "seq"}}
+                lines.append(
+                    f"- {record.get('timestamp')} {record.get('stage')} "
+                    f"{json.dumps(payload, ensure_ascii=False)}"
+                )
+        else:
+            lines.append("- no trace records yet")
+        lines.extend(
+            [
+                "",
+                "## Artifacts",
+                f"- SESSION_MANIFEST.json: `{summary['artifacts']['session_manifest']}`",
+                f"- TRACE_TIMELINE.jsonl: `{summary['artifacts']['trace_timeline']}`",
+                f"- SUMMARY.json: `{summary['artifacts']['summary']}`",
+                f"- TEST_REPORT.md: `{summary['artifacts']['report']}`",
+                f"- session_summary.json: `{summary['artifacts']['session_summary']}`",
+            ]
+        )
+        return "\n".join(lines) + "\n"
 
     def _append_log_locked(self, message: str) -> None:
         self._append_session_file_locked(
@@ -832,8 +1252,104 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _elapsed_ms_since(started_at: str | None, *, ended_at: str | None = None) -> float | None:
+    if not started_at:
+        return None
+    try:
+        start = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(ended_at).replace("Z", "+00:00")) if ended_at else datetime.now(timezone.utc)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return round((end - start).total_seconds() * 1000.0, 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _elapsed_seconds(started_at: str | None, *, ended_at: str | None = None) -> float | None:
+    elapsed_ms = _elapsed_ms_since(started_at, ended_at=ended_at)
+    if elapsed_ms is None:
+        return None
+    return round(elapsed_ms / 1000.0, 3)
+
+
+def _map_verdict_for_presentation(verdict: str) -> dict[str, Any]:
+    normalized = str(verdict or "unclear").strip().lower()
+    if normalized == "confirmed_fall":
+        return {"label": "真实跌倒", "is_real_fall": True}
+    if normalized in {"normal_activity", "intentional_low_posture", "non_fall"}:
+        return {"label": "非真实跌倒", "is_real_fall": False}
+    if normalized == "insufficient_visual_evidence":
+        return {"label": "视觉证据不足", "is_real_fall": None}
+    return {"label": "无法明确判断", "is_real_fall": None}
+
+
+def _build_time_description_zh(event_time: Any, fall_label: str, summary: str | None = None) -> str:
+    time_text = _format_china_time(event_time)
+    summary_text = (summary or "").strip(" 。\r\n\t")
+    if fall_label == "真实跌倒":
+        conclusion = "经视觉复核判断为真实跌倒。"
+    elif fall_label == "非真实跌倒":
+        conclusion = "经视觉复核判断为非真实跌倒。"
+    elif fall_label == "视觉证据不足":
+        conclusion = "当前关键帧视觉证据不足，建议人工复核。"
+    else:
+        conclusion = "当前结果无法明确判断，建议人工复核。"
+    if summary_text:
+        return f"{time_text}，{summary_text}，{conclusion}"
+    return f"{time_text}，检测到候选跌倒事件，{conclusion}"
+
+
+def _format_china_time(value: Any) -> str:
+    parsed = _parse_datetime(value)
+    if parsed is None:
+        return "时间未明确"
+    china = timezone(timedelta(hours=8))
+    parsed = parsed.astimezone(china)
+    return f"{parsed.year}年{parsed.month}月{parsed.day}日{parsed.hour}时{parsed.minute:02d}分"
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "unknown"
+
+
+def _compact_qwen_review(detail: Any) -> dict[str, Any]:
+    source = detail.to_record() if hasattr(detail, "to_record") else {}
+    scene_risks = source.get("scene_risks")
+    review_points = source.get("review_points")
+    return {
+        "occlusion": str(source.get("occlusion") or "unknown"),
+        "scene_risks": [str(item) for item in scene_risks[:4]]
+        if isinstance(scene_risks, list) else [],
+        "possible_help_gesture": str(source.get("possible_help_gesture") or "unknown"),
+        "summary": str(source.get("summary") or ""),
+        "review_points": [str(item) for item in review_points[:3]]
+        if isinstance(review_points, list) else [],
+        "confidence": _as_float(source.get("confidence")),
+        "analysis_status": source.get("analysis_status"),
+        "fall_verdict": source.get("fall_verdict"),
+        "high_risk_fall": source.get("high_risk_fall"),
+        "latency_ms": source.get("latency_ms"),
+        "request_started_at": source.get("request_started_at"),
+        "completed_at": source.get("completed_at"),
+        "error_message": source.get("error_message"),
+        "qwen_start_frames_received": source.get("qwen_start_frames_received"),
+        "qwen_end_frames_received": source.get("qwen_end_frames_received"),
+        "frames_received_during_qwen": source.get("frames_received_during_qwen"),
+    }
 
 
 def _write_images(output_dir: Path, images: list[QwenImageInput]) -> list[str]:

@@ -725,7 +725,7 @@ def _bbox(evidence: EvidencePackage) -> list[float] | None:
 
 
 def _join_url(base_url: str, path: str) -> str:
-    normalized_path = str(path or "").strip() or "/video-bridge/fall-events"
+    normalized_path = str(path or "").strip() or "/api/integrations/fall-detection/alerts"
     if not normalized_path.startswith("/"):
         normalized_path = f"/{normalized_path}"
     return f"{str(base_url or '').rstrip('/')}{normalized_path}"

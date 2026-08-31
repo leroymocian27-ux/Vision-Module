@@ -30,6 +30,11 @@ class TestStartRequest(BaseModel):
         return self.hours * 3600 + self.minutes * 60 + self.seconds
 
 
+class DetectionSessionStartRequest(BaseModel):
+    camera_id: str = Field(default="camera_01")
+    source_url: str | None = None
+
+
 @router.get("/status")
 def control_status(
     camera_id: str = "camera_01",
@@ -132,11 +137,45 @@ def stop_test(runtime: Runtime = Depends(get_runtime)) -> dict:
     return archive.stop_test().__dict__
 
 
+@router.get("/session/status")
+def detection_session_status(
+    camera_id: str = "camera_01",
+    runtime: Runtime = Depends(get_runtime),
+) -> dict:
+    orchestrator = _session_orchestrator(runtime)
+    return orchestrator.status(camera_id)
+
+
+@router.post("/session/start")
+def start_detection_session(
+    request: DetectionSessionStartRequest,
+    runtime: Runtime = Depends(get_runtime),
+) -> dict:
+    orchestrator = _session_orchestrator(runtime)
+    return orchestrator.start(camera_id=request.camera_id, source_url=request.source_url)
+
+
+@router.post("/session/stop")
+def stop_detection_session(
+    request: DetectionSessionStartRequest | None = None,
+    runtime: Runtime = Depends(get_runtime),
+) -> dict:
+    orchestrator = _session_orchestrator(runtime)
+    return orchestrator.stop(camera_id=request.camera_id if request else None)
+
+
 def _post_fall_service(runtime: Runtime):
     service = runtime.post_fall_v2_runtime_service
     if service is None:
         raise HTTPException(status_code=503, detail="Post-Fall V2 runtime unavailable")
     return service
+
+
+def _session_orchestrator(runtime: Runtime):
+    orchestrator = runtime.detection_session_orchestrator
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Detection session orchestrator unavailable")
+    return orchestrator
 
 
 def _validate_model_kind(kind: str) -> None:

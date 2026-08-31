@@ -20,28 +20,47 @@ def evaluate_fall_safety(
     elapsed_ms = max(0, int(observation_elapsed_ms))
     detail = event.vlm_analysis
     verdict = detail.fall_verdict if detail is not None else None
+    effective_verdict = verdict
+    abnormal_ground_conflict = False
 
     if detail is not None and detail.analysis_status == "completed":
         high_risk_fall = _is_high_risk_fall(getattr(detail, "high_risk_fall", 0))
-        explicit_non_fall = (
+        abnormal_ground_conflict = bool(
             (
-                verdict == "non_fall"
-                and not high_risk_fall
-                and detail.fall_transition_visible is not True
-            )
-            or
-            (
-                verdict == "normal_activity"
-                and detail.posture_state in _NORMAL_POSTURES
-                and detail.activity.strip().lower() not in {"", "unknown", "unclear"}
+                detail.posture_state in _GROUND_POSTURES
+                and detail.persistent_ground_state == "observed"
+                and detail.recovery_observed is False
+                and detail.intentional_action_evidence is not True
             )
             or (
-                verdict == "intentional_low_posture"
-                and detail.intentional_action_evidence is True
+                detail.posture_state in {"lying", "ground_low"}
+                and detail.scene_type
+                not in {"walking", "standing", "seated_rest", "intentional_low_posture", "intentional_lying", "squatting", "bending"}
             )
         )
+        if verdict == "non_fall" and abnormal_ground_conflict:
+            effective_verdict = "unclear"
+
+        verified_normal_activity = (
+            effective_verdict in {"non_fall", "normal_activity"}
+            and detail.scene_type in {"walking", "standing", "seated_rest"}
+            and detail.posture_state in _NORMAL_POSTURES
+            and detail.fall_transition_visible is not True
+            and not abnormal_ground_conflict
+        )
+        verified_intentional_activity = (
+            effective_verdict in {"non_fall", "intentional_low_posture"}
+            and detail.scene_type in {"intentional_low_posture", "intentional_lying"}
+            and detail.intentional_action_evidence is True
+            and detail.fall_transition_visible is not True
+            and not abnormal_ground_conflict
+        )
+        explicit_non_fall = (
+            not high_risk_fall
+            and (verified_normal_activity or verified_intentional_activity)
+        )
         transition_evidence = detail.fall_transition_visible is True
-        qwen_confirmed_high_risk = verdict == "confirmed_fall" and high_risk_fall
+        qwen_confirmed_high_risk = effective_verdict == "confirmed_fall" and high_risk_fall
         if transition_evidence and (explicit_non_fall or detail.intentional_action_evidence is True):
             return FallSafetyDecision(
                 outcome="observe",
@@ -49,7 +68,7 @@ def evaluate_fall_safety(
                 alert_level="none",
                 reason="semantic_review_conflicting_transition_and_intentional_evidence",
                 observation_elapsed_ms=elapsed_ms,
-                qwen_verdict=verdict,
+                qwen_verdict=effective_verdict,
                 review_required=True,
             )
         if explicit_non_fall:
@@ -59,7 +78,7 @@ def evaluate_fall_safety(
                 alert_level="none",
                 reason="semantic_review_explicit_non_fall",
                 observation_elapsed_ms=elapsed_ms,
-                qwen_verdict=verdict,
+                qwen_verdict=effective_verdict,
             )
 
         if qwen_confirmed_high_risk:
@@ -70,20 +89,27 @@ def evaluate_fall_safety(
                 alert_level="high",
                 reason="qwen_high_risk_confirmed_fall",
                 observation_elapsed_ms=elapsed_ms,
-                qwen_verdict=verdict,
+                qwen_verdict=effective_verdict,
             )
-        if verdict == "confirmed_fall" and not high_risk_fall:
+        if effective_verdict == "confirmed_fall" and not high_risk_fall:
             return FallSafetyDecision(
                 outcome="observe",
                 path="uncertain_evidence",
                 alert_level="none",
                 reason="confirmed_fall_without_high_risk_gate",
                 observation_elapsed_ms=elapsed_ms,
-                qwen_verdict=verdict,
+                qwen_verdict=effective_verdict,
                 review_required=True,
             )
 
-    binary_persisting = binary_state in _ACTIVE_BINARY_STATES
+    persistent_ground_evidence = bool(
+        detail is not None
+        and detail.analysis_status == "completed"
+        and detail.posture_state in _GROUND_POSTURES
+        and detail.persistent_ground_state == "observed"
+        and detail.recovery_observed is False
+    )
+    binary_persisting = binary_state in _ACTIVE_BINARY_STATES or persistent_ground_evidence
     if binary_persisting and elapsed_ms >= max(1, int(post_fall_alert_min_ms)):
         if not followup_complete:
             return FallSafetyDecision(
@@ -98,21 +124,33 @@ def evaluate_fall_safety(
         persistent_visual_evidence = bool(
             detail is not None
             and detail.analysis_status == "completed"
-            and verdict == "unclear"
+            and effective_verdict == "unclear"
             and detail.posture_state in _GROUND_POSTURES
             and detail.persistent_ground_state == "observed"
-            and detail.recovery_observed is not True
-            and detail.intentional_action_evidence is not True
+            and detail.recovery_observed is False
+            and detail.intentional_action_evidence is False
+            and not (
+                detail.scene_type
+                in {
+                    "walking",
+                    "standing",
+                    "seated_rest",
+                    "intentional_low_posture",
+                    "intentional_lying",
+                    "squatting",
+                    "bending",
+                }
+                and detail.intentional_action_evidence is True
+            )
         )
         if persistent_visual_evidence:
             return FallSafetyDecision(
-                outcome="observe",
-                path="uncertain_evidence",
-                alert_level="none",
-                reason="persistent_visual_ground_abnormality_requires_high_risk_gate",
+                outcome="alert",
+                path="post_fall_persistent_abnormality",
+                alert_level="high",
+                reason="persistent_post_fall_abnormality_without_intentional_evidence",
                 observation_elapsed_ms=elapsed_ms,
-                qwen_verdict=verdict,
-                review_required=True,
+                qwen_verdict=effective_verdict,
             )
 
     return FallSafetyDecision(

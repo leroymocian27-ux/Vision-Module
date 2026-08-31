@@ -5,11 +5,13 @@ import time
 
 import cv2
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_runtime
 from app.camera.frame_freshness import FreshnessThresholds, frame_freshness
 from app.camera.source_models import is_mjpeg_source, is_mock_source, is_rtsp_source, mask_source_url
 from app.core.runtime import Runtime
+from app.streaming.display_frame_cache import get_display_frame_cache
 from app.schemas.stream import (
     StreamControlResponse,
     StreamHostSwitchRequest,
@@ -98,6 +100,7 @@ def stream_source(
 @router.get("/stream/latest-frame.jpg")
 def latest_stream_frame(
     camera_id: str = "camera_01",
+    display: bool = False,
     runtime: Runtime = Depends(get_runtime),
 ) -> Response:
     buffer = runtime.source_manager.get_buffer(camera_id)
@@ -120,26 +123,88 @@ def latest_stream_frame(
     )
     freshness = frame_freshness(packet.age_ms, thresholds)
     content = packet.jpeg_bytes
-    if content is None:
+    resized_for_display = False
+    if display:
+        resized_for_display = int(runtime.settings.display_frame_height or 0) > 0 and packet.height > runtime.settings.display_frame_height
+        try:
+            display_entry = get_display_frame_cache().render(packet, runtime.settings)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        content = display_entry.content
+        get_display_frame_cache().mark_served(camera_id, consumer="latest_frame")
+    elif content is None:
         ok, encoded = cv2.imencode(".jpg", packet.frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if not ok:
             raise HTTPException(status_code=500, detail="LATEST_FRAME_ENCODE_FAILED")
         content = encoded.tobytes()
-    return Response(
-        content=content,
-        media_type="image/jpeg",
+    headers = {
+        "X-Camera-Id": camera_id,
+        "X-Frame-Id": str(packet.seq),
+        "X-Frame-Seq": str(packet.seq),
+        "X-Frame-Age-Ms": str(packet.age_ms),
+        "X-Frame-Status": freshness.frame_status,
+        "X-Source-Generation": str(packet.source_generation),
+        "X-Frame-Is-Stale": "true" if freshness.is_stale else "false",
+        "X-Frame-Captured-At": packet.captured_at_iso,
+        "X-Frame-Received-At": packet.received_at_iso,
+        "X-Source-Protocol": _source_protocol(packet.source),
+        "X-Raw-Jpeg-Reused": "true" if packet.jpeg_bytes is not None else "false",
+    }
+    if display:
+        headers.update(
+            {
+                "X-Display-Resized": "true" if resized_for_display else "false",
+                "X-Display-Cache-Hit": "true" if display_entry.cache_hit else "false",
+                "X-Display-Encode-Ms": str(display_entry.encode_ms),
+            }
+        )
+    return Response(content=content, media_type="image/jpeg", headers=headers)
+
+
+@router.get("/stream/display.mjpg")
+def display_stream(
+    camera_id: str = "camera_01",
+    fps: float | None = None,
+    runtime: Runtime = Depends(get_runtime),
+) -> StreamingResponse:
+    configured_fps = fps if fps is not None else getattr(runtime.settings, "display_mjpeg_fps", None)
+    target_fps = max(1.0, min(float(configured_fps or runtime.settings.webrtc_video_fps or 12), 30.0))
+    interval = 1.0 / target_fps
+    boundary = "visiondisplay"
+
+    def frames():
+        last_seq = 0
+        while True:
+            started = time.monotonic()
+            buffer = runtime.source_manager.get_buffer(camera_id)
+            packet = buffer.latest() if buffer else None
+            if packet is not None and packet.seq != last_seq:
+                try:
+                    display_entry = get_display_frame_cache().render(packet, runtime.settings)
+                except ValueError:
+                    continue
+                content = display_entry.content
+                last_seq = packet.seq
+                get_display_frame_cache().mark_served(camera_id, consumer="display_mjpg")
+                yield (
+                    f"--{boundary}\r\n"
+                    "Content-Type: image/jpeg\r\n"
+                    f"X-Camera-Id: {camera_id}\r\n"
+                    f"X-Frame-Seq: {packet.seq}\r\n"
+                    f"X-Frame-Age-Ms: {packet.age_ms}\r\n"
+                    f"X-Display-Cache-Hit: {'true' if display_entry.cache_hit else 'false'}\r\n"
+                    f"X-Display-Encode-Ms: {display_entry.encode_ms}\r\n"
+                    f"Content-Length: {len(content)}\r\n\r\n"
+                ).encode("ascii") + content + b"\r\n"
+            elapsed = time.monotonic() - started
+            time.sleep(max(0.005, interval - elapsed))
+
+    return StreamingResponse(
+        frames(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
         headers={
-            "X-Camera-Id": camera_id,
-            "X-Frame-Id": str(packet.seq),
-            "X-Frame-Seq": str(packet.seq),
-            "X-Frame-Age-Ms": str(packet.age_ms),
-            "X-Frame-Status": freshness.frame_status,
-            "X-Source-Generation": str(packet.source_generation),
-            "X-Frame-Is-Stale": "true" if freshness.is_stale else "false",
-            "X-Frame-Captured-At": packet.captured_at_iso,
-            "X-Frame-Received-At": packet.received_at_iso,
-            "X-Source-Protocol": _source_protocol(packet.source),
-            "X-Raw-Jpeg-Reused": "true" if packet.jpeg_bytes is not None else "false",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "X-Display-Target-Fps": str(target_fps),
         },
     )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import queue
 import re
 import threading
@@ -8,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import cv2
 import requests
@@ -45,6 +47,10 @@ class FallEventReporterService:
         self._last_snapshot_url: str | None = None
         self._last_error: str | None = None
         self._last_payload: dict[str, Any] | None = None
+        self._main_system_reachable: bool | None = None
+        self._main_system_last_check_at: str | None = None
+        self._main_system_last_success_at: str | None = None
+        self._main_system_last_error: str | None = None
         self._latest_alert_by_camera: dict[str, dict[str, Any]] = {}
         self._active_alerts_by_key: dict[str, dict[str, Any]] = {}
         self._recent_alerts_by_key: dict[str, dict[str, Any]] = {}
@@ -55,7 +61,7 @@ class FallEventReporterService:
         self._enabled = settings.main_system_alert_enabled
         self._dry_run = settings.main_system_report_dry_run
         self._endpoint_base_url = settings.main_system_base_url.rstrip("/")
-        path = settings.main_system_fall_event_path.strip() or "/video-bridge/fall-events"
+        path = _alert_path_from_settings(settings)
         self._endpoint_path = path if path.startswith("/") else f"/{path}"
         self._lock = threading.Lock()
         self._last_outbox_retry_at = 0.0
@@ -64,6 +70,9 @@ class FallEventReporterService:
     def start(self) -> None:
         if not self.enabled:
             logger.info("fall_event_reporter_disabled")
+            return
+        if not self._endpoint_base_url:
+            logger.warning("fall_event_reporter_no_main_system_base_url")
             return
         if self._worker and self._worker.is_alive():
             return
@@ -194,43 +203,102 @@ class FallEventReporterService:
                 return
 
     def _post_payload(self, payload: dict[str, Any]) -> None:
+        external_payload = self._external_alert_payload(payload)
+        event_id = self._event_id(external_payload)
         if self.dry_run:
-            self._record_dry_run(payload)
+            self._persist_main_system_files(external_payload, status="dry_run", http_status=None, error=None)
+            self._record_dry_run(external_payload)
             logger.info(
-                "fall_event_report_dry_run skipped_real_post target=%s event_type=%s track_id=%s incident_id=%s",
+                "main_system_alert_queued event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s dry_run=true",
+                event_id,
                 self._endpoint_url(),
-                payload.get("event_type"),
-                payload.get("track_id"),
-                payload.get("incident_id"),
+                0,
+                None,
+                None,
             )
             return
-        timeout = self.request_timeout_seconds()
+        if not self._endpoint_base_url:
+            error = "MAIN_SYSTEM_BASE_URL is not configured"
+            self._persist_main_system_files(external_payload, status="failed", http_status=None, error=error)
+            self._record_post_result(external_payload, "configuration_error", error)
+            logger.warning(
+                "main_system_alert_failed event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                event_id,
+                self._endpoint_url(),
+                0,
+                None,
+                error,
+            )
+            return
+        attempt = self._next_delivery_attempt(external_payload)
+        self._persist_main_system_files(external_payload, status="sending", http_status=None, error=None, attempt=attempt)
+        logger.info(
+            "main_system_alert_sending event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+            event_id,
+            self._endpoint_url(),
+            attempt,
+            None,
+            None,
+        )
         try:
             response = requests.post(
                 self._endpoint_url(),
-                json=payload,
+                json=external_payload,
                 headers=self._alert_headers(),
-                timeout=timeout,
+                timeout=self.request_timeout(),
             )
             if response.status_code >= 400:
+                error = response.text[:500]
                 logger.warning(
-                    "fall_event_report_failed status=%s body=%s incident_id=%s",
+                    "main_system_alert_retry event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                    event_id,
+                    self._endpoint_url(),
+                    attempt,
                     response.status_code,
-                    response.text[:500],
-                    payload.get("incident_id"),
+                    error,
                 )
-                self._record_post_result(payload, f"http_{response.status_code}", response.text[:500])
+                self._persist_main_system_files(external_payload, status="retry_wait", http_status=response.status_code, error=error, attempt=attempt)
+                self._record_post_result(external_payload, f"http_{response.status_code}", error, http_status=response.status_code)
                 return
-            self._record_post_result(payload, f"http_{response.status_code}", None)
+            ack = _decode_json_response(response.text)
+            ack_event_id = str((ack or {}).get("event_id") or "").strip()
+            if ack_event_id and ack_event_id != event_id:
+                error = f"ACK event_id mismatch: expected {event_id}, got {ack_event_id}"
+                logger.warning(
+                    "main_system_alert_retry event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                    event_id,
+                    self._endpoint_url(),
+                    attempt,
+                    response.status_code,
+                    error,
+                )
+                self._persist_main_system_files(external_payload, status="retry_wait", http_status=response.status_code, error=error, attempt=attempt)
+                self._record_post_result(external_payload, "ack_event_id_mismatch", error, http_status=response.status_code)
+                return
+            status_name = "duplicate_ack" if bool((ack or {}).get("duplicate")) else "delivered"
+            self._persist_main_system_files(external_payload, status="delivered", http_status=response.status_code, error=None, attempt=attempt, ack=ack)
+            self._record_post_result(external_payload, status_name, None, http_status=response.status_code)
             logger.info(
-                "fall_event_reported status=%s incident_id=%s alarm_response=%s",
+                "%s event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                "main_system_alert_duplicate_ack" if status_name == "duplicate_ack" else "main_system_alert_delivered",
+                event_id,
+                self._endpoint_url(),
+                attempt,
                 response.status_code,
-                payload.get("incident_id"),
-                response.text[:500],
+                None,
             )
         except requests.RequestException as exc:
-            logger.warning("fall_event_report_request_error incident_id=%s error=%s", payload.get("incident_id"), exc)
-            self._record_post_result(payload, "request_error", str(exc))
+            error = str(exc)
+            logger.warning(
+                "main_system_alert_retry event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                event_id,
+                self._endpoint_url(),
+                attempt,
+                None,
+                error,
+            )
+            self._persist_main_system_files(external_payload, status="retry_wait", http_status=None, error=error, attempt=attempt)
+            self._record_post_result(external_payload, "request_error", error)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -242,6 +310,7 @@ class FallEventReporterService:
                 "endpoint": endpoint,
                 "endpoint_base_url": self._endpoint_base_url,
                 "endpoint_path": self._endpoint_path,
+                "health_endpoint": self._health_url_locked(),
                 "token_header": self.settings.main_system_alert_token_header,
                 "queue_size": self._queue.qsize(),
                 "cooldown_seconds": self.settings.main_system_alert_cooldown_seconds,
@@ -252,6 +321,13 @@ class FallEventReporterService:
                 "last_post_body": self._last_error,
                 "last_payload": self._last_payload,
                 "outbox": self.alert_outbox.status().__dict__ if self.alert_outbox is not None else None,
+                "main_system_enabled": self._enabled and bool(self._endpoint_base_url),
+                "main_system_base_url": self._endpoint_base_url,
+                "main_system_reachable": self._main_system_reachable,
+                "main_system_last_check_at": self._main_system_last_check_at,
+                "main_system_last_success_at": self._main_system_last_success_at,
+                "main_system_last_error": self._main_system_last_error,
+                "main_system_pending_count": self._pending_count_locked(),
             }
 
     @property
@@ -271,9 +347,10 @@ class FallEventReporterService:
         path: str,
         enabled: bool = True,
         dry_run: bool | None = None,
+        start_worker: bool = True,
     ) -> dict[str, Any]:
         normalized_base = base_url.rstrip("/")
-        normalized_path = path.strip() or "/video-bridge/fall-events"
+        normalized_path = path.strip() or "/api/integrations/fall-detection/alerts"
         if not normalized_path.startswith("/"):
             normalized_path = f"/{normalized_path}"
         with self._lock:
@@ -284,7 +361,7 @@ class FallEventReporterService:
             self._endpoint_path = normalized_path
             endpoint = f"{self._endpoint_base_url}{self._endpoint_path}"
         logger.info("fall_event_reporter_endpoint_updated enabled=%s endpoint=%s", enabled, endpoint)
-        if enabled:
+        if enabled and start_worker:
             self.start()
         return self.status()
 
@@ -303,7 +380,91 @@ class FallEventReporterService:
         logger.info("fall_event_reporter_endpoint_updated endpoint=%s", self._endpoint_url())
 
     def request_timeout_seconds(self) -> float:
-        return max(0.2, self.settings.main_system_alert_timeout_ms / 1000)
+        return max(0.2, float(self.settings.main_system_read_timeout_sec))
+
+    def request_timeout(self) -> tuple[float, float]:
+        return (
+            max(0.2, float(self.settings.main_system_connect_timeout_sec)),
+            max(0.2, float(self.settings.main_system_read_timeout_sec)),
+        )
+
+    def check_health(self) -> dict[str, Any]:
+        url = self._health_url()
+        checked_at = _utc_now()
+        if not self._endpoint_base_url:
+            error = "MAIN_SYSTEM_BASE_URL is not configured"
+            with self._lock:
+                self._main_system_reachable = False
+                self._main_system_last_check_at = checked_at
+                self._main_system_last_error = error
+            logger.warning(
+                "main_system_health_failed event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                None,
+                url,
+                0,
+                None,
+                error,
+            )
+            return {"ok": False, "url": url, "status_code": None, "error": error, "checked_at": checked_at}
+        try:
+            response = requests.get(url, headers=self._alert_headers(), timeout=self.request_timeout())
+        except requests.RequestException as exc:
+            error = str(exc)
+            with self._lock:
+                self._main_system_reachable = False
+                self._main_system_last_check_at = checked_at
+                self._main_system_last_error = error
+            logger.warning(
+                "main_system_health_failed event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+                None,
+                url,
+                0,
+                None,
+                error,
+            )
+            return {"ok": False, "url": url, "status_code": None, "error": error, "checked_at": checked_at}
+        ok = response.status_code < 400
+        error = None if ok else response.text[:500]
+        with self._lock:
+            self._main_system_reachable = ok
+            self._main_system_last_check_at = checked_at
+            self._main_system_last_error = error
+            if ok:
+                self._main_system_last_success_at = checked_at
+        logger.log(
+            20 if ok else 30,
+            "%s event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+            "main_system_health_ok" if ok else "main_system_health_failed",
+            None,
+            url,
+            0,
+            response.status_code,
+            error,
+        )
+        return {"ok": ok, "url": url, "status_code": response.status_code, "error": error, "checked_at": checked_at, "body": response.text[:1000]}
+
+    def retry_pending_alerts(self, *, include_failed: bool = True, limit: int = 8) -> dict[str, Any]:
+        if self.alert_outbox is None or not self.alert_outbox.enabled:
+            return {"queued": 0, "event_ids": [], "error": "alert_outbox_disabled"}
+        queued: list[str] = []
+        for payload in self.alert_outbox.pending_payloads(limit=limit, include_failed=include_failed):
+            event_id = self._event_id(payload)
+            try:
+                self._queue.put_nowait(payload)
+            except queue.Full:
+                break
+            queued.append(event_id)
+        if queued and self.enabled:
+            self.start()
+        return {"queued": len(queued), "event_ids": queued, "include_failed": include_failed}
+
+    def send_external_alert_once(self, payload: dict[str, Any]) -> dict[str, Any]:
+        external_payload = self._external_alert_payload(payload)
+        self._post_payload(external_payload)
+        return {
+            "event_id": self._event_id(external_payload),
+            "delivery": self._delivery_record(external_payload),
+        }
 
     def latest_alert(self, camera_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -345,15 +506,25 @@ class FallEventReporterService:
 
     def _record_pending(self, payload: dict[str, Any]) -> None:
         self._update_incident_delivery_state(payload, sent_to_main=False)
+        external_payload = self._external_alert_payload(payload)
+        self._persist_main_system_files(external_payload, status="pending", http_status=None, error=None)
         if self.alert_outbox is not None:
-            self.alert_outbox.record_pending(payload)
+            self.alert_outbox.record_pending(external_payload)
         with self._lock:
             self._last_post_status = "queued"
-            self._last_incident_id = str(payload.get("incident_id") or "")
+            self._last_incident_id = self._event_id(external_payload)
             snapshot_url = payload.get("snapshot_url")
             self._last_snapshot_url = str(snapshot_url) if snapshot_url else None
             self._last_error = None
-            self._last_payload = dict(payload)
+            self._last_payload = dict(external_payload)
+        logger.info(
+            "main_system_alert_queued event_id=%s main_system_url=%s attempt=%s http_status=%s error=%s",
+            self._event_id(external_payload),
+            self._endpoint_url(),
+            0,
+            None,
+            None,
+        )
 
     def _record_poll_only(self, payload: dict[str, Any]) -> None:
         self._update_incident_delivery_state(payload, sent_to_main=False)
@@ -371,19 +542,19 @@ class FallEventReporterService:
             self.alert_outbox.record_result(payload, "dry_run_skipped", None)
         with self._lock:
             self._last_post_status = "dry_run_skipped"
-            self._last_incident_id = str(payload.get("incident_id") or "")
+            self._last_incident_id = self._event_id(payload)
             snapshot_url = payload.get("snapshot_url")
             self._last_snapshot_url = str(snapshot_url) if snapshot_url else None
             self._last_error = None
             self._last_payload = dict(payload)
 
-    def _record_post_result(self, payload: dict[str, Any], status: str, error: str | None) -> None:
-        self._update_incident_delivery_state(payload, sent_to_main=status.startswith("http_2"))
+    def _record_post_result(self, payload: dict[str, Any], status: str, error: str | None, *, http_status: int | None = None) -> None:
+        self._update_incident_delivery_state(payload, sent_to_main=status in {"delivered", "duplicate_ack"} or status.startswith("http_2"))
         if self.alert_outbox is not None:
-            self.alert_outbox.record_result(payload, status, error)
+            self.alert_outbox.record_result(payload, status, error, http_status=http_status)
         with self._lock:
             self._last_post_status = status
-            self._last_incident_id = str(payload.get("incident_id") or "")
+            self._last_incident_id = self._event_id(payload)
             snapshot_url = payload.get("snapshot_url")
             self._last_snapshot_url = str(snapshot_url) if snapshot_url else None
             self._last_error = error
@@ -1094,6 +1265,193 @@ class FallEventReporterService:
                     event["snapshot_path"] = snapshot_path
         return updated
 
+    def _external_alert_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if str(payload.get("schema_version") or "") == "1.0" and payload.get("event_id"):
+            updated = copy.deepcopy(payload)
+            updated["sent_at"] = _utc_now()
+            return updated
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        event_metadata = metadata.get("event") if isinstance(metadata.get("event"), dict) else {}
+        fall_decision = metadata.get("fall_decision") if isinstance(metadata.get("fall_decision"), dict) else {}
+        alarm_preview = metadata.get("alarm_preview") if isinstance(metadata.get("alarm_preview"), dict) else {}
+        temporal = metadata.get("temporal") if isinstance(metadata.get("temporal"), dict) else {}
+        qwen_review = (
+            payload.get("qwen_review")
+            if isinstance(payload.get("qwen_review"), dict)
+            else event_metadata.get("qwen_review")
+            if isinstance(event_metadata.get("qwen_review"), dict)
+            else temporal.get("qwen")
+            if isinstance(temporal.get("qwen"), dict)
+            else {}
+        )
+        safety_decision = fall_decision.get("safety_decision") if isinstance(fall_decision.get("safety_decision"), dict) else {}
+        binary_evidence = temporal.get("binary_evidence") or fall_decision.get("binary_evidence")
+        if not isinstance(binary_evidence, dict):
+            binary_evidence = {}
+        binary_result = {
+            "fall_probability": payload.get("fall_prob") or fall_decision.get("fall_probability"),
+            "threshold": binary_evidence.get("threshold") or fall_decision.get("threshold"),
+            "positive_count": binary_evidence.get("positive_count"),
+            "consecutive_positive_count": binary_evidence.get("consecutive_positive_count"),
+            "max_fall_probability": binary_evidence.get("max_fall_probability"),
+        }
+        evidence = []
+        if binary_evidence:
+            evidence.append({"type": "binary_evidence"})
+        keyframes = event_metadata.get("keyframes")
+        if isinstance(keyframes, dict):
+            frames = keyframes.get("frames")
+            evidence.append({
+                "type": "keyframes",
+                "status": keyframes.get("status"),
+                "count": len(frames) if isinstance(frames, list) else None,
+            })
+        event_id = str(payload.get("incident_id") or fall_decision.get("incident_id") or event_metadata.get("incident_id") or "").strip()
+        event_time = str(payload.get("timestamp") or event_metadata.get("event_created_at") or event_metadata.get("timestamp") or _utc_now())
+        confidence = _as_float(
+            qwen_review.get("confidence")
+            if isinstance(qwen_review, dict)
+            else None
+        )
+        if confidence is None:
+            confidence = _as_float(payload.get("fall_prob") or fall_decision.get("fall_probability"))
+        summary = str(
+            payload.get("summary")
+            or payload.get("summary_zh")
+            or payload.get("description_zh")
+            or fall_decision.get("vlm_summary")
+            or (qwen_review.get("summary") if isinstance(qwen_review, dict) else "")
+            or ""
+        ).strip()
+        recommended_action = str(
+            fall_decision.get("recommended_action")
+            or (qwen_review.get("recommended_action") if isinstance(qwen_review, dict) else "")
+            or "emergency_alert"
+        ).strip()
+        fall_verdict = str(
+            fall_decision.get("fall_verdict")
+            or (qwen_review.get("fall_verdict") if isinstance(qwen_review, dict) else "")
+            or "confirmed_fall"
+        ).strip()
+        analysis_status = str(
+            fall_decision.get("vlm_status")
+            or (qwen_review.get("analysis_status") if isinstance(qwen_review, dict) else "")
+            or "completed"
+        ).strip()
+        public_qwen_review = _compact_qwen_review(qwen_review)
+        public_legacy_payload = {
+            "event_type": payload.get("event_type"),
+            "state": payload.get("state"),
+            "status": payload.get("status"),
+            "fall_detected": True,
+            "fall_prob": payload.get("fall_prob") or fall_decision.get("fall_probability"),
+            "track_id": payload.get("track_id") or event_metadata.get("track_id"),
+            "incident_id": event_id,
+            "timestamp": payload.get("timestamp") or event_metadata.get("timestamp"),
+            "summary": summary,
+            "qwen_review": public_qwen_review,
+        }
+        alert = {
+            "schema_version": "1.0",
+            "event_id": event_id,
+            "incident_id": event_id,
+            "source": "camera-service",
+            "camera_id": str(payload.get("camera_id") or event_metadata.get("camera_id") or self.settings.default_camera_id),
+            "track_id": payload.get("track_id") or event_metadata.get("track_id"),
+            "event_time": event_time,
+            "sent_at": _utc_now(),
+            "alert_type": "fall",
+            "alert_level": str(safety_decision.get("alert_level") or "high"),
+            "safety_outcome": "alert",
+            "fall_verdict": fall_verdict,
+            "confidence": confidence,
+            "summary": summary,
+            "recommended_action": recommended_action,
+            "analysis_status": analysis_status,
+            "binary_result": binary_result,
+            "qwen_review": public_qwen_review,
+            "evidence": evidence,
+            "legacy_payload": public_legacy_payload,
+        }
+        if bool(payload.get("test_event")):
+            alert["test_event"] = True
+        return alert
+
+    def _persist_main_system_files(
+        self,
+        payload: dict[str, Any],
+        *,
+        status: str,
+        http_status: int | None,
+        error: str | None,
+        attempt: int | None = None,
+        ack: dict[str, Any] | None = None,
+    ) -> None:
+        event_id = self._event_id(payload)
+        camera_id = str(payload.get("camera_id") or self.settings.default_camera_id)
+        if not event_id:
+            return
+        event_dir = Path(self.settings.test_event_root) / self._safe_slug(camera_id) / self._safe_slug(event_id)
+        try:
+            event_dir.mkdir(parents=True, exist_ok=True)
+            _write_json_atomic(event_dir / "main_system_alert.json", payload)
+            qwen_review = payload.get("qwen_review")
+            qwen_path = event_dir / "qwen_review.json"
+            if isinstance(qwen_review, dict) and qwen_review and not qwen_path.exists():
+                _write_json_atomic(qwen_path, qwen_review)
+            previous = _read_json_file(event_dir / "main_system_delivery.json")
+            attempts = int(previous.get("attempts") or 0)
+            if attempt is not None:
+                attempts = max(attempts, int(attempt))
+            delivery = {
+                "event_id": event_id,
+                "status": status,
+                "attempts": attempts,
+                "last_http_status": http_status,
+                "last_error": error,
+                "last_attempt_at": _utc_now() if status in {"sending", "retry_wait", "failed", "delivered"} else previous.get("last_attempt_at"),
+                "delivered_at": _utc_now() if status == "delivered" else previous.get("delivered_at"),
+                "main_system_url": self._endpoint_url(),
+                "ack": ack,
+            }
+            _write_json_atomic(event_dir / "main_system_delivery.json", delivery)
+        except Exception:
+            logger.exception("main_system_delivery_file_write_failed event_id=%s", event_id)
+
+    def _next_delivery_attempt(self, payload: dict[str, Any]) -> int:
+        event_id = self._event_id(payload)
+        camera_id = str(payload.get("camera_id") or self.settings.default_camera_id)
+        event_dir = Path(self.settings.test_event_root) / self._safe_slug(camera_id) / self._safe_slug(event_id)
+        previous = _read_json_file(event_dir / "main_system_delivery.json")
+        return int(previous.get("attempts") or 0) + 1
+
+    def _delivery_record(self, payload: dict[str, Any]) -> dict[str, Any]:
+        event_id = self._event_id(payload)
+        camera_id = str(payload.get("camera_id") or self.settings.default_camera_id)
+        if not event_id:
+            return {}
+        event_dir = Path(self.settings.test_event_root) / self._safe_slug(camera_id) / self._safe_slug(event_id)
+        return _read_json_file(event_dir / "main_system_delivery.json")
+
+    def _event_id(self, payload: dict[str, Any]) -> str:
+        return str(payload.get("event_id") or payload.get("incident_id") or "").strip()
+
+    def _health_url(self) -> str:
+        with self._lock:
+            return self._health_url_locked()
+
+    def _health_url_locked(self) -> str:
+        path = str(getattr(self.settings, "main_system_health_path", "/api/integrations/fall-detection/health") or "").strip()
+        if path and not path.startswith("/"):
+            path = f"/{path}"
+        return f"{self._endpoint_base_url}{path}"
+
+    def _pending_count_locked(self) -> int:
+        if self.alert_outbox is None:
+            return self._queue.qsize()
+        status = self.alert_outbox.status()
+        return int(status.pending_count) + int(getattr(status, "retry_wait_count", 0)) + self._queue.qsize()
+
     def _save_snapshot(self, camera_id: str, track_id: str, timestamp_slug: str) -> tuple[str | None, str | None]:
         try:
             buffer = self.source_manager.get_buffer(camera_id)
@@ -1265,3 +1623,67 @@ def _post_fall_high_risk_gate(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip() == "1"
     return False
+
+
+def _compact_qwen_review(review: Any) -> dict[str, Any]:
+    """Keep only the small, user-facing Qwen review contract."""
+    source = review if isinstance(review, dict) else {}
+    scene_risks = source.get("scene_risks")
+    review_points = source.get("review_points")
+    return {
+        "occlusion": str(source.get("occlusion") or "unknown"),
+        "scene_risks": [str(item) for item in scene_risks[:4]]
+        if isinstance(scene_risks, list) else [],
+        "possible_help_gesture": str(
+            source.get("possible_help_gesture") or "unknown"
+        ),
+        "summary": str(source.get("summary") or ""),
+        "review_points": [str(item) for item in review_points[:3]]
+        if isinstance(review_points, list) else [],
+        "confidence": _as_float(source.get("confidence")),
+    }
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _alert_path_from_settings(settings: Settings) -> str:
+    alert_path = str(getattr(settings, "main_system_alert_path", "") or "").strip()
+    legacy_path = str(getattr(settings, "main_system_fall_event_path", "") or "").strip()
+    default_path = "/api/integrations/fall-detection/alerts"
+    if legacy_path and legacy_path != alert_path and legacy_path != default_path:
+        return legacy_path
+    return alert_path or legacy_path or default_path
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _decode_json_response(text: str) -> dict[str, Any]:
+    try:
+        decoded = json.loads(text or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)

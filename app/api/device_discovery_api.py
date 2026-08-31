@@ -92,7 +92,7 @@ def _pair_main_system_alert_endpoint(runtime: Runtime, result) -> dict:
     main_system = result.status.get("main_system") if isinstance(result.status, dict) else {}
     connected = isinstance(main_system, dict) and main_system.get("status") == "connected"
     base_url = str(result.settings.main_system_base_url or "").strip()
-    path = str(result.settings.main_system_fall_event_path or "/video-bridge/fall-events")
+    path = str(getattr(result.settings, "main_system_alert_path", None) or result.settings.main_system_fall_event_path or "/api/integrations/fall-detection/alerts")
     if reporter is not None and connected and base_url:
         update_endpoint = getattr(reporter, "update_endpoint", None)
         if callable(update_endpoint):

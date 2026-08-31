@@ -32,6 +32,7 @@ from app.post_fall_v2.fall_binary_shadow_service import FallBinaryShadowService
 from app.post_fall_v2.follow_target import FollowTargetReceiver
 from app.post_fall_v2.post_fall_runtime_service import PostFallV2RuntimeService
 from app.post_fall_v2.test_archive_service import PostFallTestArchiveService
+from app.post_fall_v2.detection_session_orchestrator import DetectionSessionOrchestrator
 from app.streaming.peer_manager import PeerManager
 from app.streaming.result_channel_manager import ResultChannelManager
 
@@ -70,6 +71,7 @@ class Runtime:
     post_fall_v2_runtime_service: PostFallV2RuntimeService | None = None
     follow_target_receiver: FollowTargetReceiver | None = None
     post_fall_test_archive_service: PostFallTestArchiveService | None = None
+    detection_session_orchestrator: DetectionSessionOrchestrator | None = None
 
     async def shutdown(self) -> None:
         if self.event_delivery_worker is not None:

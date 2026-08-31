@@ -47,6 +47,7 @@ from app.post_fall_v2.qwen_fall_analyzer import PFV2QwenFallAnalyzer
 from app.post_fall_v2.vlm_review_service import VLMReviewService
 from app.post_fall_v2.evidence_exporter import PostFallEvidenceExporter
 from app.post_fall_v2.test_archive_service import PostFallTestArchiveService
+from app.post_fall_v2.detection_session_orchestrator import DetectionSessionOrchestrator
 from app.integration.identity_client import IdentityClient
 from app.streaming.peer_manager import PeerManager
 from app.streaming.result_channel_manager import ResultChannelManager
@@ -190,6 +191,7 @@ async def lifespan(app: FastAPI):
             model_name=settings.post_fall_v2_qwen_model,
             timeout_seconds=settings.post_fall_v2_qwen_timeout_seconds,
             num_ctx=settings.post_fall_v2_qwen_num_ctx,
+            max_output_tokens=settings.post_fall_v2_qwen_max_output_tokens,
             temperature=settings.post_fall_v2_qwen_temperature,
             context_retry_enabled=settings.post_fall_v2_qwen_context_retry_enabled,
             image_provider=post_fall_v2_runtime_service.qwen_images_for_incident,
@@ -212,6 +214,12 @@ async def lifespan(app: FastAPI):
         fall_fusion_service=fall_fusion_service,
         post_fall_v2_shadow_service=post_fall_v2_shadow_service,
         post_fall_v2_runtime_service=post_fall_v2_runtime_service,
+    )
+    detection_session_orchestrator = DetectionSessionOrchestrator(
+        settings=settings,
+        stream_service=stream_service,
+        post_fall_service=post_fall_v2_runtime_service,
+        archive_service=post_fall_test_archive_service,
     )
     peer_manager = PeerManager(settings=settings, source_manager=source_manager)
     status_service = StatusService(
@@ -271,6 +279,7 @@ async def lifespan(app: FastAPI):
         event_pipeline=event_pipeline,
         event_delivery_worker=event_delivery_worker,
         post_fall_test_archive_service=post_fall_test_archive_service,
+        detection_session_orchestrator=detection_session_orchestrator,
     )
     app.state.runtime = runtime
     event_pipeline.start()

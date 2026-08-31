@@ -253,20 +253,21 @@ _POST_FALL_SYSTEM_PROMPT = """你是 Post-Fall V2 候选事件视觉复核模型
 `high_risk_fall` 是最终跌倒告警硬控制位，只能为整数 0 或 1，默认必须为 0。
 只有视觉证据明确支持真实、非主动、具有危险性的跌倒，才允许 `high_risk_fall=1`。
 正常站立、行走、坐下、坐在椅子/沙发/床边休息、弯腰、蹲下、主动受控下降、主动躺下、低姿态看书、玩手机、休息、睡觉、仅靠近地面、仅横向姿态、仅静止、证据不足、遮挡严重、无法判断、只是建议人工复核，都必须保持 `high_risk_fall=0`。
+如果最早关键帧缺失，但后帧已经清楚呈现非自主翻倒、冲击后倒地或持续异常卧地状态，仍可判为 `confirmed_fall`；如果既看不到进入过程，也看不到这类异常倒地状态，才输出 `uncertain`。
 “建议人工复核”绝对不等于“确认跌倒”，不能触发高危值。
 若 `high_risk_fall=1`，则 `fall_verdict` 必须为 `confirmed_fall`，`scene_type` 必须为 `fall`，`recommended_action` 必须为 `emergency_alert`。
 若 `high_risk_fall=0`，则 `fall_verdict` 不得为 `confirmed_fall`，`recommended_action` 不得为 `emergency_alert`。
 
 判定规则：
 
-- `confirmed_fall`：明确看到人物发生非自主失衡或失控下落并倒地；或虽未拍到完整过程，但人物处于明显高危跌倒后异常倒地状态，持续未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息等自主行为证据。
+- `confirmed_fall`：明确看到人物发生非自主失衡或失控下落并倒地；或虽未拍到完整过程，但后帧已明确呈现非自主翻倒、冲击后倒地或异常卧地状态，持续未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息等自主行为证据。
 - `non_fall`：站立、行走、转身、普通活动、稳定坐姿、坐椅子休息、主动低姿态、阅读、玩手机、休息或睡觉。
 - `uncertain`：只看到人物已处于地面或低位、动作过程缺失、证据矛盾，或无法可靠判断是否发生跌倒。
 - `insufficient_visual_evidence`：人物不可见、严重遮挡或画面质量不足。
 
 重要约束：
 不得仅因前级 FALL、身体倾斜、运动模糊、坐着、躺着或靠近地面而判定跌倒。
-未看到跌倒转场时，即使人物在所提供关键帧时间跨度内持续低位，也不得推测曾发生跌倒。
+未看到跌倒转场且后帧也没有异常翻倒、冲击后倒地或持续异常卧地状态时，即使人物在所提供关键帧时间跨度内持续低位，也不得推测曾发生跌倒。
 如果人物臀部或躯干受到椅子、沙发、床等正常支撑面支撑，姿态稳定且没有突然失衡或失去支撑，必须输出 `scene_type=seated_rest`、`high_risk_fall=0`、`fall_verdict=non_fall`、`recommended_action=no_alert`。
 `fall_transition_visible` 只能根据真实可见转场填写。
 主动行为只有在有明确可见证据时才能成立。
@@ -287,6 +288,7 @@ class QwenKeyframeAnalyzer:
         timeout_seconds: float,
         transport: QwenTransport | None = None,
         num_ctx: int = 8192,
+        max_output_tokens: int = 192,
         temperature: float = 0.1,
         context_retry_enabled: bool = True,
     ) -> None:
@@ -295,6 +297,7 @@ class QwenKeyframeAnalyzer:
         self.timeout_seconds = max(0.1, float(timeout_seconds))
         self._transport = transport
         self.num_ctx = max(4096, int(num_ctx))
+        self.max_output_tokens = max(64, min(1024, int(max_output_tokens)))
         self.temperature = max(0.0, float(temperature))
         self.context_retry_enabled = bool(context_retry_enabled)
         self._diagnostic_lock = Lock()
@@ -538,14 +541,14 @@ class QwenKeyframeAnalyzer:
             "constraints": [
                 "只返回符合给定结构的 JSON 对象，不要输出解释、Markdown 或额外文字。",
                 "所有自然语言描述必须使用简体中文，不得出现英文单词。",
-                "必须输出全部结构化动作证据字段；最终是否告警由确定性事件状态机决定，不由你直接决定。",
+                "只输出安全判定所需字段；最终是否告警由确定性事件状态机决定，不由你直接决定。",
                 "posture 不超过 40 个汉字，summary 不超过 80 个汉字；两者均只描述可见画面，不重复说明。",
                 "示例只用于学习判定边界，不得把示例人物、物品、动作或场景复制到当前事件。",
                 "这是前级模型触发的候选事件，候选事件可能是正常活动、主动低姿态、画面不足或真实跌倒；必须从零判断实际动作。",
                 "先判断连续关键帧实际发生了什么：正常活动、主动受控进入低位、真实非自主失衡倒地，还是过程不清楚。",
-                "只有真实看见较高姿态到明显非自主失衡、失控下降并真正倒地的连续过程，才允许输出 confirmed_fall，并将 fall_transition_visible 设为 true。",
+                "confirmed_fall 只允许两条证据路径：一是完整看到较高姿态到非自主失衡、失控下降并真正倒地的转场；二是虽未完整看到转场，但后帧持续异常卧地、未恢复且无主动行为证据。前者可将 fall_transition_visible 记为 true，后者可记为 false。",
                 "人物最终坐在地面、垫子、床或躺在地面本身，不是确认跌倒的充分依据。",
-                "只看到人物已处于低位且进入过程缺失时输出 unclear；可将 posture_state 设为 ground_low，并按画面填写 persistent_ground_state，但不得推测曾发生跌倒。",
+                "只看到人物已处于低位且进入过程缺失时输出 unclear；如果后帧持续异常卧地、未恢复且无主动行为证据，则可判 confirmed_fall。",
                 "persistent_ground_state=observed 只表示在所给关键帧跨度内持续低位，不代表已经持续十秒。",
                 "如果文字已经明确说明主动坐下、主动躺下、坐下看书/玩手机、躺下看书/玩手机/睡觉、主动恢复低位、没有明显失衡，则 fall_verdict 不能写成 confirmed_fall。",
                 "如果先看见突然失衡、急速下落、肢体翻起、伸手撑地、撞向地面或非自主倒地，随后人物又坐起、阅读、玩手机或休息，仍可判 confirmed_fall。",
@@ -556,7 +559,7 @@ class QwenKeyframeAnalyzer:
                 "不得把二分类候选结果当作视觉事实；不得仅凭持续低位、未起身、垫子或可见性来确认跌倒，也不得忽略跨帧真实可见的失衡过程。",
                 "触发帧或中间帧严重运动模糊时，不得把模糊本身当作失衡证据；必须结合前后清晰帧确认人体是否真的倒向地面。",
                 "如果后帧显示人物仍在站立、行走、经过镜头或只有腿部近景，而不是倒地后的低位状态，不能确认跌倒。",
-                "fall_verdict 和全部结构化证据字段必须一致；证据矛盾时输出 unclear，不得用结论反推或补造证据。",
+                "fall_verdict 和安全判定字段必须一致；证据矛盾时输出 unclear，不得用结论反推或补造证据。",
                 "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
             ],
             "profile": "compact_retry" if compact else "full",
@@ -586,6 +589,7 @@ class QwenKeyframeAnalyzer:
     def _ollama_options(self) -> dict[str, float | int]:
         return {
             "num_ctx": self.num_ctx,
+            "num_predict": self.max_output_tokens,
             "temperature": self.temperature,
         }
 
@@ -711,13 +715,12 @@ def _ollama_post_fall_json_schema() -> dict[str, Any]:
         "type": "object",
         "additionalProperties": False,
         "required": [
-            "schema_version", "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
-            "positive_evidence", "negative_evidence", "activity", "posture_state",
+            "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
+            "activity", "posture_state",
             "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
             "persistent_ground_state", "posture", "summary", "confidence",
         ],
         "properties": {
-            "schema_version": {"type": "string", "const": "pfv2_post_fall_detail.v1"},
             "high_risk_fall": {"type": "integer", "enum": [0, 1]},
             "fall_verdict": {"type": "string", "enum": ["confirmed_fall", "non_fall", "uncertain", "insufficient_visual_evidence"]},
             "scene_type": {
@@ -728,8 +731,6 @@ def _ollama_post_fall_json_schema() -> dict[str, Any]:
                 ],
             },
             "recommended_action": {"type": "string", "enum": ["no_alert", "manual_review", "emergency_alert"]},
-            "positive_evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
-            "negative_evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
             "activity": {"type": "string", "minLength": 1, "maxLength": 64},
             "posture_state": {"type": "string", "enum": ["upright", "seated", "lying", "ground_low", "unknown"]},
             "fall_transition_visible": {"type": "boolean"},
@@ -813,6 +814,16 @@ def _parse_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallDetail:
     transition_visible = _normalize_optional_bool(normalized_payload.get("fall_transition_visible"))
     intentional_evidence = _normalize_optional_bool(normalized_payload.get("intentional_action_evidence"))
     recovery_observed = _normalize_optional_bool(normalized_payload.get("recovery_observed"))
+    intentional_context = _has_verified_intentional_context(
+        f"{activity} {posture} {summary}",
+        posture_state=posture_state,
+    )
+    if (
+        intentional_evidence is True
+        and posture_state in {"lying", "ground_low"}
+        and not intentional_context
+    ):
+        intentional_evidence = False
     effective_fall_verdict = _post_fall_verdict_for_internal_consistency(
         normalized_payload.get("fall_verdict"),
         scene_type=scene_type,
@@ -1057,10 +1068,26 @@ def validate_post_fall_consistency(
     normal = _looks_like_non_fall_activity(text)
     transition_visible = _normalize_optional_bool(fall_transition_visible)
     intentional_evidence = _normalize_optional_bool(intentional_action_evidence)
+    recovery_value = _normalize_optional_bool(recovery_observed)
     posture_value = str(posture_state or "unknown").strip().lower()
     persistent_value = str(persistent_ground_state or "unknown").strip().lower()
     high_risk = _normalize_high_risk_fall(high_risk_fall) == 1
     scene_value = _normalize_scene_type(scene_type)
+    verified_normal_scene = (
+        scene_value in {"walking", "standing", "seated_rest"}
+        and posture_value in {"upright", "seated"}
+    )
+    verified_intentional_scene = (
+        scene_value in {"intentional_low_posture", "intentional_lying"}
+        and intentional_evidence is True
+    )
+    abnormal_persistent_ground = (
+        posture_value in {"lying", "ground_low"}
+        and persistent_value == "observed"
+        and recovery_value is False
+        and intentional_evidence is not True
+        and scene_value not in {"walking", "standing", "seated_rest", "intentional_low_posture", "intentional_lying", "squatting", "bending"}
+    )
 
     if raw_normalized == "confirmed_fall":
         if transition_visible is not True:
@@ -1069,6 +1096,7 @@ def validate_post_fall_consistency(
                 and scene_value == "fall"
                 and posture_value in {"lying", "ground_low"}
                 and persistent_value == "observed"
+                and recovery_value is False
                 and intentional_evidence is not True
                 and not intentional
                 and not normal
@@ -1083,7 +1111,7 @@ def validate_post_fall_consistency(
                 "raw_verdict": raw_text or raw_normalized,
                 "normalized_verdict": "unclear",
                 "consistency_status": "corrected",
-                "consistency_reason": "confirmed_fall 必须由 fall_transition_visible=true 的真实可见转场支持",
+                "consistency_reason": "confirmed_fall 必须满足 transition_fall 或 post_fall_abnormality 两类证据之一",
             }
         if intentional_evidence is True or intentional or normal:
             return {
@@ -1107,7 +1135,7 @@ def validate_post_fall_consistency(
         }
 
     if raw_normalized == "intentional_low_posture":
-        if transition_visible is True or intentional_evidence is not True or not intentional or explicit_fall:
+        if transition_visible is True or intentional_evidence is not True or not verified_intentional_scene or explicit_fall:
             return {
                 "raw_verdict": raw_text or raw_normalized,
                 "normalized_verdict": "unclear",
@@ -1116,20 +1144,23 @@ def validate_post_fall_consistency(
             }
 
     if raw_normalized == "non_fall":
-        contradictory_fall = transition_visible is True or explicit_fall
-        contradictory_ground = posture_value in {"ground_low"} and persistent_value == "observed"
-        if contradictory_fall or contradictory_ground:
+        if transition_visible is True or explicit_fall or abnormal_persistent_ground:
             return {
                 "raw_verdict": raw_text or raw_normalized,
                 "normalized_verdict": "unclear",
                 "consistency_status": "corrected",
                 "consistency_reason": "non_fall 与跌倒转场、明确跌倒或异常持续低位证据冲突",
             }
+        if not (verified_normal_scene or verified_intentional_scene):
+            return {
+                "raw_verdict": raw_text or raw_normalized,
+                "normalized_verdict": "unclear",
+                "consistency_status": "corrected",
+                "consistency_reason": "non_fall 需要明确正常或主动低姿态证据支持",
+            }
 
     if raw_normalized == "normal_activity":
-        normal_posture = posture_value in {"upright", "seated"}
-        contradictory_ground = posture_value in {"lying", "ground_low"} or persistent_value == "observed"
-        if transition_visible is True or not normal or not normal_posture or contradictory_ground:
+        if transition_visible is True or not verified_normal_scene or abnormal_persistent_ground:
             return {
                 "raw_verdict": raw_text or raw_normalized,
                 "normalized_verdict": "unclear",
@@ -1346,6 +1377,27 @@ def _looks_like_intentional_low_posture(text: str) -> bool:
     return False
 
 
+def _has_verified_intentional_context(text: str, *, posture_state: str) -> bool:
+    """Require a positive purpose/support signal before trusting active low posture."""
+    support_signals = (
+        "床",
+        "沙发",
+        "椅子",
+        "支撑面",
+        "支撑物",
+        "床上",
+        "沙发上",
+        "椅子上",
+    )
+    purpose_signals = ("看书", "阅读", "玩手机", "睡觉", "睡眠")
+    seated_signals = ("坐下", "坐在", "坐姿", "休息", "主动休息", "主动调整身体")
+    if posture_state == "seated":
+        return any(phrase in text for phrase in (*support_signals, *purpose_signals, *seated_signals))
+    if posture_state in {"lying", "ground_low"}:
+        return any(phrase in text for phrase in (*support_signals, *purpose_signals))
+    return any(phrase in text for phrase in (*support_signals, *purpose_signals, *seated_signals))
+
+
 def _looks_like_clear_fall(text: str) -> bool:
     return _looks_like_explicit_fall_sequence(text)
 
@@ -1448,66 +1500,58 @@ def _build_post_fall_task(*, countercheck: bool) -> str:
         (
             "示例 1 主动坐下看书或玩手机",
             "前帧站立或缓慢移动，随后主动弯腿并受控坐下，后帧稳定阅读或使用手机，没有突然失衡、失控下坠或意外倒地。",
-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_low_posture","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["主动受控坐下","后续稳定阅读","未见失控下坠"],"activity":"主动坐下阅读","posture_state":"seated","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"not_observed","posture":"人物主动受控地坐下后活动。","summary":"连续画面显示主动坐下阅读，没有非自主失衡。","confidence":0.93}',
+            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_low_posture","recommended_action":"no_alert","activity":"主动坐下阅读","posture_state":"seated","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"not_observed","posture":"人物主动受控地坐下后活动。","summary":"连续画面显示主动坐下阅读，没有非自主失衡。","confidence":0.93}',
         ),
         (
             "示例 2 主动躺下看书、玩手机或睡觉",
-            "人物从坐姿或较高姿态有控制地向后或侧面躺下，后帧保持自然卧姿看书、玩手机或睡觉，没有失衡下落。",
-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_lying","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["主动受控躺下","后续自然卧姿","未见失衡下落"],"activity":"主动躺下休息","posture_state":"lying","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物主动进入稳定卧姿。","summary":"动作受控且后续保持自然卧姿，属于主动躺下休息。","confidence":0.91}',
+            "人物在床、沙发等明确支撑面上有控制地向后或侧面躺下，后帧保持自然卧姿看书、玩手机或睡觉，没有失衡下落。",
+            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"intentional_lying","recommended_action":"no_alert","activity":"主动躺下休息","posture_state":"lying","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物在明确支撑面上主动进入稳定卧姿。","summary":"动作受控且后续保持自然卧姿，属于主动躺下休息。","confidence":0.91}',
         ),
         (
             "示例 3 真实跌倒",
             "人物原本站立或处于较高姿态，随后身体突然失去平衡并快速向地面倾倒，后帧已倒地，没有主动坐下或躺下的连续动作。",
-            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","positive_evidence":["突然失衡","失控倒地","后续处于低位"],"negative_evidence":[],"activity":"非自主失衡倒地","posture_state":"ground_low","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物由较高姿态突然失衡并非自主倒地。","summary":"连续画面显示明显失衡和失控倒地过程。","confidence":0.96}',
+            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","activity":"非自主失衡倒地","posture_state":"ground_low","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物由较高姿态突然失衡并非自主倒地。","summary":"连续画面显示明显失衡和失控倒地过程。","confidence":0.96}',
         ),
         (
-            "示例 4 触发帧已在翻倒过程",
-            "最早关键帧没有完整站立画面，但触发附近可见身体横向非自然翻倒、双腿或肢体抬起、躯干失去支撑或冲击后摊倒，后帧持续倒地，且没有主动躺下的准备动作。稳定坐姿、屈膝坐姿或阅读姿态不能解释这种失控动态。",
-            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","positive_evidence":["非自然翻倒","身体失去支撑","后续倒地"],"negative_evidence":[],"activity":"非自主翻倒","posture_state":"ground_low","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物处于非自然翻倒后倒地状态。","summary":"虽缺少完整起始动作，但可见非自主翻倒和后续倒地。","confidence":0.9}',
+            "示例 4 触发帧已在翻倒过程后持续异常低位",
+            "最早关键帧没有完整跌倒起始动作，但后帧连续呈现异常倒地或贴地状态，人物未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息或睡觉的证据。",
+            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","activity":"持续异常倒地","posture_state":"ground_low","fall_transition_visible":false,"intentional_action_evidence":false,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物持续处于异常倒地低位状态。","summary":"虽未完整记录跌倒瞬间，但连续画面支持异常倒地且未见自主行为或恢复。","confidence":0.88}',
         ),
         (
-            "示例 5 跌倒后再活动",
-            "人物先明显失衡倒地，之后才坐起或拿起手机、阅读、休息；后续活动不能推翻前面的真实跌倒。",
-            '{"high_risk_fall":1,"fall_verdict":"confirmed_fall","scene_type":"fall","recommended_action":"emergency_alert","positive_evidence":["先发生失衡倒地","后续才恢复活动"],"negative_evidence":[],"activity":"跌倒后恢复活动","posture_state":"seated","fall_transition_visible":true,"intentional_action_evidence":false,"recovery_observed":true,"persistent_ground_state":"not_observed","posture":"人物先发生明显非自主跌倒，之后出现恢复动作。","summary":"后面虽能坐起，但此前已有清楚失衡倒地过程。","confidence":0.94}',
-        ),
-        (
-            "示例 6 无法确认过程",
-            "前后帧只能看见人物稳定处于低位，关键下落过程缺失，也没有非自然翻倒、冲击或失衡动态，无法可靠区分主动放低姿态和真实跌倒。",
-            '{"high_risk_fall":0,"fall_verdict":"uncertain","scene_type":"unknown","recommended_action":"manual_review","positive_evidence":[],"negative_evidence":["关键下落过程缺失","未见非自然翻倒或冲击"],"activity":"低位状态不明","posture_state":"ground_low","fall_transition_visible":false,"intentional_action_evidence":null,"recovery_observed":false,"persistent_ground_state":"observed","posture":"人物处于低位姿态，但进入过程不清楚。","summary":"现有关键帧不足以可靠区分主动低位与真实跌倒。","confidence":0.55}',
-        ),
-        (
-            "示例 7 正常行走或运动模糊误触发",
-            "多帧显示人物正常行走、站立或经过镜头，可能有运动模糊，但没有突然失衡、身体失去支撑、冲击地面或倒地过程。",
-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"walking","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["正常行走","未见失控下降","未见倒地过程"],"activity":"正常行走","posture_state":"upright","fall_transition_visible":false,"intentional_action_evidence":false,"recovery_observed":null,"persistent_ground_state":"not_observed","posture":"人物处于正常行走状态。","summary":"连续画面显示正常行走，未见失控下降或倒地。","confidence":0.95}',
-        ),
-        (
-            "示例 8 坐在椅子上休息",
-            "关键帧显示人物臀部或躯干由椅子、沙发或床边等支撑面稳定支撑，姿态符合正常坐姿，没有突然失衡、失去支撑或倒向地面的过程。",
-            '{"high_risk_fall":0,"fall_verdict":"non_fall","scene_type":"seated_rest","recommended_action":"no_alert","positive_evidence":[],"negative_evidence":["身体受到椅子稳定支撑","姿态符合正常坐姿","未见突然失衡或倒地"],"activity":"坐在椅子上休息","posture_state":"seated","fall_transition_visible":false,"intentional_action_evidence":true,"recovery_observed":null,"persistent_ground_state":"not_observed","posture":"人物稳定坐在椅子上休息。","summary":"人物坐姿稳定且有支撑面，不属于跌倒。","confidence":0.96}',
+            "示例 5 无法确认过程",
+            "前后帧只能看见人物短暂或局部处于低位，但既没有看到进入低位的过程，也没有看到后帧异常卧地、持续贴地或未恢复状态，无法可靠区分主动低姿态和真实跌倒。",
+            '{"high_risk_fall":0,"fall_verdict":"uncertain","scene_type":"unknown","recommended_action":"manual_review","activity":"低位状态不明","posture_state":"ground_low","fall_transition_visible":false,"intentional_action_evidence":null,"recovery_observed":false,"persistent_ground_state":"not_observed","posture":"人物处于低位姿态，但进入过程不清楚。","summary":"现有关键帧不足以可靠区分主动低位与真实跌倒。","confidence":0.55}',
         ),
     ]
     lines = [
         "你是 Post-Fall V2 的视觉事件复核模型。",
         f"当前任务为{review_mode}。",
         "输入是一组按时间顺序排列的同一事件关键帧。",
-        "你只判断关键帧中真实可见的动作和状态；若没有看到人物怎样进入低位，必须诚实输出 unclear。",
+        "你只判断关键帧中真实可见的动作和状态；若没有看到人物怎样进入低位，必须诚实输出 unclear，除非后帧显示异常翻倒、冲击后倒地或持续异常卧地状态。",
         "重点区分主动且受控地放低身体，与突然失衡、失控、非自主地倒地。",
         "前级模型只提供候选事件，不代表已经发生真实跌倒。",
-        "必须填写 activity、posture_state、fall_transition_visible、intentional_action_evidence、recovery_observed 和 persistent_ground_state。",
+         "只填写安全判定所需字段：high_risk_fall、fall_verdict、scene_type、recommended_action、activity、posture_state、fall_transition_visible、intentional_action_evidence、recovery_observed、persistent_ground_state、posture、summary、confidence。",
+        "intentional_action_evidence=true 仅表示清楚看见主动控制身体的证据，例如明确坐下、阅读、玩手机、睡觉，或在床/沙发/椅子等正常支撑面上稳定休息。",
+        "从坐姿、半躺姿态变化为地面平躺本身不能证明是主动躺下；如果只有主动调整身体、口头休息或地面平躺，而没有阅读、玩手机、睡觉或明确支撑面等更强证据，不能把 intentional_action_evidence 写成 true。",
+        "intentional_action_evidence=false 表示人物和姿态清楚可见，但没有观察到上述主动行为证据；只有严重遮挡、严重模糊、人物不可见或图片不足时才可写 null。",
         "必须输出 high_risk_fall，默认 0；只有明确高危真实跌倒才允许为 1。",
         "输出四类结论：confirmed_fall、non_fall、uncertain、insufficient_visual_evidence。",
         "清楚显示正常站立、正常行走、正常坐姿、坐椅子休息、普通活动或经过镜头，且没有真实倒地过程，输出 non_fall。",
         "如果文字分析已经明确是主动坐下、主动躺下、坐下看书/玩手机、躺下看书/玩手机/睡觉，fall_verdict 不能写成 confirmed_fall，high_risk_fall 必须为 0。",
         "如果画面清楚显示正常行走、站立、经过镜头、正常坐姿或普通活动，且没有明确失衡倒地过程，fall_verdict 应为 non_fall，不能写成 confirmed_fall。",
-        "坐在椅子、沙发或床边等支撑物上休息且无失衡倒地过程时，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
+        "坐在椅子上休息、坐在沙发上休息或坐在床边等明确支撑面上，且无失衡倒地过程时，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
+        "蓝色地垫、瑜伽垫或地面软垫本身不等于正常支撑面，不能仅凭人物在垫子上就自动判定为主动躺下或休息。",
         "如果先看到突然失衡、急速下落、肢体翻起、伸手撑地、撞向地面或非自主倒地，随后又坐起、阅读、玩手机或休息，仍可判 confirmed_fall。",
-        "若只看到人物在全部关键帧中处于低位且没有可见进入过程，输出 uncertain、high_risk_fall=0、fall_transition_visible=false，并按画面填写低位和恢复证据。",
+        "真实跌倒允许两类确认路径：一类是完整看到站立/较高姿态到失衡、下落并倒地的转场；另一类是虽未完整拍到转场，但连续关键帧明确支持异常倒地或贴地状态、持续未恢复、且没有主动行为证据。",
+        "如果最早可见帧缺失，但后帧已明显呈现异常翻倒、冲击后倒地或持续异常卧地状态，且没有主动坐下或主动躺下证据，仍可判 confirmed_fall。",
+        "若没有看到人物怎样进入低位，且也没有后帧异常翻倒、冲击后倒地或持续异常卧地状态，必须诚实输出 unclear；如果后帧持续异常卧地、未恢复且无主动行为证据，则可判 confirmed_fall。",
         "persistent_ground_state=observed 只描述所给关键帧跨度，不表示持续十秒。",
         "recommended_action=manual_review 只表示可人工查看，绝对不等于跌倒告警。",
         "high_risk_fall=1 时必须同时输出 fall_verdict=confirmed_fall、scene_type=fall、recommended_action=emergency_alert；否则必须保持 high_risk_fall=0。",
         "若最早可见帧已经处于横向翻倒、身体失去支撑、双腿抬起或冲击后的异常姿态，不要仅凭后续坐起或静止就改判为主动躺下；应结合异常动态和后续状态判断。",
-        "最终输出前要自检 fall_verdict 与全部结构化证据字段是否一致；不得用 verdict 反推证据。",
-        "以下示例只用于学习判定边界，不得复制示例中的人物、物品、动作或场景到当前事件。",
+        "最终输出前要自检 fall_verdict 与安全判定字段是否一致；不得用 verdict 反推证据。",
+         "以下示例只用于学习判定边界，不得复制示例中的人物、物品、动作或场景到当前事件。",
+         "不要输出 positive_evidence、negative_evidence、movement_level、attempt_to_stand、visibility、occlusion、scene_risks、possible_help_gesture 或 review_points；展示字段由系统按精简格式补齐。",
     ]
     for title, scenario, answer in examples:
         lines.extend([title + "：", scenario, f"正确输出：{answer}"])
@@ -1518,9 +1562,9 @@ def _build_post_fall_task(*, countercheck: bool) -> str:
     ])
     if countercheck:
         lines.extend([
-            "反证复核特别要求：只有同时满足前后关键帧支持真实跌倒过程，才可输出 confirmed_fall。",
+            "反证复核特别要求：如果既没有观察到跌倒转场，也没有持续异常卧地、未恢复且无主动行为证据的后跌倒证据，才输出 unclear。",
             "如果后帧显示人物站立、行走、坐着工作、经过镜头、只有腿部近景，或触发帧主要是运动模糊，应输出 normal_activity、intentional_low_posture 或 unclear。",
-            "如果不能清楚看到从较高姿态非自主倒向地面并进入倒地低位状态，应输出 unclear。",
+            "如果不能清楚看到从较高姿态非自主倒向地面并进入倒地低位状态，而且也没有持续异常卧地、未恢复的证据，应输出 unclear。",
         ])
     return "\n".join(lines)
 
@@ -1531,16 +1575,20 @@ def _build_compact_post_fall_task(*, countercheck: bool) -> str:
         "前级二分类只表示候选，不代表真实跌倒。",
         "必须输出 high_risk_fall，默认 0；只有明确高危真实跌倒才允许为 1。",
         "看到较高姿态到非自主失衡、失控下落并倒地，或明确高危跌倒后异常倒地且无自主行为证据，才输出 high_risk_fall=1 和 confirmed_fall。",
-        "只看到持续低位但没有可见进入过程时输出 high_risk_fall=0 和 uncertain，不得推测曾发生跌倒。",
+        "真实跌倒允许两类确认路径：一类是完整看到跌倒转场；另一类是虽未完整拍到转场，但连续关键帧明确支持异常倒地或贴地状态、持续未恢复、且没有主动行为证据。",
+        "只看到持续低位但没有可见进入过程，且没有后帧异常翻倒、冲击后倒地或持续异常卧地状态时输出 high_risk_fall=0 和 unclear，不得推测曾发生跌倒。",
         "正常站立、行走、经过镜头、普通活动、稳定坐姿或坐椅子休息且无倒地过程，输出 non_fall。",
         "主动且受控地坐下、躺下、阅读、玩手机、休息或睡觉且无失控倒地，输出 non_fall。",
+        "从坐姿、半躺姿态变化为地面平躺本身不能证明是主动躺下；只有明确主动控制证据才可判 intentional_action_evidence=true。",
         "坐在椅子、沙发或床边等支撑面上休息，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
+        "蓝色地垫、瑜伽垫或地面软垫本身不等于正常支撑面，不能仅凭人物在垫子上就自动判定为主动躺下或休息。",
         "过程缺失或无法可靠判断，输出 uncertain；人物不可见、遮挡严重或画面不足，输出 insufficient_visual_evidence。",
         "不能仅凭身体倾斜、运动模糊、坐着、躺着、靠近地面或未起身确认跌倒。",
-        "必须填写全部结构化证据字段；persistent_ground_state 只描述所给关键帧跨度。",
+         "只填写安全判定所需字段；persistent_ground_state 只描述所给关键帧跨度。",
+         "不要输出 positive_evidence、negative_evidence、movement_level、attempt_to_stand、visibility、occlusion、scene_risks、possible_help_gesture 或 review_points；展示字段由系统按精简格式补齐。",
         "recommended_action=manual_review 不是跌倒告警；若 high_risk_fall=0，recommended_action 不得为 emergency_alert。",
         "high_risk_fall=1 必须同时满足 fall_verdict=confirmed_fall、scene_type=fall、recommended_action=emergency_alert。",
-        "fall_verdict 与证据字段必须一致；只返回 JSON，不输出解释或 Markdown。",
+        "fall_verdict 与安全判定字段必须一致；只返回 JSON，不输出解释或 Markdown。",
     ]
     if countercheck:
         lines.append("反证复核：证据不足时不要确认跌倒，优先排除正常活动和主动低姿态。")

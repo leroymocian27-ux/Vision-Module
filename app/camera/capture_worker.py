@@ -61,6 +61,15 @@ class CaptureWorkerStatus:
     capture_output_height: int | None = None
     mjpeg_content_type: str | None = None
     mjpeg_parsed_frames: int = 0
+    mjpeg_received_frames: int = 0
+    mjpeg_published_frames: int = 0
+    mjpeg_dropped_frames: int = 0
+    mjpeg_receive_fps: float = 0.0
+    mjpeg_publish_fps: float = 0.0
+    mjpeg_inter_frame_ms: float | None = None
+    mjpeg_inter_frame_max_ms: float | None = None
+    mjpeg_publish_latency_ms: float | None = None
+    mjpeg_publish_latency_max_ms: float | None = None
     last_error: str | None = None
 
 

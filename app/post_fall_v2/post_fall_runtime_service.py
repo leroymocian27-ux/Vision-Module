@@ -4,8 +4,10 @@ import queue
 import threading
 import time
 from collections import deque
+from datetime import datetime, timezone
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.camera.source_manager import CameraSourceManager
 from app.core.config import Settings
@@ -408,9 +410,14 @@ class PostFallV2RuntimeService:
             selected = self._states.get(camera_id) if camera_id else next(iter(self._states.values()), None)
             selected_camera_id = camera_id or (next(iter(self._states.keys()), None) if self._states else None)
             active_vlm = sum(1 for thread in self._vlm_threads.values() if thread.is_alive())
-            event_count = len(self._events)
+            camera_events = [
+                event
+                for event in self._events.values()
+                if selected_camera_id is None or event.camera_id == selected_camera_id
+            ]
+            event_count = len(camera_events)
             active_collectors = sum(1 for thread in self._keyframe_threads.values() if thread.is_alive())
-            latest_incident_id = next(reversed(self._events), None) if self._events else None
+            latest_incident_id = camera_events[-1].incident_id if camera_events else None
             keyframe_status = self._keyframe_statuses.get(latest_incident_id or "", {})
             last_target_binding = dict(selected.last_target_binding) if selected and selected.last_target_binding else None
             target_unavailable_skips = selected.target_unavailable_skips if selected else 0
@@ -688,13 +695,24 @@ class PostFallV2RuntimeService:
                         self._test_archive.archive_binary_frame(binary, aggregate, None, sampled)
                     self._publish(binary, aggregate, None)
                     continue
-                raw = classifier.infer(sampled)
-                binary = BinaryFrameResult.from_classifier_result(raw)
+                binary_started_at = utc_now_iso()
+                raw_result = classifier.infer(sampled)
+                binary_finished_at = utc_now_iso()
+                raw = SimpleNamespace(
+                    model=getattr(raw_result, "model", None),
+                    performance=getattr(raw_result, "performance", None),
+                    timing=SimpleNamespace(
+                        started_at=binary_started_at,
+                        finished_at=binary_finished_at,
+                    ),
+                    result=raw_result,
+                )
+                binary = BinaryFrameResult.from_classifier_result(raw_result)
                 binary = BinaryFrameResult(**{**binary.to_record(), "frame_seq": sampled.frame_seq, "target_binding": sampled.target_binding})
                 aggregate = self._aggregator.update(binary)
                 self._update_state(camera_id, binary, raw, sampled)
                 self._log_binary_progress(camera_id, binary, aggregate)
-                event = self._maybe_create_event(aggregate, sampled)
+                event = self._maybe_create_event(aggregate, sampled, raw)
                 if self._test_archive is not None:
                     self._test_archive.archive_binary_frame(binary, aggregate, raw, sampled)
                 self._publish(binary, aggregate, event)
@@ -703,7 +721,12 @@ class PostFallV2RuntimeService:
                 logger.exception("post_fall_v2_runtime_worker_error camera_id=%s", camera_id)
                 model_log_bus.publish("binary", "binary_worker_error", level="error", camera_id=camera_id, error=str(exc))
 
-    def _maybe_create_event(self, decision: BinaryAggregateDecision, sampled: SampledFrame) -> FallEvent | None:
+    def _maybe_create_event(
+        self,
+        decision: BinaryAggregateDecision,
+        sampled: SampledFrame,
+        raw: object | None = None,
+    ) -> FallEvent | None:
         if not decision.event_created or not decision.incident_id:
             return None
         session = self._new_keyframe_session(decision, sampled)
@@ -720,7 +743,15 @@ class PostFallV2RuntimeService:
             "frame_seq": decision.frame_seq,
             "fall_probability": decision.fall_probability,
             "target_binding": sampled.target_binding,
+            "captured_at": sampled.captured_at,
+            "sampled_at": sampled.sampled_at,
+            "captured_monotonic": sampled.captured_monotonic,
+            "sampled_monotonic": sampled.sampled_monotonic,
         }
+        timing = getattr(raw, "timing", None)
+        if timing is not None:
+            binary_evidence["binary_started_at"] = getattr(timing, "started_at", None)
+            binary_evidence["binary_finished_at"] = getattr(timing, "finished_at", None)
         event = FallEvent(
             incident_id=decision.incident_id,
             camera_id=decision.camera_id,
@@ -926,7 +957,20 @@ class PostFallV2RuntimeService:
     def _run_vlm(self, incident_id: str, keyframes: KeyframePackage) -> None:
         with self._lock:
             event = self._events[incident_id]
+        qwen_start_frames_received = self._worker_frame_seq(event.camera_id)
         detail = self._vlm.analyze_fall_event(event, keyframes)
+        qwen_end_frames_received = self._worker_frame_seq(event.camera_id)
+        frames_received_during_qwen = None
+        if qwen_start_frames_received is not None and qwen_end_frames_received is not None:
+            frames_received_during_qwen = max(0, qwen_end_frames_received - qwen_start_frames_received)
+        detail = FallDetailResult(
+            **{
+                **detail.to_record(),
+                "qwen_start_frames_received": qwen_start_frames_received,
+                "qwen_end_frames_received": qwen_end_frames_received,
+                "frames_received_during_qwen": frames_received_during_qwen,
+            }
+        )
         with self._lock:
             latest = self._events[incident_id]
             updated = replace(
@@ -964,7 +1008,21 @@ class PostFallV2RuntimeService:
             model=detail.model_name,
             summary=detail.summary,
             error=detail.error_message,
+            qwen_start_frames_received=qwen_start_frames_received,
+            qwen_end_frames_received=qwen_end_frames_received,
+            frames_received_during_qwen=frames_received_during_qwen,
         )
+
+    def _worker_frame_seq(self, camera_id: str) -> int | None:
+        if not hasattr(self.source_manager, "worker_status"):
+            return None
+        worker_status = self.source_manager.worker_status(camera_id)
+        if worker_status is None:
+            return None
+        try:
+            return int(worker_status.frame_seq)
+        except (TypeError, ValueError):
+            return None
 
     def _report_safety_alert(self, event: FallEvent) -> None:
         if self._fall_event_reporter is None or event.safety_decision is None:
@@ -975,8 +1033,8 @@ class PostFallV2RuntimeService:
         detail = event.vlm_analysis
         transition_alert = safety.path == "transition_fall"
         fall_state = "fallen_confirmed"
-        confirm_source = "event_state_transition_fall" if transition_alert else "event_state_high_risk_post_fall"
-        source = "post_fall_v2_transition" if transition_alert else "post_fall_v2_high_risk_post_fall"
+        confirm_source = "event_state_transition_fall" if transition_alert else "event_state_post_fall_persistent_abnormality"
+        source = "post_fall_v2_transition" if transition_alert else "post_fall_v2_persistent_abnormality"
         keyframes = event.keyframes
         evidence = event.binary_evidence if isinstance(event.binary_evidence, dict) else {}
         target_binding = event.target_binding or evidence.get("target_binding") or {}
@@ -1074,10 +1132,9 @@ class PostFallV2RuntimeService:
         with self._lock:
             latest = self._events.get(event.incident_id, event)
         binary_state = aggregate.state if aggregate is not None else "NORMAL"
-        elapsed_ms = (
-            aggregate.evidence.candidate_duration_ms
-            if aggregate is not None
-            else int(latest.binary_evidence.get("candidate_duration_ms") or 0)
+        elapsed_ms = max(
+            aggregate.evidence.candidate_duration_ms if aggregate is not None else int(latest.binary_evidence.get("candidate_duration_ms") or 0),
+            _elapsed_ms_since(latest.confirmed_at),
         )
         safety = evaluate_fall_safety(
             latest,
@@ -1134,7 +1191,7 @@ class PostFallV2RuntimeService:
         binary_event_active = decision.state in {"EVENT_ACTIVE", "FALL_CONFIRMED"}
         qwen_gate = _qwen_gate_state(active_event)
         safety = active_event.safety_decision if active_event is not None else None
-        alert_active = bool(binary_event_active and safety is not None and safety.outcome == "alert")
+        alert_active = bool(safety is not None and safety.outcome == "alert")
         if active_event is not None:
             public_fall_state = _public_fall_state(safety)
         else:
@@ -1565,6 +1622,19 @@ def _same_safety_decision(left: FallSafetyDecision, right: FallSafetyDecision) -
         and left.qwen_verdict == right.qwen_verdict
         and left.review_required == right.review_required
     )
+
+
+def _elapsed_ms_since(iso_timestamp: str | None) -> int:
+    if not iso_timestamp:
+        return 0
+    try:
+        normalized = iso_timestamp.replace("Z", "+00:00")
+        started = datetime.fromisoformat(normalized)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return max(0, int((datetime.now(timezone.utc) - started.astimezone(timezone.utc)).total_seconds() * 1000))
+    except Exception:
+        return 0
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
