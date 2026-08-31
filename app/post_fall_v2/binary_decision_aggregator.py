@@ -59,8 +59,16 @@ class BinaryDecisionAggregator:
         if state == "NORMAL":
             if is_positive:
                 self._candidate_started_at[camera_id] = now
-                state = "FALL_CANDIDATE"
-                reason = "fall_candidate_started"
+                if self._is_confirmed(camera_id, window, now):
+                    incident_id = self._active_incident_id.get(camera_id) or self._new_incident_id(camera_id)
+                    self._active_incident_id[camera_id] = incident_id
+                    self._event_count[camera_id] = self._event_count.get(camera_id, 0) + 1
+                    state = "EVENT_ACTIVE"
+                    event_created = True
+                    reason = "fall_confirmed"
+                else:
+                    state = "FALL_CANDIDATE"
+                    reason = "fall_candidate_started"
             else:
                 reason = "non_fall"
         elif state == "FALL_CANDIDATE":

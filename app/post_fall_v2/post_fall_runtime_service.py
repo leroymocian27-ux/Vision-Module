@@ -1192,6 +1192,17 @@ class PostFallV2RuntimeService:
         qwen_gate = _qwen_gate_state(active_event)
         safety = active_event.safety_decision if active_event is not None else None
         alert_active = bool(safety is not None and safety.outcome == "alert")
+        candidate_alert_active = bool(
+            binary.valid
+            and binary.fall_probability is not None
+            and binary.fall_probability >= binary.threshold
+        )
+        business_decision = _business_decision_payload(
+            event=active_event,
+            binary=binary,
+            safety=safety,
+            candidate_alert_active=candidate_alert_active,
+        )
         if active_event is not None:
             public_fall_state = _public_fall_state(safety)
         else:
@@ -1221,6 +1232,9 @@ class PostFallV2RuntimeService:
             "event_created": decision.event_created,
             "reason": decision.reason,
             "evidence": decision.evidence.to_record(),
+            "candidate_alert": candidate_alert_active,
+            "final_alert": alert_active,
+            "decision": business_decision,
             "qwen_gate": qwen_gate,
             "decision_authority": "event_state_machine",
             "target_binding": target_binding or None,
@@ -1260,6 +1274,9 @@ class PostFallV2RuntimeService:
             alarm_preview={
                 "confirmed": bool(alert_active and safety is not None and safety.path == "transition_fall"),
                 "requires_attention": alert_active,
+                "candidate_alert": candidate_alert_active,
+                "final_alert": alert_active,
+                "decision": business_decision,
                 "risk_level": "high" if alert_active else "low",
                 "fall_probability": binary.fall_probability,
                 "source": "post_fall_v2_binary",
@@ -1319,9 +1336,17 @@ class PostFallV2RuntimeService:
             )
             safety = event.safety_decision
             alert_active = bool(safety is not None and safety.outcome == "alert")
+            business_decision = _business_decision_payload(
+                event=event,
+                binary=None,
+                safety=safety,
+                candidate_alert_active=bool(fall_decision.get("candidate_alert")),
+            )
             fall_decision["fall_state"] = _public_fall_state(safety)
             fall_decision["status"] = fall_decision["fall_state"]
             fall_decision["decision_authority"] = "event_state_machine"
+            fall_decision["final_alert"] = alert_active
+            fall_decision["decision"] = business_decision
             if safety is not None:
                 fall_decision["safety_decision"] = safety.to_record()
                 fall_decision["safety_outcome"] = safety.outcome
@@ -1344,6 +1369,8 @@ class PostFallV2RuntimeService:
                     "high_risk_fall": fall_decision["high_risk_fall"],
                     "scene_type": fall_decision["scene_type"],
                     "recommended_action": fall_decision["recommended_action"],
+                    "final_alert": alert_active,
+                    "decision": business_decision,
                     "safety_outcome": safety.outcome if safety is not None else "observe",
                     "safety_path": safety.path if safety is not None else "uncertain_evidence",
                 }
@@ -1583,6 +1610,49 @@ def _as_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _business_decision_payload(
+    *,
+    event: FallEvent | None,
+    binary: BinaryFrameResult | None,
+    safety: FallSafetyDecision | None,
+    candidate_alert_active: bool,
+) -> dict[str, object]:
+    detail = event.vlm_analysis if event is not None else None
+    summary = ""
+    activity = "unknown"
+    confidence: float | None = None
+    if detail is not None:
+        summary = (detail.summary or detail.posture or "").strip()
+        activity = (detail.activity or detail.scene_type or detail.fall_verdict or "unknown").strip()
+        confidence = _as_float(detail.confidence)
+    if not summary and candidate_alert_active:
+        summary = "小模型已触发跌倒候选，等待本地千问复核。"
+    elif not summary:
+        summary = "未触发跌倒候选。"
+
+    final_alert = bool(safety is not None and safety.outcome == "alert")
+    if safety is None:
+        decision_source = "binary_candidate" if candidate_alert_active else "binary_monitor"
+    elif safety.outcome == "dismiss":
+        decision_source = "vlm_semantic_review"
+    elif detail is not None and detail.analysis_status == "completed" and detail.high_risk_fall == 1:
+        decision_source = "vlm_semantic_review"
+    elif final_alert:
+        decision_source = "detector_safety_override"
+    else:
+        decision_source = "safety_observation"
+
+    return {
+        "last_frame_description": summary[:120],
+        "is_true_fall": final_alert,
+        "activity": activity,
+        "confidence": confidence if confidence is not None else _as_float(binary.fall_probability if binary else None),
+        "decision_source": decision_source,
+        "candidate_alert": candidate_alert_active,
+        "final_alert": final_alert,
+    }
 
 
 def _qwen_gate_state(event: FallEvent | None) -> str:

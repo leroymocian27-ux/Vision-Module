@@ -502,6 +502,7 @@ class QwenKeyframeAnalyzer:
             "model": self.model_name,
             "stream": False,
             "think": False,
+            "keep_alive": -1,
             "options": self._ollama_options(),
             "format": _ollama_advisory_json_schema(),
             "messages": [
@@ -571,6 +572,7 @@ class QwenKeyframeAnalyzer:
             "model": self.model_name,
             "stream": False,
             "think": False,
+            "keep_alive": -1,
             "options": self._ollama_options(),
             "format": _ollama_post_fall_json_schema(),
             "messages": [
