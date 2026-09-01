@@ -122,3 +122,21 @@ def test_recovery_cooldown_rearms_and_second_fall_creates_second_incident() -> N
             second = decision.incident_id
     assert second is not None
     assert second != first
+
+
+def test_persistent_strong_candidate_uses_recent_three_frame_window() -> None:
+    strong = immediate_aggregator()
+    for seq, probability in enumerate([0.91, 0.87, 0.93], start=1):
+        decision = strong.update(frame(seq, probability), now=float(seq))
+
+    assert decision.evidence.probability_window == [0.91, 0.87, 0.93]
+    assert decision.evidence.persistent_strong_candidate is True
+    assert strong.persistent_strong_candidate("camera_01") is True
+
+    transient = immediate_aggregator()
+    for seq, probability in enumerate([0.10, 0.85, 0.12], start=1):
+        decision = transient.update(frame(seq, probability), now=float(seq))
+
+    assert decision.evidence.probability_window == [0.1, 0.85, 0.12]
+    assert decision.evidence.persistent_strong_candidate is False
+    assert transient.persistent_strong_candidate("camera_01") is False

@@ -48,7 +48,7 @@ from app.post_fall_v2.schemas import (
     utc_now_iso,
 )
 from app.events.qwen_keyframe import QwenImageInput
-from app.post_fall_v2.vlm_review_service import VLMReviewService
+from app.post_fall_v2.vlm_review_service import FUSION_VERSION, VLMReviewService, build_competition_decision
 from app.schemas.vision_result import DetectedObject, VisionResult
 from app.services.fall_event_reporter_service import FallEventReporterService
 from app.streaming.result_channel_manager import ResultChannelManager
@@ -743,11 +743,24 @@ class PostFallV2RuntimeService:
             "frame_seq": decision.frame_seq,
             "fall_probability": decision.fall_probability,
             "target_binding": sampled.target_binding,
+            "capture_timestamp": sampled.captured_at,
+            "binary_sample_timestamp": sampled.sampled_at,
             "captured_at": sampled.captured_at,
             "sampled_at": sampled.sampled_at,
             "captured_monotonic": sampled.captured_monotonic,
             "sampled_monotonic": sampled.sampled_monotonic,
+            "candidate_created_timestamp": decision.updated_at,
+            "candidate_latency_ms": round((time.monotonic() - sampled.captured_monotonic) * 1000, 3),
+            "prompt_version": "compact_v2",
+            "schema_version": "compact_v1",
+            "fusion_version": FUSION_VERSION,
         }
+        performance = getattr(raw, "performance", None)
+        if performance is not None:
+            binary_evidence["preprocess_ms"] = getattr(performance, "preprocess_ms", None)
+            binary_evidence["onnx_inference_ms"] = getattr(performance, "inference_ms", None)
+            binary_evidence["binary_queue_delay_ms"] = getattr(performance, "queue_delay_ms", None)
+            binary_evidence["binary_total_ms"] = getattr(performance, "total_ms", None)
         timing = getattr(raw, "timing", None)
         if timing is not None:
             binary_evidence["binary_started_at"] = getattr(timing, "started_at", None)
@@ -780,6 +793,40 @@ class PostFallV2RuntimeService:
         if collect_keyframes:
             self._schedule_keyframe_collection(event, session)
         else:
+            # The fast path still needs to encode the frames selected from the
+            # rolling buffer before the VLM worker is started. Without this,
+            # the metadata package exists but the Qwen media provider is empty.
+            images: list[QwenImageInput] = []
+            missing: list[str] = []
+            if self._vlm.enabled or self._evidence_exporter is not None or self._test_archive is not None:
+                images, missing = session.export_qwen_images(
+                    max_images=self.settings.post_fall_v2_qwen_max_images,
+                    max_image_bytes=self.settings.post_fall_v2_qwen_max_image_bytes,
+                    max_edge=self.settings.post_fall_v2_qwen_image_max_edge,
+                    jpeg_quality=self.settings.post_fall_v2_qwen_jpeg_quality,
+                    now_monotonic=sampled.captured_monotonic,
+                )
+                export_timing = session.last_export_timing
+                if export_timing:
+                    binary_evidence = {**binary_evidence, **export_timing}
+                    event = replace(event, binary_evidence=binary_evidence)
+                    keyframes = replace(keyframes, fall_probability_summary=binary_evidence)
+                    with self._lock:
+                        self._events[event.incident_id] = event
+            if self._evidence_exporter is not None:
+                try:
+                    self._evidence_exporter.export_binary(event, keyframes, images)
+                except Exception:
+                    logger.exception("post_fall_v2_binary_evidence_export_failed incident_id=%s", event.incident_id)
+            if self._test_archive is not None:
+                try:
+                    self._test_archive.archive_binary_event(event, keyframes, images, missing)
+                except Exception:
+                    logger.exception("post_fall_v2_test_binary_archive_failed incident_id=%s", event.incident_id)
+            if self._vlm.enabled:
+                with self._lock:
+                    self._qwen_media[event.incident_id] = (images, missing)
+            session.release_media()
             self._schedule_vlm(event, keyframes)
         logger.info("fall_event_created incident_id=%s camera_id=%s", event.incident_id, event.camera_id)
         model_log_bus.publish(
@@ -877,6 +924,10 @@ class PostFallV2RuntimeService:
             max_edge=self.settings.post_fall_v2_qwen_image_max_edge,
             jpeg_quality=self.settings.post_fall_v2_qwen_jpeg_quality,
         )
+        export_timing = session.last_export_timing
+        if export_timing:
+            event = replace(event, binary_evidence={**event.binary_evidence, **export_timing})
+            package = replace(package, fall_probability_summary=event.binary_evidence)
         if self._evidence_exporter is not None:
             try:
                 self._evidence_exporter.export_binary(event, package, images)
@@ -963,12 +1014,27 @@ class PostFallV2RuntimeService:
         frames_received_during_qwen = None
         if qwen_start_frames_received is not None and qwen_end_frames_received is not None:
             frames_received_during_qwen = max(0, qwen_end_frames_received - qwen_start_frames_received)
+        fusion_started = time.perf_counter()
+        _ = build_competition_decision(
+            detail=detail,
+            binary_probability=_as_float(event.binary_evidence.get("fall_probability") or event.binary_evidence.get("max_fall_probability")),
+            persistent_strong_candidate=bool(event.binary_evidence.get("persistent_strong_candidate")),
+            candidate_alert_active=True,
+        )
+        fusion_ms = round((time.perf_counter() - fusion_started) * 1000, 3)
+        timing = {
+            **(detail.timing or {}),
+            "fusion_ms": fusion_ms,
+            "final_latency_ms": _elapsed_ms_since(event.confirmed_at),
+        }
         detail = FallDetailResult(
             **{
                 **detail.to_record(),
                 "qwen_start_frames_received": qwen_start_frames_received,
                 "qwen_end_frames_received": qwen_end_frames_received,
                 "frames_received_during_qwen": frames_received_during_qwen,
+                "fusion_version": detail.fusion_version or FUSION_VERSION,
+                "timing": timing,
             }
         )
         with self._lock:
@@ -1203,6 +1269,11 @@ class PostFallV2RuntimeService:
             safety=safety,
             candidate_alert_active=candidate_alert_active,
         )
+        final_alert_active = bool(
+            business_decision.get("is_true_fall")
+            if active_event is not None and active_event.vlm_analysis is not None
+            else alert_active
+        )
         if active_event is not None:
             public_fall_state = _public_fall_state(safety)
         else:
@@ -1233,7 +1304,7 @@ class PostFallV2RuntimeService:
             "reason": decision.reason,
             "evidence": decision.evidence.to_record(),
             "candidate_alert": candidate_alert_active,
-            "final_alert": alert_active,
+            "final_alert": final_alert_active,
             "decision": business_decision,
             "qwen_gate": qwen_gate,
             "decision_authority": "event_state_machine",
@@ -1272,12 +1343,12 @@ class PostFallV2RuntimeService:
             },
             fall_decision=fall_decision,
             alarm_preview={
-                "confirmed": bool(alert_active and safety is not None and safety.path == "transition_fall"),
-                "requires_attention": alert_active,
+                "confirmed": bool(final_alert_active and safety is not None and safety.path == "transition_fall"),
+                "requires_attention": final_alert_active,
                 "candidate_alert": candidate_alert_active,
-                "final_alert": alert_active,
+                "final_alert": final_alert_active,
                 "decision": business_decision,
-                "risk_level": "high" if alert_active else "low",
+                "risk_level": "high" if final_alert_active else "low",
                 "fall_probability": binary.fall_probability,
                 "source": "post_fall_v2_binary",
                 "qwen_gate": qwen_gate,
@@ -1342,10 +1413,15 @@ class PostFallV2RuntimeService:
                 safety=safety,
                 candidate_alert_active=bool(fall_decision.get("candidate_alert")),
             )
+            final_alert_active = bool(
+                business_decision.get("is_true_fall")
+                if event.vlm_analysis is not None
+                else alert_active
+            )
             fall_decision["fall_state"] = _public_fall_state(safety)
             fall_decision["status"] = fall_decision["fall_state"]
             fall_decision["decision_authority"] = "event_state_machine"
-            fall_decision["final_alert"] = alert_active
+            fall_decision["final_alert"] = final_alert_active
             fall_decision["decision"] = business_decision
             if safety is not None:
                 fall_decision["safety_decision"] = safety.to_record()
@@ -1361,15 +1437,15 @@ class PostFallV2RuntimeService:
             alarm_preview = dict(obj.alarm_preview or {})
             alarm_preview.update(
                 {
-                    "confirmed": bool(alert_active and safety is not None and safety.path == "transition_fall"),
-                    "requires_attention": alert_active,
-                    "risk_level": "high" if alert_active else "low",
+                    "confirmed": bool(final_alert_active and safety is not None and safety.path == "transition_fall"),
+                    "requires_attention": final_alert_active,
+                    "risk_level": "high" if final_alert_active else "low",
                     "qwen_gate": qwen_gate,
                     "fall_verdict": fall_decision["fall_verdict"],
                     "high_risk_fall": fall_decision["high_risk_fall"],
                     "scene_type": fall_decision["scene_type"],
                     "recommended_action": fall_decision["recommended_action"],
-                    "final_alert": alert_active,
+                    "final_alert": final_alert_active,
                     "decision": business_decision,
                     "safety_outcome": safety.outcome if safety is not None else "observe",
                     "safety_path": safety.path if safety is not None else "uncertain_evidence",
@@ -1620,36 +1696,25 @@ def _business_decision_payload(
     candidate_alert_active: bool,
 ) -> dict[str, object]:
     detail = event.vlm_analysis if event is not None else None
-    summary = ""
-    activity = "unknown"
-    confidence: float | None = None
-    if detail is not None:
-        summary = (detail.summary or detail.posture or "").strip()
-        activity = (detail.activity or detail.scene_type or detail.fall_verdict or "unknown").strip()
-        confidence = _as_float(detail.confidence)
-    if not summary and candidate_alert_active:
-        summary = "小模型已触发跌倒候选，等待本地千问复核。"
-    elif not summary:
-        summary = "未触发跌倒候选。"
-
-    final_alert = bool(safety is not None and safety.outcome == "alert")
-    if safety is None:
-        decision_source = "binary_candidate" if candidate_alert_active else "binary_monitor"
-    elif safety.outcome == "dismiss":
-        decision_source = "vlm_semantic_review"
-    elif detail is not None and detail.analysis_status == "completed" and detail.high_risk_fall == 1:
-        decision_source = "vlm_semantic_review"
-    elif final_alert:
-        decision_source = "detector_safety_override"
-    else:
-        decision_source = "safety_observation"
-
+    evidence = event.binary_evidence if event is not None and isinstance(event.binary_evidence, dict) else {}
+    binary_probability = _as_float(
+        (binary.fall_probability if binary is not None else None)
+        or evidence.get("fall_probability")
+        or evidence.get("max_fall_probability")
+    )
+    decision = build_competition_decision(
+        detail=detail,
+        binary_probability=binary_probability,
+        persistent_strong_candidate=bool(evidence.get("persistent_strong_candidate")),
+        candidate_alert_active=candidate_alert_active,
+    )
+    final_alert = bool(
+        decision.get("is_true_fall")
+        if detail is not None
+        else (safety is not None and safety.outcome == "alert")
+    )
     return {
-        "last_frame_description": summary[:120],
-        "is_true_fall": final_alert,
-        "activity": activity,
-        "confidence": confidence if confidence is not None else _as_float(binary.fall_probability if binary else None),
-        "decision_source": decision_source,
+        **decision,
         "candidate_alert": candidate_alert_active,
         "final_alert": final_alert,
     }
@@ -1665,6 +1730,12 @@ def _qwen_gate_state(event: FallEvent | None) -> str:
     if detail is None:
         return "pending"
     if detail.analysis_status != "completed":
+        return "observe"
+    if detail.activity in {"confirmed_fall", "possible_fall_or_distress"}:
+        return "confirmed"
+    if detail.activity in {"lying_using_phone", "lying_reading", "normal_activity"}:
+        return "denied"
+    if detail.activity == "uncertain":
         return "observe"
     if detail.fall_verdict == "confirmed_fall" and int(detail.high_risk_fall or 0) == 1:
         return "confirmed"

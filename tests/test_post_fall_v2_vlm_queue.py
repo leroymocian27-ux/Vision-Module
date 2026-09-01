@@ -4,7 +4,7 @@ import threading
 import time
 
 from app.post_fall_v2.schemas import FallDetailResult, FallEvent, KeyframePackage
-from app.post_fall_v2.vlm_review_service import VLMReviewService
+from app.post_fall_v2.vlm_review_service import VLMReviewService, build_competition_decision
 
 
 class _BlockingAnalyzer:
@@ -65,6 +65,77 @@ def test_timeout_keeps_incident_in_flight_until_underlying_worker_exits() -> Non
     worker.join(2)
     _wait_for(lambda: service.queue_depth == 0)
     service.shutdown()
+
+
+def test_competition_decision_allows_clear_phone_false_and_failure_true() -> None:
+    phone = FallDetailResult(
+        incident_id="phone",
+        analysis_status="completed",
+        activity="lying_using_phone",
+        visible_distress="no",
+        vlm_is_true_fall=False,
+        confidence=0.98,
+        last_frame_description="男子俯卧在垫子上，双手持手机。",
+    )
+    phone_decision = build_competition_decision(
+        detail=phone,
+        binary_probability=0.95,
+        persistent_strong_candidate=True,
+        candidate_alert_active=True,
+    )
+    assert phone_decision == {
+        "last_frame_description": "男子俯卧在垫子上，双手持手机。",
+        "is_true_fall": False,
+        "activity": "lying_using_phone",
+        "confidence": 0.98,
+        "decision_source": "vlm_semantic_review",
+    }
+
+    failed = FallDetailResult(
+        incident_id="failed",
+        analysis_status="parse_failed",
+        error_message="invalid JSON",
+        failure_reason="qwen_invalid_output",
+    )
+    failed_decision = build_competition_decision(
+        detail=failed,
+        binary_probability=0.6,
+        persistent_strong_candidate=False,
+        candidate_alert_active=True,
+    )
+    assert failed_decision["is_true_fall"] is True
+    assert failed_decision["decision_source"] == "vlm_failure_fallback"
+    assert failed_decision["failure_reason"] == "qwen_invalid_output"
+
+
+def test_competition_decision_requires_strict_normal_conditions() -> None:
+    normal = FallDetailResult(
+        incident_id="normal",
+        analysis_status="completed",
+        activity="normal_activity",
+        posture_state="upright",
+        visible_distress="no",
+        vlm_is_true_fall=False,
+        confidence=0.94,
+        last_frame_description="人物正常弯腰取物，动作受控。",
+    )
+    dismissed = build_competition_decision(
+        detail=normal,
+        binary_probability=0.6,
+        persistent_strong_candidate=False,
+        candidate_alert_active=True,
+    )
+    assert dismissed["is_true_fall"] is False
+    assert dismissed["decision_source"] == "vlm_semantic_review"
+
+    overridden = build_competition_decision(
+        detail=normal,
+        binary_probability=0.95,
+        persistent_strong_candidate=True,
+        candidate_alert_active=True,
+    )
+    assert overridden["is_true_fall"] is True
+    assert overridden["decision_source"] == "detector_safety_override"
 
 
 def _event(incident_id: str) -> FallEvent:

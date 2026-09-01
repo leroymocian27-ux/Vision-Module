@@ -186,6 +186,47 @@ def test_keyframe_collection_degrades_but_still_runs_one_vlm_call() -> None:
     assert outbox.records[-1].metadata["keyframes"]["status"] == "degraded"
 
 
+def test_immediate_vlm_path_exports_current_ring_buffer_keyframes() -> None:
+    buffer = FrameBuffer("camera_01")
+    observed_media = []
+    outbox = _Outbox()
+
+    class _ProviderObservingAnalyzer(_Analyzer):
+        def analyze_fall_event(self, event, keyframes):
+            images, missing = service.qwen_images_for_incident(event.incident_id)
+            observed_media.append((images, missing))
+            return super().analyze_fall_event(event, keyframes)
+
+    analyzer = _ProviderObservingAnalyzer()
+    service = PostFallV2RuntimeService(
+        settings=replace(
+            _settings(),
+            post_fall_v2_keyframe_post_collection_enabled=False,
+            event_keyframe_offsets_ms=(0,),
+        ),
+        source_manager=_SourceManager(buffer),
+        realtime_store=RealtimeResultStore(),
+        result_channels=_NoopChannels(),
+        event_pipeline=SimpleNamespace(outbox=outbox),
+        vlm_review_service=_vlm(analyzer),
+        classifier=_Classifier([0.9] * 20),
+    )
+
+    service.start_for_camera("camera_01")
+    for _ in range(4):
+        buffer.update(np.zeros((48, 64, 3), dtype=np.uint8))
+        time.sleep(0.03)
+
+    wait_for(lambda: len(service.events()) == 1 and service.events()[0].vlm_status == "completed")
+    service.stop_all()
+
+    assert len(observed_media) == 1
+    images, missing = observed_media[0]
+    assert len(images) == 1
+    assert images[0].image_bytes[:2] == b"\xff\xd8"
+    assert missing == []
+
+
 def test_stop_for_camera_cancels_keyframe_collection() -> None:
     buffer = FrameBuffer("camera_01")
     analyzer = _Analyzer(delay=0.2)

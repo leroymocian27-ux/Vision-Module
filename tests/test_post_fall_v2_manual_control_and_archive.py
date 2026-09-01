@@ -101,7 +101,7 @@ def test_manual_control_defaults_binary_and_qwen_off() -> None:
     assert status["binary_enabled"] is False
     assert status["qwen_enabled"] is False
     assert status["runtime"]["running"] is False
-    assert status["performance"]["sample_fps"] == 3.0
+    assert status["performance"]["sample_fps"] == 10.0
     assert status["performance"]["ai_queue_depth"] == 0
     assert status["performance"]["qwen"]["armed"] is False
     assert status["performance"]["qwen"]["requests"] == 0

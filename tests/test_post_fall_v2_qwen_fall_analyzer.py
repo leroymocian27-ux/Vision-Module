@@ -43,38 +43,22 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
     assert detail.confidence == 0.65
     assert len(received) == 1
     assert len(received[0]["messages"][1]["images"]) == 3
-    assert received[0]["format"]["required"] == [
-        "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
-        "activity", "posture_state",
-        "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
-        "persistent_ground_state", "posture", "summary", "confidence",
-    ]
-    assert set(received[0]["format"]["properties"]) == {
-        "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
-        "activity", "posture_state",
-        "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
-        "persistent_ground_state", "posture", "summary", "confidence",
-    }
-    assert received[0]["format"]["properties"]["high_risk_fall"]["enum"] == [0, 1]
-    assert received[0]["format"]["properties"]["posture"]["maxLength"] == 80
-    assert received[0]["format"]["properties"]["summary"]["maxLength"] == 160
-    assert received[0]["options"]["num_ctx"] == 8192
+    assert received[0]["format"]["required"] == ["e", "s", "d", "f", "c", "t"]
+    assert set(received[0]["format"]["properties"]) == {"e", "s", "d", "f", "c", "t"}
+    assert received[0]["format"]["properties"]["e"]["enum"] == ["fall", "risk", "phone", "reading", "normal", "uncertain"]
+    assert received[0]["format"]["properties"]["t"]["maxLength"] == 40
+    assert received[0]["options"]["num_ctx"] == 2048
     assert received[0]["keep_alive"] == -1
     assert received[0]["options"]["num_predict"] == 96
     assert received[0]["options"]["temperature"] == 0.0
     request_text = json.dumps(received[0], ensure_ascii=False)
-    assert "最终是否告警由确定性事件状态机决定" in request_text
-    assert "示例 1 主动坐下看书或玩手机" in request_text
-    assert "示例 3 真实跌倒" in request_text
-    assert "示例 4 触发帧已在翻倒过程" in request_text
-    assert "若没有看到人物怎样进入低位，必须诚实输出 unclear" in request_text
-    assert "confirmed_fall 只允许两条证据路径" in request_text
-    assert "后帧持续异常卧地、未恢复且无主动行为证据" in request_text
-    assert "high_risk_fall" in request_text
-    assert "坐在椅子上休息" in request_text
-    assert "以下开始分析当前真实事件" in request_text
-    assert "只有真实看见较高姿态到明显非自主失衡" not in request_text
+    assert "养老跌倒复核" in request_text
+    assert "fall / risk / phone / reading / normal / uncertain" in request_text
+    assert "示例 1 主动坐下看书或玩手机" not in request_text
+    assert "high_risk_fall" not in request_text
     request_context = json.loads(received[0]["messages"][1]["content"])
+    assert request_context["profile"] == "compact_v2"
+    assert request_context["prompt_version"] == "compact_v2"
     assert request_context["keyframe_timeline"] == [
         "图片 1：T0，候选事件触发附近，角色 trigger",
         "图片 2：T+1000ms，事件触发后，角色 trigger",
@@ -111,11 +95,11 @@ def test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_sam
     assert len(received[1]["messages"][1]["images"]) == 3
     first_context = json.loads(received[0]["messages"][1]["content"])
     retry_context = json.loads(received[1]["messages"][1]["content"])
-    assert first_context["profile"] == "full"
-    assert retry_context["profile"] == "compact_retry"
-    assert "示例 1 主动坐下看书或玩手机" in first_context["task"]
+    assert first_context["profile"] == "compact_v2"
+    assert retry_context["profile"] == "compact_v2"
+    assert "养老跌倒复核" in first_context["task"]
     assert "示例 1 主动坐下看书或玩手机" not in retry_context["task"]
-    assert received[1]["options"]["num_ctx"] == 8192
+    assert received[1]["options"]["num_ctx"] == 2048
     assert received[1]["keep_alive"] == -1
 
 
@@ -128,6 +112,47 @@ def test_qwen_fall_analyzer_parse_failure_keeps_event_context() -> None:
     assert detail.analysis_status == "parse_failed"
     assert "千问" in detail.summary
     assert detail.error_message
+
+
+def test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields() -> None:
+    analyzer = _analyzer(
+        lambda *_: {
+            "message": {
+                "content": json.dumps(
+                    {
+                        "e": "phone",
+                        "s": "ground",
+                        "d": "no",
+                        "f": False,
+                        "c": 0.98,
+                        "t": "男子俯卧在垫子上双手持手机。",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        },
+        images=[_image(-1000), _image(-500), _image(0)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.semantic_event == "phone"
+    assert detail.activity == "lying_using_phone"
+    assert detail.visible_distress == "no"
+    assert detail.vlm_is_true_fall is False
+    assert detail.confidence == 0.98
+    assert detail.last_frame_description == "男子俯卧在垫子上双手持手机。"
+    assert detail.prompt_version == "compact_v2"
+    assert detail.schema_version == "compact_v1"
+    assert detail.raw_compact_json == {
+        "c": 0.98,
+        "d": "no",
+        "e": "phone",
+        "f": False,
+        "s": "ground",
+        "t": "男子俯卧在垫子上双手持手机。",
+    }
 
 
 def test_qwen_fall_analyzer_recovers_missing_detail_fields() -> None:
@@ -659,10 +684,10 @@ def test_qwen_fall_analyzer_accepts_single_confirmed_fall_verdict() -> None:
 
     assert detail.analysis_status == "completed"
     assert detail.fall_verdict == "confirmed_fall"
-    assert calls == 2
+    assert calls == 1
 
 
-def test_qwen_fall_analyzer_counterchecks_confirmed_fall_and_keeps_deny() -> None:
+def test_qwen_fall_analyzer_does_not_countercheck_confirmed_fall() -> None:
     calls = 0
     review_modes: list[str] = []
     responses = [
@@ -693,9 +718,9 @@ def test_qwen_fall_analyzer_counterchecks_confirmed_fall_and_keeps_deny() -> Non
     detail = analyzer.analyze_fall_event(_event(), _package())
 
     assert detail.analysis_status == "completed"
-    assert detail.fall_verdict == "unclear"
-    assert calls == 2
-    assert review_modes == ["首次复核", "反证复核"]
+    assert detail.fall_verdict == "confirmed_fall"
+    assert calls == 1
+    assert review_modes == ["首次复核"]
 
 
 def test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl() -> None:
@@ -726,7 +751,7 @@ def test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl(
     detail = analyzer.analyze_fall_event(_event(), _package())
 
     assert detail.fall_verdict == "confirmed_fall"
-    assert calls == 2
+    assert calls == 1
 
 
 def test_qwen_fall_analyzer_extracts_json_from_outer_markdown_response() -> None:

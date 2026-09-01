@@ -200,6 +200,8 @@ class BinaryDecisionEvidence:
     max_fall_probability: float | None
     candidate_duration_ms: int
     threshold: float
+    probability_window: list[float] = field(default_factory=list)
+    persistent_strong_candidate: bool = False
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)
@@ -314,6 +316,16 @@ class FallDetailResult:
     fall_transition_visible: bool | None = None
     intentional_action_evidence: bool | None = None
     recovery_observed: bool | None = None
+    semantic_event: str | None = None
+    visible_distress: str = "unclear"
+    vlm_is_true_fall: bool | None = None
+    last_frame_description: str | None = None
+    raw_compact_json: dict[str, Any] | None = None
+    prompt_version: str | None = None
+    schema_version: str | None = None
+    fusion_version: str | None = None
+    failure_reason: str | None = None
+    timing: dict[str, Any] = field(default_factory=dict)
     request_started_at: str | None = None
     completed_at: str | None = None
     qwen_start_frames_received: int | None = None

@@ -55,6 +55,18 @@ _EXPECTED_PROVIDER_FIELDS = {
     "recommended_action",
 }
 
+# Compact PFV2 Qwen schema mapping. Keep this as the single source of truth:
+# e=semantic_event, s=posture_state, d=visible_distress,
+# f=VLM direct true-fall/risk judgement, c=confidence, t=last_frame_description.
+EVENT_MAP = {
+    "fall": "confirmed_fall",
+    "risk": "possible_fall_or_distress",
+    "phone": "lying_using_phone",
+    "reading": "lying_reading",
+    "normal": "normal_activity",
+    "uncertain": "uncertain",
+}
+
 
 class BaseVLMReviewAdapter:
     """Optional provider adapter for event-level semantic review.

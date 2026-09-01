@@ -144,6 +144,28 @@ class BinaryDecisionAggregator:
     def latest(self, camera_id: str) -> BinaryAggregateDecision | None:
         return self._last_decision.get(camera_id)
 
+    def recent_probabilities(self, camera_id: str, *, limit: int = 3) -> list[float]:
+        window = self._windows.get(camera_id)
+        if not window:
+            return []
+        probabilities = [
+            float(item.fall_probability)
+            for _, item in window
+            if item.valid and item.fall_probability is not None
+        ]
+        return [round(value, 6) for value in probabilities[-max(1, int(limit)):]]
+
+    def persistent_strong_candidate(
+        self,
+        camera_id: str,
+        *,
+        threshold: float = 0.8,
+        min_count: int = 2,
+        limit: int = 3,
+    ) -> bool:
+        probabilities = self.recent_probabilities(camera_id, limit=limit)
+        return sum(1 for value in probabilities if value >= threshold) >= max(1, int(min_count))
+
     def reset(self, camera_id: str) -> None:
         self._windows.pop(camera_id, None)
         self._state.pop(camera_id, None)
@@ -192,6 +214,8 @@ class BinaryDecisionAggregator:
             max_fall_probability=round(max(probabilities), 6) if probabilities else None,
             candidate_duration_ms=candidate_duration_ms,
             threshold=self.config.threshold,
+            probability_window=self.recent_probabilities(camera_id, limit=3),
+            persistent_strong_candidate=self.persistent_strong_candidate(camera_id),
         )
         return BinaryAggregateDecision(
             state=state,

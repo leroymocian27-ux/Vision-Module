@@ -26,11 +26,13 @@ class QwenKeyframeWorker:
         max_images: int,
         max_image_bytes: int,
         update: Callable[[str, QwenKeyframeAdvisory], None],
+        max_pending_events: int = 2,
     ) -> None:
         self.analyzer = analyzer
         self.archive = archive
         self.max_images = max(1, int(max_images))
         self.max_image_bytes = max(1024, int(max_image_bytes))
+        self.max_pending_events = max(1, int(max_pending_events))
         self._update = update
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qwen-keyframe")
         self._lock = threading.Lock()
@@ -42,6 +44,8 @@ class QwenKeyframeWorker:
             return False
         with self._lock:
             if self._stopped or record.incident_id in self._futures:
+                return False
+            if len(self._futures) >= self.max_pending_events:
                 return False
             previous = record.qwen_advisory
             if previous is not None and previous.analysis_status in {"pending", "processing", "completed"}:
@@ -59,7 +63,11 @@ class QwenKeyframeWorker:
 
     def status(self) -> dict[str, int | bool]:
         with self._lock:
-            return {"running": not self._stopped, "queued_or_running": len(self._futures)}
+            return {
+                "running": not self._stopped,
+                "queued_or_running": len(self._futures),
+                "max_pending_events": self.max_pending_events,
+            }
 
     def stop(self) -> None:
         with self._lock:

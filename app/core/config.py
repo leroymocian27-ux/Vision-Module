@@ -410,7 +410,7 @@ class Settings:
     post_fall_v2_qwen_image_max_edge: int = _get_int("POST_FALL_V2_QWEN_IMAGE_MAX_EDGE", 384)
     post_fall_v2_qwen_jpeg_quality: int = _get_int("POST_FALL_V2_QWEN_JPEG_QUALITY", 86)
     post_fall_v2_qwen_queue_capacity: int = _get_int("POST_FALL_V2_QWEN_QUEUE_CAPACITY", 2)
-    post_fall_v2_qwen_num_ctx: int = _get_int("POST_FALL_V2_QWEN_NUM_CTX", 8192)
+    post_fall_v2_qwen_num_ctx: int = _get_int("POST_FALL_V2_QWEN_NUM_CTX", 2048)
     post_fall_v2_qwen_max_output_tokens: int = _get_int("POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS", 96)
     post_fall_v2_qwen_temperature: float = _get_float("POST_FALL_V2_QWEN_TEMPERATURE", 0.0)
     post_fall_v2_qwen_context_retry_enabled: bool = _get_bool("POST_FALL_V2_QWEN_CONTEXT_RETRY_ENABLED", True)
@@ -701,8 +701,8 @@ class Settings:
             raise ValueError("POST_FALL_V2_QWEN_JPEG_QUALITY must be between 40 and 95")
         if self.post_fall_v2_qwen_queue_capacity < 1:
             raise ValueError("POST_FALL_V2_QWEN_QUEUE_CAPACITY must be at least 1")
-        if self.post_fall_v2_qwen_num_ctx < 4096:
-            raise ValueError("POST_FALL_V2_QWEN_NUM_CTX must be at least 4096")
+        if self.post_fall_v2_qwen_num_ctx < 512:
+            raise ValueError("POST_FALL_V2_QWEN_NUM_CTX must be at least 512")
         if self.post_fall_v2_qwen_max_output_tokens < 64 or self.post_fall_v2_qwen_max_output_tokens > 1024:
             raise ValueError("POST_FALL_V2_QWEN_MAX_OUTPUT_TOKENS must be between 64 and 1024")
         if self.post_fall_v2_qwen_temperature < 0:

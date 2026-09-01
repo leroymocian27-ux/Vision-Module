@@ -45,7 +45,7 @@ class PFV2QwenFallAnalyzer:
         model_name: str,
         timeout_seconds: float,
         image_provider: QwenImageProvider,
-        num_ctx: int = 8192,
+        num_ctx: int = 2048,
         max_output_tokens: int = 96,
         temperature: float = 0.0,
         context_retry_enabled: bool = True,
@@ -86,6 +86,10 @@ class PFV2QwenFallAnalyzer:
                 review_points=["检查关键帧采集链路是否可用。"],
                 model_name=self.analyzer.model_name,
                 error_message="no_qwen_keyframe_images",
+                failure_reason="no_qwen_keyframe_images",
+                prompt_version="compact_v2",
+                schema_version="compact_v1",
+                fusion_version="demo_fusion_v2",
                 request_started_at=request_started_at,
                 completed_at=event_now_iso(),
             )
@@ -104,35 +108,6 @@ class PFV2QwenFallAnalyzer:
                 keyframe_status=keyframes.status,
                 missing_offsets_ms=keyframes.missing_offsets_ms,
             )
-            if detail.fall_verdict == "confirmed_fall":
-                try:
-                    countercheck = self.analyzer.analyze_post_fall(
-                        images=_bounded_images(images),
-                        keyframe_status=keyframes.status,
-                        missing_offsets_ms=keyframes.missing_offsets_ms,
-                        review_mode="countercheck",
-                    )
-                    model_log_bus.publish(
-                        "qwen",
-                        "qwen_countercheck_result",
-                        camera_id=event.camera_id,
-                        incident_id=event.incident_id,
-                        fall_verdict=countercheck.fall_verdict,
-                        confidence=countercheck.confidence,
-                        latency_ms=countercheck.latency_ms,
-                        model=self.analyzer.model_name,
-                    )
-                    if _countercheck_is_hard_deny(countercheck):
-                        detail = countercheck
-                except QwenKeyframeError as exc:
-                    model_log_bus.publish(
-                        "qwen",
-                        "qwen_countercheck_failed",
-                        level="warning",
-                        camera_id=event.camera_id,
-                        incident_id=event.incident_id,
-                        error=str(exc),
-                    )
         except QwenKeyframeTimeout as exc:
             model_log_bus.publish(
                 "qwen",
@@ -224,6 +199,16 @@ class PFV2QwenFallAnalyzer:
             fall_transition_visible=detail.fall_transition_visible,
             intentional_action_evidence=detail.intentional_action_evidence,
             recovery_observed=detail.recovery_observed,
+            semantic_event=detail.semantic_event,
+            visible_distress=detail.visible_distress,
+            vlm_is_true_fall=detail.vlm_is_true_fall,
+            last_frame_description=detail.last_frame_description,
+            raw_compact_json=detail.raw_compact_json,
+            prompt_version=detail.prompt_version,
+            schema_version=detail.schema_version,
+            fusion_version=detail.fusion_version,
+            failure_reason=detail.failure_reason,
+            timing=dict(detail.timing or {}),
             request_started_at=request_started_at,
             completed_at=event_now_iso(),
         )
@@ -312,6 +297,10 @@ def _failure(
         confidence=None,
         model_name=model_name,
         error_message=message or reason,
+        failure_reason=reason,
+        prompt_version="compact_v2",
+        schema_version="compact_v1",
+        fusion_version="demo_fusion_v2",
         request_started_at=event_now_iso(),
         completed_at=event_now_iso(),
     )

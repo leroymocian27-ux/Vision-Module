@@ -14,6 +14,7 @@ import requests
 from pydantic import ValidationError
 
 from app.events.schemas import EventSemantics, QwenKeyframeAdvisory, event_now_iso
+from app.events.vlm_adapter import EVENT_MAP
 
 
 class QwenKeyframeError(RuntimeError):
@@ -71,6 +72,16 @@ class QwenPostFallDetail:
     fall_transition_visible: bool | None = None
     intentional_action_evidence: bool | None = None
     recovery_observed: bool | None = None
+    semantic_event: str | None = None
+    visible_distress: str = "unclear"
+    vlm_is_true_fall: bool | None = None
+    last_frame_description: str | None = None
+    raw_compact_json: dict[str, Any] | None = None
+    prompt_version: str | None = None
+    schema_version: str | None = None
+    fusion_version: str | None = None
+    failure_reason: str | None = None
+    timing: dict[str, Any] | None = None
 
 
 QwenTransport = Callable[[Mapping[str, Any], float], Union[Mapping[str, Any], str]]
@@ -245,36 +256,21 @@ _FALL_VERDICT_ALIASES = {
     "画面不足": "insufficient_visual_evidence",
 }
 
-_POST_FALL_SYSTEM_PROMPT = """你是 Post-Fall V2 候选事件视觉复核模型。前级 FALL 仅表示候选，不代表真实跌倒。
+POST_FALL_PROMPT_VERSION = "compact_v2"
+POST_FALL_SCHEMA_VERSION = "compact_v1"
+POST_FALL_FUSION_VERSION = "demo_fusion_v2"
 
-根据按时间顺序排列的关键帧，独立判断人物实际动作和可见状态，只描述画面证据，不推测未观察到的过程。
+_POST_FALL_SYSTEM_PROMPT = """你负责复核养老场景中的跌倒候选事件。
 
-最终高危控制规则：
-`high_risk_fall` 是最终跌倒告警硬控制位，只能为整数 0 或 1，默认必须为 0。
-只有视觉证据明确支持真实、非主动、具有危险性的跌倒，才允许 `high_risk_fall=1`。
-正常站立、行走、坐下、坐在椅子/沙发/床边休息、弯腰、蹲下、主动受控下降、主动躺下、低姿态看书、玩手机、休息、睡觉、仅靠近地面、仅横向姿态、仅静止、证据不足、遮挡严重、无法判断、只是建议人工复核，都必须保持 `high_risk_fall=0`。
-如果最早关键帧缺失，但后帧已经清楚呈现非自主翻倒、冲击后倒地或持续异常卧地状态，仍可判为 `confirmed_fall`；如果既看不到进入过程，也看不到这类异常倒地状态，才输出 `uncertain`。
-“建议人工复核”绝对不等于“确认跌倒”，不能触发高危值。
-若 `high_risk_fall=1`，则 `fall_verdict` 必须为 `confirmed_fall`，`scene_type` 必须为 `fall`，`recommended_action` 必须为 `emergency_alert`。
-若 `high_risk_fall=0`，则 `fall_verdict` 不得为 `confirmed_fall`，`recommended_action` 不得为 `emergency_alert`。
+Binary FALL只是候选，不是视觉事实。
 
-判定规则：
+根据三张按时间排序的图片判断人物是真实跌倒、异常风险、玩手机、阅读、正常活动还是无法确认。
 
-- `confirmed_fall`：明确看到人物发生非自主失衡或失控下落并倒地；或虽未拍到完整过程，但后帧已明确呈现非自主翻倒、冲击后倒地或异常卧地状态，持续未恢复，且没有主动坐下、主动躺下、阅读、玩手机、休息等自主行为证据。
-- `non_fall`：站立、行走、转身、普通活动、稳定坐姿、坐椅子休息、主动低姿态、阅读、玩手机、休息或睡觉。
-- `uncertain`：只看到人物已处于地面或低位、动作过程缺失、证据矛盾，或无法可靠判断是否发生跌倒。
-- `insufficient_visual_evidence`：人物不可见、严重遮挡或画面质量不足。
+真实跌倒包括明显非自主失衡、失控下落或异常倒地。
+稳定玩手机、稳定阅读以及明确正常活动属于非真实跌倒。
 
-重要约束：
-不得仅因前级 FALL、身体倾斜、运动模糊、坐着、躺着或靠近地面而判定跌倒。
-未看到跌倒转场且后帧也没有异常翻倒、冲击后倒地或持续异常卧地状态时，即使人物在所提供关键帧时间跨度内持续低位，也不得推测曾发生跌倒。
-如果人物臀部或躯干受到椅子、沙发、床等正常支撑面支撑，姿态稳定且没有突然失衡或失去支撑，必须输出 `scene_type=seated_rest`、`high_risk_fall=0`、`fall_verdict=non_fall`、`recommended_action=no_alert`。
-`fall_transition_visible` 只能根据真实可见转场填写。
-主动行为只有在有明确可见证据时才能成立。
-`persistent_ground_state = observed` 只表示人物在所提供关键帧时间跨度内持续低位，不表示已经持续十秒。
-`fall_verdict`、`high_risk_fall`、`scene_type`、`recommended_action`、`posture_state`、`fall_transition_visible`、`intentional_action_evidence`、`recovery_observed`、`persistent_ground_state` 和 `summary` 必须语义一致。
-
-只返回规定的 JSON 对象，不输出解释、Markdown 或额外文字。"""
+只依据图片中可见事实判断，不推测疾病或身份。
+只返回符合Schema的JSON。"""
 
 
 class QwenKeyframeAnalyzer:
@@ -287,7 +283,7 @@ class QwenKeyframeAnalyzer:
         model_name: str,
         timeout_seconds: float,
         transport: QwenTransport | None = None,
-        num_ctx: int = 8192,
+        num_ctx: int = 2048,
         max_output_tokens: int = 96,
         temperature: float = 0.0,
         context_retry_enabled: bool = True,
@@ -296,7 +292,7 @@ class QwenKeyframeAnalyzer:
         self.model_name = model_name
         self.timeout_seconds = max(0.1, float(timeout_seconds))
         self._transport = transport
-        self.num_ctx = max(4096, int(num_ctx))
+        self.num_ctx = max(512, int(num_ctx))
         self.max_output_tokens = max(64, min(1024, int(max_output_tokens)))
         self.temperature = max(0.0, float(temperature))
         self.context_retry_enabled = bool(context_retry_enabled)
@@ -390,6 +386,7 @@ class QwenKeyframeAnalyzer:
             review_mode=review_mode,
         )
         started = time.perf_counter()
+        schema_parse_ms = 0.0
         try:
             try:
                 response_payload = self._send_payload(payload)
@@ -414,24 +411,38 @@ class QwenKeyframeAnalyzer:
             raise QwenKeyframeInvalidOutput("Ollama returned invalid response JSON") from exc
         raw_response = _bounded_raw_response(response_payload)
         try:
+            parse_started = time.perf_counter()
             parsed = _parse_post_fall_detail(_response_content(response_payload))
+            schema_parse_ms = (time.perf_counter() - parse_started) * 1000
         except QwenKeyframeInvalidOutput as exc:
             self._record_post_fall_diagnostic(
                 status="parse_failed",
                 raw_response=raw_response,
                 normalized_response=None,
                 failure_reason=str(exc),
+                timing={
+                    **_ollama_timing_ms(response_payload),
+                    "schema_parse_ms": round((time.perf_counter() - started) * 1000, 3),
+                    "ollama_request_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
             )
             raise
+        timing = {
+            **_ollama_timing_ms(response_payload),
+            "schema_parse_ms": round(schema_parse_ms, 3),
+            "ollama_request_ms": round((time.perf_counter() - started) * 1000, 3),
+        }
         normalized_response = {
             **parsed.__dict__,
             "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+            "timing": timing,
         }
         self._record_post_fall_diagnostic(
             status="completed",
             raw_response=raw_response,
             normalized_response=normalized_response,
             failure_reason=None,
+            timing=timing,
         )
         return QwenPostFallDetail(
             **normalized_response
@@ -465,6 +476,7 @@ class QwenKeyframeAnalyzer:
         raw_response: str | None,
         normalized_response: Mapping[str, Any] | None,
         failure_reason: str | None,
+        timing: Mapping[str, Any] | None = None,
     ) -> None:
         with self._diagnostic_lock:
             self._last_post_fall_diagnostic = {
@@ -473,6 +485,7 @@ class QwenKeyframeAnalyzer:
                 "raw_response": raw_response,
                 "normalized_response": dict(normalized_response) if normalized_response is not None else None,
                 "failure_reason": failure_reason,
+                "timing": dict(timing or {}),
             }
 
     def build_payload(self, *, semantics: EventSemantics | None, images: Sequence[QwenImageInput]) -> dict[str, Any]:
@@ -525,12 +538,14 @@ class QwenKeyframeAnalyzer:
         keyframe_status: str,
         missing_offsets_ms: Sequence[int] = (),
         review_mode: str = "initial",
-        compact: bool = False,
+        compact: bool = True,
     ) -> dict[str, Any]:
         countercheck = review_mode == "countercheck"
+        task = _build_compact_post_fall_task(countercheck=countercheck) if compact else _build_post_fall_task(countercheck=countercheck)
         content = {
-            "schema_version": "pfv2_post_fall_input.v1",
-            "task": _build_compact_post_fall_task(countercheck=countercheck) if compact else _build_post_fall_task(countercheck=countercheck),
+            "schema_version": "pfv2_post_fall_input.compact_v2" if compact else "pfv2_post_fall_input.v1",
+            "prompt_version": POST_FALL_PROMPT_VERSION if compact else "full_legacy_v1",
+            "task": task,
             "keyframes": [
                 {"offset_ms": image.offset_ms, "role": image.role}
                 for image in images
@@ -539,31 +554,12 @@ class QwenKeyframeAnalyzer:
             "keyframe_status": _safe_event_value(keyframe_status),
             "missing_offsets_ms": [int(value) for value in missing_offsets_ms],
             "review_mode": "反证复核" if countercheck else "首次复核",
-            "constraints": [
+            "constraints": _compact_post_fall_constraints() if compact else [
                 "只返回符合给定结构的 JSON 对象，不要输出解释、Markdown 或额外文字。",
                 "所有自然语言描述必须使用简体中文，不得出现英文单词。",
-                "只输出安全判定所需字段；最终是否告警由确定性事件状态机决定，不由你直接决定。",
-                "posture 不超过 40 个汉字，summary 不超过 80 个汉字；两者均只描述可见画面，不重复说明。",
-                "示例只用于学习判定边界，不得把示例人物、物品、动作或场景复制到当前事件。",
-                "这是前级模型触发的候选事件，候选事件可能是正常活动、主动低姿态、画面不足或真实跌倒；必须从零判断实际动作。",
-                "先判断连续关键帧实际发生了什么：正常活动、主动受控进入低位、真实非自主失衡倒地，还是过程不清楚。",
-                "confirmed_fall 只允许两条证据路径：一是完整看到较高姿态到非自主失衡、失控下降并真正倒地的转场；二是虽未完整看到转场，但后帧持续异常卧地、未恢复且无主动行为证据。前者可将 fall_transition_visible 记为 true，后者可记为 false。",
-                "人物最终坐在地面、垫子、床或躺在地面本身，不是确认跌倒的充分依据。",
-                "只看到人物已处于低位且进入过程缺失时输出 unclear；如果后帧持续异常卧地、未恢复且无主动行为证据，则可判 confirmed_fall。",
-                "persistent_ground_state=observed 只表示在所给关键帧跨度内持续低位，不代表已经持续十秒。",
-                "如果文字已经明确说明主动坐下、主动躺下、坐下看书/玩手机、躺下看书/玩手机/睡觉、主动恢复低位、没有明显失衡，则 fall_verdict 不能写成 confirmed_fall。",
-                "如果先看见突然失衡、急速下落、肢体翻起、伸手撑地、撞向地面或非自主倒地，随后人物又坐起、阅读、玩手机或休息，仍可判 confirmed_fall。",
-                "清楚显示正常站立、正常行走、正常坐姿、普通活动或经过镜头，且没有真实倒地过程时，使用 normal_activity。",
-                "空场景、无人或画面不足时使用 insufficient_visual_evidence，不得猜测有人或跌倒。",
-                "不得诊断骨折、脑出血、昏迷、死亡或任何具体疾病。",
-                "不得推断身份、姓名、年龄、诊断、位置或房间。",
-                "不得把二分类候选结果当作视觉事实；不得仅凭持续低位、未起身、垫子或可见性来确认跌倒，也不得忽略跨帧真实可见的失衡过程。",
-                "触发帧或中间帧严重运动模糊时，不得把模糊本身当作失衡证据；必须结合前后清晰帧确认人体是否真的倒向地面。",
-                "如果后帧显示人物仍在站立、行走、经过镜头或只有腿部近景，而不是倒地后的低位状态，不能确认跌倒。",
-                "fall_verdict 和安全判定字段必须一致；证据矛盾时输出 unclear，不得用结论反推或补造证据。",
                 "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
             ],
-            "profile": "compact_retry" if compact else "full",
+            "profile": "compact_v2" if compact else "full_legacy",
         }
         serialized = json.dumps(content, ensure_ascii=False)
         if _PATH_PATTERN.search(serialized) or _URL_PATTERN.search(serialized):
@@ -683,6 +679,39 @@ def _bounded_raw_response(payload: Mapping[str, Any] | str) -> str:
     return value[:4096]
 
 
+def _ollama_timing_ms(payload: Mapping[str, Any] | str) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+
+    def duration_ms(name: str) -> float | None:
+        value = payload.get(name)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        return round(float(value) / 1_000_000.0, 3)
+
+    timing: dict[str, Any] = {
+        "ollama_load_ms": duration_ms("load_duration"),
+        "ollama_prompt_eval_ms": duration_ms("prompt_eval_duration"),
+        "ollama_eval_ms": duration_ms("eval_duration"),
+        "ollama_total_ms": duration_ms("total_duration"),
+        "prompt_eval_count": payload.get("prompt_eval_count"),
+        "eval_count": payload.get("eval_count"),
+        "ollama_raw_durations": {
+            key: payload.get(key)
+            for key in (
+                "load_duration",
+                "prompt_eval_duration",
+                "eval_duration",
+                "total_duration",
+                "prompt_eval_count",
+                "eval_count",
+            )
+            if key in payload
+        },
+    }
+    return {key: value for key, value in timing.items() if value is not None}
+
+
 def _parse_status_for_raw_response(status: str, raw_response: str | None) -> str:
     if status != "completed":
         return status
@@ -716,32 +745,14 @@ def _ollama_post_fall_json_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "high_risk_fall", "fall_verdict", "scene_type", "recommended_action",
-            "activity", "posture_state",
-            "fall_transition_visible", "intentional_action_evidence", "recovery_observed",
-            "persistent_ground_state", "posture", "summary", "confidence",
-        ],
+        "required": ["e", "s", "d", "f", "c", "t"],
         "properties": {
-            "high_risk_fall": {"type": "integer", "enum": [0, 1]},
-            "fall_verdict": {"type": "string", "enum": ["confirmed_fall", "non_fall", "uncertain", "insufficient_visual_evidence"]},
-            "scene_type": {
-                "type": "string",
-                "enum": [
-                    "fall", "seated_rest", "standing", "walking", "intentional_low_posture",
-                    "intentional_lying", "squatting", "bending", "other", "unknown",
-                ],
-            },
-            "recommended_action": {"type": "string", "enum": ["no_alert", "manual_review", "emergency_alert"]},
-            "activity": {"type": "string", "minLength": 1, "maxLength": 64},
-            "posture_state": {"type": "string", "enum": ["upright", "seated", "lying", "ground_low", "unknown"]},
-            "fall_transition_visible": {"type": "boolean"},
-            "intentional_action_evidence": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
-            "recovery_observed": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
-            "persistent_ground_state": {"type": "string", "enum": ["observed", "not_observed", "unknown", "insufficient_visual_evidence"]},
-            "posture": {"type": "string", "minLength": 1, "maxLength": 80},
-            "summary": {"type": "string", "minLength": 1, "maxLength": 160},
-            "confidence": {"anyOf": [{"type": "number", "minimum": 0.0, "maximum": 1.0}, {"type": "null"}]},
+            "e": {"type": "string", "enum": ["fall", "risk", "phone", "reading", "normal", "uncertain"]},
+            "s": {"type": "string", "enum": ["ground", "upright", "unclear"]},
+            "d": {"type": "string", "enum": ["yes", "no", "unclear"]},
+            "f": {"type": "boolean"},
+            "c": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "t": {"type": "string", "minLength": 1, "maxLength": 40},
         },
     }
 
@@ -779,6 +790,8 @@ def _parse_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallDetail:
     forbidden = set(payload) & _FORBIDDEN_OUTPUT_FIELDS
     if forbidden:
         raise QwenKeyframeInvalidOutput(f"Ollama post-fall detail contains forbidden fields: {sorted(forbidden)}")
+    if {"e", "s", "d", "f", "c", "t"}.issubset(set(payload)):
+        return _parse_compact_post_fall_detail(payload)
     normalized_payload = _normalize_post_fall_payload(payload)
     schema_version = normalized_payload.get("schema_version")
     if schema_version not in {None, "pfv2_post_fall_detail.v1"}:
@@ -902,6 +915,92 @@ def _parse_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallDetail:
         intentional_action_evidence=intentional_evidence,
         recovery_observed=recovery_observed,
     )
+
+
+def _parse_compact_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallDetail:
+    allowed = {"e", "s", "d", "f", "c", "t"}
+    unexpected = set(payload) - allowed
+    if unexpected:
+        raise QwenKeyframeInvalidOutput(f"Ollama compact post-fall detail contains unexpected fields: {sorted(unexpected)}")
+    semantic_event = str(payload.get("e") or "").strip().lower()
+    posture_state = str(payload.get("s") or "").strip().lower()
+    visible_distress = str(payload.get("d") or "").strip().lower()
+    vlm_is_true_fall = payload.get("f")
+    confidence = _normalize_confidence(payload.get("c"))
+    description = _safe_compact_description(payload.get("t"))
+    if semantic_event not in EVENT_MAP:
+        raise QwenKeyframeInvalidOutput("compact semantic_event is invalid")
+    if posture_state not in {"ground", "upright", "unclear"}:
+        raise QwenKeyframeInvalidOutput("compact posture_state is invalid")
+    if visible_distress not in {"yes", "no", "unclear"}:
+        raise QwenKeyframeInvalidOutput("compact visible_distress is invalid")
+    if not isinstance(vlm_is_true_fall, bool):
+        raise QwenKeyframeInvalidOutput("compact VLM fall flag must be boolean")
+    if confidence is None:
+        raise QwenKeyframeInvalidOutput("compact confidence must be in [0,1]")
+    activity = EVENT_MAP[semantic_event]
+    fall_verdict = {
+        "fall": "confirmed_fall",
+        "risk": "unclear",
+        "phone": "non_fall",
+        "reading": "non_fall",
+        "normal": "normal_activity",
+        "uncertain": "unclear",
+    }[semantic_event]
+    scene_type = {
+        "fall": "fall",
+        "risk": "other",
+        "phone": "intentional_low_posture",
+        "reading": "intentional_low_posture",
+        "normal": "other" if posture_state != "upright" else "standing",
+        "uncertain": "unknown",
+    }[semantic_event]
+    recommended_action = "emergency_alert" if semantic_event == "fall" else ("manual_review" if semantic_event in {"risk", "uncertain"} else "no_alert")
+    high_risk_fall = 1 if semantic_event == "fall" and vlm_is_true_fall else 0
+    return QwenPostFallDetail(
+        fall_verdict=fall_verdict,  # type: ignore[arg-type]
+        high_risk_fall=high_risk_fall,
+        scene_type=scene_type,
+        recommended_action=recommended_action,
+        positive_evidence=[description] if semantic_event in {"fall", "risk"} else [],
+        negative_evidence=[description] if semantic_event in {"phone", "reading", "normal"} else [],
+        posture=description,
+        movement_level="unknown",
+        attempt_to_stand="unknown",
+        persistent_ground_state="observed" if posture_state == "ground" else "not_observed",
+        possible_help_gesture="observed" if visible_distress == "yes" else "not_observed",
+        visibility="good" if semantic_event != "uncertain" else "limited",
+        occlusion="unknown",
+        scene_risks=[description] if visible_distress == "yes" else [],
+        summary=description,
+        review_points=[],
+        confidence=confidence,
+        latency_ms=0.0,
+        raw_fall_verdict=semantic_event,
+        consistency_status="unchanged",
+        consistency_reason=None,
+        activity=activity,
+        posture_state=posture_state,
+        fall_transition_visible=True if semantic_event == "fall" else False,
+        intentional_action_evidence=True if semantic_event in {"phone", "reading"} else (False if semantic_event in {"fall", "risk"} else None),
+        recovery_observed=False if semantic_event in {"fall", "risk"} else None,
+        semantic_event=semantic_event,
+        visible_distress=visible_distress,
+        vlm_is_true_fall=vlm_is_true_fall,
+        last_frame_description=description,
+        raw_compact_json={key: payload[key] for key in sorted(allowed)},
+        prompt_version=POST_FALL_PROMPT_VERSION,
+        schema_version=POST_FALL_SCHEMA_VERSION,
+        fusion_version=POST_FALL_FUSION_VERSION,
+        failure_reason=None,
+    )
+
+
+def _safe_compact_description(value: Any) -> str:
+    text = _safe_chinese_text(value)
+    if not text:
+        raise QwenKeyframeInvalidOutput("compact last_frame_description is required")
+    return _remove_medical_diagnosis(text)[:40]
 
 
 def _normalize_post_fall_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1573,28 +1672,52 @@ def _build_post_fall_task(*, countercheck: bool) -> str:
 
 def _build_compact_post_fall_task(*, countercheck: bool) -> str:
     lines = [
-        "按时间顺序分析同一事件的三张关键帧，独立判断是否真实跌倒。",
-        "前级二分类只表示候选，不代表真实跌倒。",
-        "必须输出 high_risk_fall，默认 0；只有明确高危真实跌倒才允许为 1。",
-        "看到较高姿态到非自主失衡、失控下落并倒地，或明确高危跌倒后异常倒地且无自主行为证据，才输出 high_risk_fall=1 和 confirmed_fall。",
-        "真实跌倒允许两类确认路径：一类是完整看到跌倒转场；另一类是虽未完整拍到转场，但连续关键帧明确支持异常倒地或贴地状态、持续未恢复、且没有主动行为证据。",
-        "只看到持续低位但没有可见进入过程，且没有后帧异常翻倒、冲击后倒地或持续异常卧地状态时输出 high_risk_fall=0 和 unclear，不得推测曾发生跌倒。",
-        "正常站立、行走、经过镜头、普通活动、稳定坐姿或坐椅子休息且无倒地过程，输出 non_fall。",
-        "主动且受控地坐下、躺下、阅读、玩手机、休息或睡觉且无失控倒地，输出 non_fall。",
-        "从坐姿、半躺姿态变化为地面平躺本身不能证明是主动躺下；只有明确主动控制证据才可判 intentional_action_evidence=true。",
-        "坐在椅子、沙发或床边等支撑面上休息，scene_type=seated_rest，high_risk_fall=0，recommended_action=no_alert。",
-        "蓝色地垫、瑜伽垫或地面软垫本身不等于正常支撑面，不能仅凭人物在垫子上就自动判定为主动躺下或休息。",
-        "过程缺失或无法可靠判断，输出 uncertain；人物不可见、遮挡严重或画面不足，输出 insufficient_visual_evidence。",
-        "不能仅凭身体倾斜、运动模糊、坐着、躺着、靠近地面或未起身确认跌倒。",
-         "只填写安全判定所需字段；persistent_ground_state 只描述所给关键帧跨度。",
-         "不要输出 positive_evidence、negative_evidence、movement_level、attempt_to_stand、visibility、occlusion、scene_risks、possible_help_gesture 或 review_points；展示字段由系统按精简格式补齐。",
-        "recommended_action=manual_review 不是跌倒告警；若 high_risk_fall=0，recommended_action 不得为 emergency_alert。",
-        "high_risk_fall=1 必须同时满足 fall_verdict=confirmed_fall、scene_type=fall、recommended_action=emergency_alert。",
-        "fall_verdict 与安全判定字段必须一致；只返回 JSON，不输出解释或 Markdown。",
+        "养老跌倒复核。",
+        "",
+        "三张图片按时间顺序排列，第三张是最后画面。",
+        "",
+        "e只能选择：",
+        "fall / risk / phone / reading / normal / uncertain。",
+        "",
+        "fall：",
+        "看到明显非自主失衡、失控下落或异常倒地。",
+        "",
+        "risk：",
+        "人物处于明显异常低位、异常倒地，或可见痛苦、挣扎、求助等风险状态，但不足以完整确认跌倒过程。",
+        "",
+        "phone：",
+        "多帧明确显示人物稳定使用手机。",
+        "",
+        "reading：",
+        "多帧明确显示人物稳定阅读书本、资料或纸张。",
+        "",
+        "normal：",
+        "明确为正常站立、行走、坐下、弯腰、休息或其他受控正常活动。",
+        "",
+        "uncertain：",
+        "关键人物、物体或状态确实无法看清。",
+        "",
+        "第三张图片是最终需要描述的画面。",
+        "t使用一句不超过40个汉字的简体中文描述第三张图片。",
+        "",
+        "只输出Schema JSON。",
     ]
     if countercheck:
-        lines.append("反证复核：证据不足时不要确认跌倒，优先排除正常活动和主动低姿态。")
+        lines.append("反证复核：证据不足时输出uncertain。")
     return "\n".join(lines)
+
+
+def _compact_post_fall_constraints() -> list[str]:
+    return [
+        "只返回字段 e、s、d、f、c、t。",
+        "e = semantic_event。",
+        "s = posture_state，只能是 ground/upright/unclear。",
+        "d = visible_distress，只能是 yes/no/unclear。",
+        "f = VLM直接判断是否为真实跌倒/风险。",
+        "c = confidence，范围0到1。",
+        "t = last_frame_description，不超过40个汉字。",
+        "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
+    ]
 
 
 def _post_fall_keyframe_timeline(images: Sequence[QwenImageInput]) -> list[str]:

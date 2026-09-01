@@ -24,6 +24,9 @@ def evaluate_fall_safety(
     abnormal_ground_conflict = False
 
     if detail is not None and detail.analysis_status == "completed":
+        compact_decision = _compact_semantic_safety(event, detail, elapsed_ms)
+        if compact_decision is not None:
+            return compact_decision
         high_risk_fall = _is_high_risk_fall(getattr(detail, "high_risk_fall", 0))
         abnormal_ground_conflict = bool(
             (
@@ -183,3 +186,60 @@ def _is_high_risk_fall(value: object) -> bool:
     if isinstance(value, str):
         return value.strip() == "1"
     return False
+
+
+def _compact_semantic_safety(event: FallEvent, detail, elapsed_ms: int) -> FallSafetyDecision | None:
+    activity = str(getattr(detail, "activity", "") or "").strip()
+    confidence = _confidence(getattr(detail, "confidence", None))
+    visible_distress = str(getattr(detail, "visible_distress", "unclear") or "unclear").strip().lower()
+    vlm_flag = getattr(detail, "vlm_is_true_fall", None)
+    posture_state = str(getattr(detail, "posture_state", "unclear") or "unclear").strip().lower()
+    persistent_strong = bool((event.binary_evidence or {}).get("persistent_strong_candidate"))
+    if activity in {"confirmed_fall", "possible_fall_or_distress"}:
+        return FallSafetyDecision(
+            outcome="alert",
+            path="transition_fall",
+            alert_level="high",
+            reason="compact_semantic_true_fall",
+            observation_elapsed_ms=elapsed_ms,
+            qwen_verdict=activity,
+        )
+    if activity in {"lying_using_phone", "lying_reading"}:
+        if confidence is not None and confidence >= 0.80 and visible_distress == "no" and vlm_flag is False:
+            return FallSafetyDecision(
+                outcome="dismiss",
+                path="explicit_non_fall",
+                alert_level="none",
+                reason="compact_semantic_explicit_non_fall",
+                observation_elapsed_ms=elapsed_ms,
+                qwen_verdict=activity,
+            )
+        return None
+    if activity == "normal_activity":
+        if (
+            confidence is not None
+            and confidence >= 0.90
+            and visible_distress == "no"
+            and posture_state != "unclear"
+            and vlm_flag is False
+            and not persistent_strong
+        ):
+            return FallSafetyDecision(
+                outcome="dismiss",
+                path="explicit_non_fall",
+                alert_level="none",
+                reason="compact_semantic_explicit_normal_activity",
+                observation_elapsed_ms=elapsed_ms,
+                qwen_verdict=activity,
+            )
+        return None
+    return None
+
+
+def _confidence(value: object) -> float | None:
+    try:
+        if value is None:
+            return None
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return None

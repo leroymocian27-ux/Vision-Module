@@ -4,7 +4,7 @@ import time
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 import cv2
 
@@ -80,6 +80,12 @@ class KeyframeCollectionSession:
         self._cancelled = False
         self._observations: deque[BufferedFrame] = deque()
         self._seen_frame_ids: set[str] = set()
+        self._last_export_timing: dict[str, Any] = {}
+
+    @property
+    def last_export_timing(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._last_export_timing)
 
     def prime_buffer(self, frames: list[BufferedFrame]) -> None:
         for frame in frames:
@@ -206,7 +212,10 @@ class KeyframeCollectionSession:
         jpeg_quality: int = 85,
         now_monotonic: float | None = None,
     ) -> tuple[list[QwenImageInput], list[str]]:
+        select_started = time.perf_counter()
         resolved = self._resolve(time.monotonic() if now_monotonic is None else now_monotonic)
+        frame_select_ms = round((time.perf_counter() - select_started) * 1000, 3)
+        encode_ms = 0.0
         images: list[QwenImageInput] = []
         missing: list[str] = []
         for item in resolved:
@@ -216,12 +225,14 @@ class KeyframeCollectionSession:
                 continue
             if len(images) >= max(1, int(max_images)):
                 break
+            encode_started = time.perf_counter()
             frame = _resize_for_qwen(item.frame.frame, max_edge=max_edge)
             ok, encoded = cv2.imencode(
                 ".jpg",
                 frame,
                 [int(cv2.IMWRITE_JPEG_QUALITY), max(40, min(95, int(jpeg_quality)))],
             )
+            encode_ms += (time.perf_counter() - encode_started) * 1000
             if not ok:
                 missing.append("keyframe_encode_failed")
                 continue
@@ -230,6 +241,13 @@ class KeyframeCollectionSession:
                 missing.append("keyframe_image_too_large")
                 continue
             images.append(QwenImageInput(offset_ms=item.item.offset_ms, role=item.item.role, image_bytes=image_bytes))
+        with self._lock:
+            self._last_export_timing = {
+                "frame_select_ms": frame_select_ms,
+                "frame_encode_ms": round(encode_ms, 3),
+                "qwen_image_count": len(images),
+                "qwen_image_offsets_ms": [image.offset_ms for image in images],
+            }
         return images, list(dict.fromkeys(missing))
 
     def _resolve(self, now_monotonic: float) -> list[_ResolvedFrame]:
