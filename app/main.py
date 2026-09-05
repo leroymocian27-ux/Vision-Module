@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import urlopen
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +76,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("startup safety configuration rejected: " + "; ".join(safety_errors))
     logger.info("safe_configuration_summary=%s", safe_configuration_snapshot(settings))
     _enforce_pose_deployment_guard(settings)
+    _enforce_cuda_runtime_guard(settings)
 
     event_pipeline = EventPipelineService(settings)
     event_delivery_worker = DeliveryWorker(settings, event_pipeline.delivery_outbox)
@@ -389,3 +394,197 @@ def _pose_guard_env_from_settings(settings: Any) -> dict[str, str]:
 
 def _bool_text(value: Any) -> str:
     return "true" if bool(value) else "false"
+
+
+def _should_enforce_cuda_runtime_guard(settings: Any) -> bool:
+    return bool(getattr(settings, "vision_service_require_cuda", True))
+
+
+def _enforce_cuda_runtime_guard(settings: Any) -> dict[str, Any] | None:
+    if not _should_enforce_cuda_runtime_guard(settings):
+        return None
+
+    errors: list[str] = []
+    evidence: dict[str, Any] = {"python": sys.executable}
+
+    expected_python = str(getattr(settings, "vision_service_cuda_python_path", "") or "").strip()
+    if expected_python:
+        try:
+            running_python = Path(sys.executable).resolve()
+            required_python = Path(expected_python).resolve()
+            evidence["required_python"] = str(required_python)
+            if running_python != required_python:
+                errors.append(
+                    "Python interpreter must be the configured CUDA interpreter: "
+                    f"expected {required_python}, got {running_python}"
+                )
+        except OSError as exc:
+            errors.append(f"Could not verify CUDA Python interpreter path: {exc}")
+
+    torch_info = _inspect_torch_cuda()
+    evidence["torch"] = torch_info
+    if torch_info.get("error"):
+        errors.append(f"torch CUDA check failed: {torch_info['error']}")
+    elif not torch_info.get("cuda_available"):
+        errors.append("torch.cuda.is_available() is false")
+    elif int(torch_info.get("device_count") or 0) < 1:
+        errors.append("torch reports zero CUDA devices")
+
+    ort_info = _inspect_onnxruntime_cuda()
+    evidence["onnxruntime"] = ort_info
+    if ort_info.get("error"):
+        errors.append(f"onnxruntime CUDA provider check failed: {ort_info['error']}")
+    elif "CUDAExecutionProvider" not in set(ort_info.get("available_providers") or []):
+        errors.append(
+            "onnxruntime does not expose CUDAExecutionProvider; "
+            f"available providers are {ort_info.get('available_providers')}"
+        )
+
+    _require_cuda_device("YOLO_DEVICE", getattr(settings, "yolo_device", None), errors, enabled=getattr(settings, "detection_enabled", True))
+    _require_cuda_device(
+        "YOLO_FALL_DEVICE",
+        getattr(settings, "yolo_fall_device", None),
+        errors,
+        enabled=getattr(settings, "fall_detector_enabled", True),
+    )
+    _require_cuda_device(
+        "YOLO_POSE_DEVICE",
+        getattr(settings, "yolo_pose_device", None),
+        errors,
+        enabled=getattr(settings, "enable_pose", False) and getattr(settings, "pose_provider", "") == "yolo",
+    )
+    _require_cuda_device(
+        "YOLO11_POSE_DEVICE",
+        getattr(settings, "yolo11_pose_device", None),
+        errors,
+        enabled=getattr(settings, "enable_pose", False) and getattr(settings, "pose_provider", "") == "yolo11_legacy",
+    )
+    _require_cuda_device(
+        "RTMPOSE_DEVICE",
+        getattr(settings, "rtmpose_device", None),
+        errors,
+        enabled=getattr(settings, "enable_pose", False) and getattr(settings, "pose_provider", "") in {"rtmpose", "mmpose_finetuned"},
+    )
+
+    if getattr(settings, "post_fall_v2_enabled", False):
+        _require_cuda_provider_chain(
+            "POST_FALL_V2_BINARY_ONNX_PROVIDERS",
+            getattr(settings, "post_fall_v2_binary_onnx_providers", ""),
+            errors,
+        )
+    if getattr(settings, "enable_temporal", False) and getattr(settings, "temporal_model_provider", "") == "onnx_lstm":
+        _require_cuda_provider_chain(
+            "TEMPORAL_ONNX_PROVIDERS",
+            getattr(settings, "temporal_onnx_providers", ""),
+            errors,
+        )
+
+    if getattr(settings, "post_fall_v2_qwen_enabled", False) and getattr(settings, "post_fall_v2_qwen_provider", "") == "qwen_keyframe":
+        ollama_info = _inspect_ollama_cuda_model(
+            endpoint_url=getattr(settings, "post_fall_v2_qwen_base_url", ""),
+            model_name=getattr(settings, "post_fall_v2_qwen_model", ""),
+        )
+        evidence["ollama"] = ollama_info
+        if ollama_info.get("error"):
+            errors.append(f"Ollama CUDA check failed: {ollama_info['error']}")
+        elif not ollama_info.get("model_loaded"):
+            errors.append(f"Ollama model is not loaded: {getattr(settings, 'post_fall_v2_qwen_model', '')}")
+        elif not ollama_info.get("processor_is_gpu"):
+            errors.append(
+                "Ollama model is not fully loaded in GPU memory: "
+                f"size={ollama_info.get('size')} size_vram={ollama_info.get('size_vram')}"
+            )
+
+    if errors:
+        logger.error("cuda_runtime_guard_rejected_startup errors=%s evidence=%s", errors, evidence)
+        raise RuntimeError("CUDA runtime guard rejected app startup: " + "; ".join(errors))
+
+    logger.info("cuda_runtime_guard_passed evidence=%s", evidence)
+    return evidence
+
+
+def _inspect_torch_cuda() -> dict[str, Any]:
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        device_count = int(torch.cuda.device_count()) if cuda_available else 0
+        device_name = torch.cuda.get_device_name(0) if device_count > 0 else None
+        return {
+            "version": getattr(torch, "__version__", None),
+            "cuda_version": getattr(getattr(torch, "version", None), "cuda", None),
+            "cuda_available": cuda_available,
+            "device_count": device_count,
+            "device_name": device_name,
+        }
+    except Exception as exc:  # pragma: no cover - depends on deployment env
+        return {"error": str(exc)}
+
+
+def _inspect_onnxruntime_cuda() -> dict[str, Any]:
+    try:
+        import onnxruntime as ort
+
+        return {
+            "version": getattr(ort, "__version__", None),
+            "available_providers": list(ort.get_available_providers()),
+        }
+    except Exception as exc:  # pragma: no cover - depends on deployment env
+        return {"error": str(exc)}
+
+
+def _require_cuda_device(name: str, value: Any, errors: list[str], *, enabled: bool) -> None:
+    if not enabled:
+        return
+    text = str(value or "").strip().lower()
+    if not text.startswith("cuda"):
+        errors.append(f"{name} must be cuda/cuda:0 when CUDA is required, got {value!r}")
+
+
+def _require_cuda_provider_chain(name: str, value: Any, errors: list[str]) -> None:
+    providers = [part.strip() for part in str(value or "").split(",") if part.strip()]
+    if not providers:
+        errors.append(f"{name} must include CUDAExecutionProvider first when CUDA is required")
+        return
+    if providers[0] != "CUDAExecutionProvider":
+        errors.append(f"{name} must start with CUDAExecutionProvider, got {providers}")
+
+
+def _inspect_ollama_cuda_model(*, endpoint_url: str, model_name: str) -> dict[str, Any]:
+    try:
+        api_ps_url = _ollama_api_url(endpoint_url, "/api/ps")
+        with urlopen(api_ps_url, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        return {"error": str(exc)}
+
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return {"error": "unexpected /api/ps response"}
+
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        name = str(model.get("name") or model.get("model") or "")
+        if name != model_name:
+            continue
+        details = model.get("details") if isinstance(model.get("details"), dict) else {}
+        processor = str(model.get("processor") or details.get("processor") or "")
+        size = model.get("size")
+        size_vram = model.get("size_vram")
+        fully_in_vram = isinstance(size, int) and isinstance(size_vram, int) and size > 0 and size_vram >= size
+        return {
+            "model_loaded": True,
+            "processor": processor,
+            "size": size,
+            "size_vram": size_vram,
+            "processor_is_gpu": processor.strip().upper() == "100% GPU" or fully_in_vram,
+        }
+    return {"model_loaded": False}
+
+
+def _ollama_api_url(endpoint_url: str, api_path: str) -> str:
+    parsed = urlsplit(endpoint_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"invalid Ollama endpoint URL: {endpoint_url!r}")
+    return urlunsplit((parsed.scheme, parsed.netloc, api_path, "", ""))

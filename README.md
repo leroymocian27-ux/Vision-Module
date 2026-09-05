@@ -42,12 +42,12 @@ Identity enrollment is a sidecar management capability. It does not participate 
 Recommended local GPU environment:
 
 ```powershell
-cd D:\vision_service
-D:\Anaconda\python.exe -m pip install -r requirements.txt
-D:\Anaconda\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Set-Location "E:\¹úÈü\camera-service"
+E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -m pip install -r requirements.txt
+.\scripts\start_visual_gpu.ps1 -HostName 127.0.0.1 -Port 8000
 ```
 
-The service now auto-loads `D:\Program\vision_service\.env` on startup if present.
+The service requires CUDA by default (`VISION_SERVICE_REQUIRE_CUDA=true`) and rejects startup when PyTorch CUDA, ONNX Runtime CUDAExecutionProvider, or Ollama GPU preflight cannot be verified.
 For LAN alert delivery, set `MAIN_SYSTEM_ALERT_ENABLED=true`, replace
 `MAIN_SYSTEM_BASE_URL` with the receiver server IP, and set
 `VISION_SERVICE_PUBLIC_BASE_URL` to this machine's LAN address.
@@ -252,7 +252,7 @@ Enable identity:
 
 ```powershell
 $env:ENABLE_IDENTITY="true"
-D:\Anaconda\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+.\scripts\start_visual_gpu.ps1 -HostName 127.0.0.1 -Port 8000
 ```
 
 Enroll with multipart files:

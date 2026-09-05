@@ -13,6 +13,8 @@ if (-not (Test-Path -LiteralPath $Python)) {
 }
 
 $env:PYTHONPATH = $ProjectRoot
+$env:VISION_SERVICE_REQUIRE_CUDA = "true"
+$env:VISION_SERVICE_CUDA_PYTHON_PATH = $Python
 $env:POST_FALL_V2_BINARY_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
 $env:TEMPORAL_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
 $env:YOLO_DEVICE = "cuda:0"

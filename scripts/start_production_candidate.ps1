@@ -6,22 +6,27 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Profile = Join-Path $Root "configs\production_candidate.env"
+$Python = "E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe"
 $RuntimeDir = Join-Path $Root "runtime"
 $LogDir = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $RuntimeDir, $LogDir | Out-Null
 
-python (Join-Path $Root "scripts\validate_config.py") --profile $Profile | Out-Host
+& $Python (Join-Path $Root "scripts\validate_config.py") --profile $Profile | Out-Host
 if ($LASTEXITCODE -ne 0) {
   throw "Config validation failed for $Profile"
 }
 
 $env:VISION_SERVICE_ENV_FILE = $Profile
+$env:VISION_SERVICE_REQUIRE_CUDA = "true"
+$env:VISION_SERVICE_CUDA_PYTHON_PATH = $Python
+$env:POST_FALL_V2_BINARY_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
+$env:TEMPORAL_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
 $StdoutLogPath = Join-Path $LogDir "vision_production_candidate.out.log"
 $StderrLogPath = Join-Path $LogDir "vision_production_candidate.err.log"
 $PidPath = Join-Path $RuntimeDir "vision_service.pid"
 $Args = @("-m", "uvicorn", "app.main:app", "--host", $HostName, "--port", "$Port")
 
-$Process = Start-Process -FilePath "python" `
+$Process = Start-Process -FilePath $Python `
   -ArgumentList $Args `
   -WorkingDirectory $Root `
   -RedirectStandardOutput $StdoutLogPath `

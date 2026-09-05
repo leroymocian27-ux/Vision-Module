@@ -65,6 +65,7 @@ def _default_rtsp_parts() -> dict[str, str]:
 
 def _default_python() -> str:
     candidates = [
+        Path(r"E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe"),
         Path(r"C:\Users\YANG\.conda\envs\torchgpu\python.exe"),
         Path(sys.executable),
         Path(shutil.which("python") or ""),
@@ -162,6 +163,8 @@ def main() -> int:
             "CAPTURE_BACKEND": args.capture_backend,
             "MAIN_CAPTURE_BACKEND": args.capture_backend,
             "ANALYSIS_CAPTURE_BACKEND": args.capture_backend,
+            "VISION_SERVICE_REQUIRE_CUDA": "true",
+            "VISION_SERVICE_CUDA_PYTHON_PATH": str(python_exe),
             "OPENCV_FFMPEG_CAPTURE_OPTIONS": _env_or("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;8000000"),
             "CAPTURE_PROCESS_FRAME_TIMEOUT_MS": _env_or("CAPTURE_PROCESS_FRAME_TIMEOUT_MS", "8000"),
             "CAPTURE_PROCESS_OPEN_TIMEOUT_MS": _env_or("CAPTURE_PROCESS_OPEN_TIMEOUT_MS", "8000"),
@@ -183,6 +186,7 @@ def main() -> int:
             "YOLO_IMGSZ": _env_or("YOLO_IMGSZ", "640"),
             "YOLO_FALL_CONFIDENCE": _env_or("YOLO_FALL_CONFIDENCE", "0.25"),
             "YOLO_FALL_MODEL_PATH": _env_or("YOLO_FALL_MODEL_PATH", "models/yolo_fall_hint_v2_plus_b012_best.pt"),
+            "YOLO_FALL_DEVICE": _env_or("YOLO_FALL_DEVICE", "cuda:0"),
             "DETECTION_INTERVAL_MS": _env_or("DETECTION_INTERVAL_MS", "200"),
             "ENABLE_POSE": "true" if args.pose_enabled else "false",
             "POSE_PROVIDER": args.pose_provider,
@@ -226,6 +230,7 @@ def main() -> int:
             "TEMPORAL_FEATURE_SCHEMA_PATH": args.temporal_schema_path,
             "TEMPORAL_FALLBACK_TO_MOCK": _env_or("TEMPORAL_FALLBACK_TO_MOCK", "false"),
             "TEMPORAL_ONNX_PROVIDERS": "CUDAExecutionProvider,CPUExecutionProvider",
+            "POST_FALL_V2_BINARY_ONNX_PROVIDERS": "CUDAExecutionProvider,CPUExecutionProvider",
             "MAIN_SYSTEM_ALERT_ENABLED": "true" if args.enable_main_system_alerts else _env_or("MAIN_SYSTEM_ALERT_ENABLED", "false"),
             "MAIN_SYSTEM_BASE_URL": args.main_system_base_url,
             "MAIN_SYSTEM_ALERT_PATH": "/api/integrations/fall-detection/alerts",
@@ -276,6 +281,28 @@ def main() -> int:
             print(json.dumps(guard_summary, ensure_ascii=False, indent=2), file=sys.stderr)
             print("[hint] use --skip-pose-deployment-guard only for local debugging, not production.", file=sys.stderr)
             return 3
+
+    if _env_enabled(env.get("POST_FALL_V2_QWEN_ENABLED")) and env.get("POST_FALL_V2_QWEN_PROVIDER") == "qwen_keyframe":
+        ollama_launcher = ROOT / "tools" / "start_ollama_cuda.ps1"
+        if not ollama_launcher.exists():
+            print(f"[blocked] Ollama CUDA launcher not found: {ollama_launcher}", file=sys.stderr)
+            return 4
+        print("[start] verifying Ollama CUDA backend before starting Vision Service")
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ollama_launcher),
+            ],
+            cwd=str(ROOT),
+            env=env,
+        )
+        if result.returncode != 0:
+            print("[blocked] Ollama CUDA preflight failed; Vision Service was not started.", file=sys.stderr)
+            return result.returncode
 
     process = subprocess.Popen(
         [
@@ -373,6 +400,10 @@ def _wait_http(url: str, timeout_sec: float) -> bool:
         except Exception:
             time.sleep(0.5)
     return False
+
+
+def _env_enabled(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _should_run_pose_deployment_guard(args: argparse.Namespace) -> bool:

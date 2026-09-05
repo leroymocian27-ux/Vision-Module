@@ -2,7 +2,7 @@
 param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 8011,
-    [string]$PythonPath = (Join-Path $PSScriptRoot '..\.venv\Scripts\python.exe')
+    [string]$PythonPath = "E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +19,10 @@ New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 # These values are process-scoped and restored on exit. They never write .env.
 $DemoEnvironment = @{
     'VISION_SERVICE_RUNTIME_PROFILE' = 'formal_demo_synthetic'
+    'VISION_SERVICE_REQUIRE_CUDA' = 'true'
+    'VISION_SERVICE_CUDA_PYTHON_PATH' = $PythonPath
+    'POST_FALL_V2_BINARY_ONNX_PROVIDERS' = 'CUDAExecutionProvider,CPUExecutionProvider'
+    'TEMPORAL_ONNX_PROVIDERS' = 'CUDAExecutionProvider,CPUExecutionProvider'
     'MOCK_CAMERA_ENABLED' = 'true'
     'DEFAULT_RTSP_URL' = ''
     'MAIN_STREAM_URL' = ''

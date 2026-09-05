@@ -86,6 +86,8 @@ class Settings:
     app_name: str = os.getenv("APP_NAME", "vision-service")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     runtime_profile: str = os.getenv("VISION_SERVICE_RUNTIME_PROFILE", "default")
+    vision_service_require_cuda: bool = _get_bool("VISION_SERVICE_REQUIRE_CUDA", True)
+    vision_service_cuda_python_path: str = os.getenv("VISION_SERVICE_CUDA_PYTHON_PATH", "")
     pipeline_mode: str = os.getenv("PIPELINE_MODE", "legacy").strip().lower()
     auto_start_stream: bool = _get_bool("AUTO_START_STREAM", False)
 
@@ -804,6 +806,7 @@ class Settings:
 
 
 _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
+    "vision_service_require_cuda": ("VISION_SERVICE_REQUIRE_CUDA", "vision_service_require_cuda"),
     "pipeline_mode": ("PIPELINE_MODE", "pipeline_mode"),
     "auto_start_stream": ("AUTO_START_STREAM", "auto_start_stream"),
     "video_source_mode": ("VIDEO_SOURCE_MODE", "video_source_mode"),
