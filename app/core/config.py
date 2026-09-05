@@ -395,8 +395,12 @@ class Settings:
     post_fall_v2_vlm_enabled: bool = _get_bool("POST_FALL_V2_VLM_ENABLED", False)
     post_fall_v2_vlm_timeout_seconds: float = _get_float("POST_FALL_V2_VLM_TIMEOUT_SECONDS", 8.0)
     post_fall_v2_qwen_enabled: bool = _get_bool("POST_FALL_V2_QWEN_ENABLED", post_fall_v2_vlm_enabled)
+    post_fall_v2_qwen_profile: str = os.getenv("POST_FALL_V2_QWEN_PROFILE", "qwen4b_stable_v1").strip() or "qwen4b_stable_v1"
     post_fall_v2_qwen_provider: str = os.getenv("POST_FALL_V2_QWEN_PROVIDER", "dummy").strip().lower()
     post_fall_v2_qwen_model: str = os.getenv("POST_FALL_V2_QWEN_MODEL", os.getenv("EVENT_QWEN_KEYFRAME_MODEL", "qwen3.5:4b"))
+    post_fall_v2_qwen_prompt_version: str = os.getenv("POST_FALL_V2_QWEN_PROMPT_VERSION", "compact_v2").strip() or "compact_v2"
+    post_fall_v2_qwen_schema_version: str = os.getenv("POST_FALL_V2_QWEN_SCHEMA_VERSION", "compact_v1").strip() or "compact_v1"
+    post_fall_v2_qwen_fusion_version: str = os.getenv("POST_FALL_V2_QWEN_FUSION_VERSION", "demo_fusion_v2").strip() or "demo_fusion_v2"
     post_fall_v2_qwen_base_url: str = os.getenv(
         "POST_FALL_V2_QWEN_BASE_URL",
         os.getenv("EVENT_QWEN_KEYFRAME_ENDPOINT", "http://127.0.0.1:11434/api/chat"),
@@ -691,6 +695,12 @@ class Settings:
             raise ValueError("POST_FALL_V2_POST_FALL_ALERT_MIN_MS must not be shorter than candidate confirmation")
         if self.post_fall_v2_qwen_provider not in {"dummy", "qwen_keyframe"}:
             raise ValueError("POST_FALL_V2_QWEN_PROVIDER must be dummy or qwen_keyframe")
+        if self.post_fall_v2_qwen_prompt_version not in {"compact_v2", "compact_2b_v1"}:
+            raise ValueError("POST_FALL_V2_QWEN_PROMPT_VERSION must be compact_v2 or compact_2b_v1")
+        if self.post_fall_v2_qwen_schema_version != "compact_v1":
+            raise ValueError("POST_FALL_V2_QWEN_SCHEMA_VERSION must be compact_v1")
+        if self.post_fall_v2_qwen_fusion_version != "demo_fusion_v2":
+            raise ValueError("POST_FALL_V2_QWEN_FUSION_VERSION must be demo_fusion_v2")
         if self.post_fall_v2_qwen_max_images < 1 or self.post_fall_v2_qwen_max_images > 6:
             raise ValueError("POST_FALL_V2_QWEN_MAX_IMAGES must be between 1 and 6")
         if self.post_fall_v2_qwen_max_image_bytes < 1024:
@@ -814,8 +824,12 @@ _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
     "post_fall_v2_post_fall_alert_min_ms": ("POST_FALL_V2_POST_FALL_ALERT_MIN_MS", "post_fall_v2_post_fall_alert_min_ms"),
     "post_fall_v2_vlm_enabled": ("POST_FALL_V2_VLM_ENABLED", "post_fall_v2_vlm_enabled"),
     "post_fall_v2_qwen_enabled": ("POST_FALL_V2_QWEN_ENABLED", "post_fall_v2_qwen_enabled"),
+    "post_fall_v2_qwen_profile": ("POST_FALL_V2_QWEN_PROFILE", "post_fall_v2_qwen_profile"),
     "post_fall_v2_qwen_provider": ("POST_FALL_V2_QWEN_PROVIDER", "post_fall_v2_qwen_provider"),
     "post_fall_v2_qwen_model": ("POST_FALL_V2_QWEN_MODEL", "post_fall_v2_qwen_model"),
+    "post_fall_v2_qwen_prompt_version": ("POST_FALL_V2_QWEN_PROMPT_VERSION", "post_fall_v2_qwen_prompt_version"),
+    "post_fall_v2_qwen_schema_version": ("POST_FALL_V2_QWEN_SCHEMA_VERSION", "post_fall_v2_qwen_schema_version"),
+    "post_fall_v2_qwen_fusion_version": ("POST_FALL_V2_QWEN_FUSION_VERSION", "post_fall_v2_qwen_fusion_version"),
     "post_fall_v2_shadow_enabled": ("POST_FALL_V2_SHADOW_ENABLED", "post_fall_v2_shadow_enabled"),
     "post_fall_v2_input_policy": ("POST_FALL_V2_INPUT_POLICY", "post_fall_v2_input_policy"),
     "post_fall_v2_input_mode": ("POST_FALL_V2_INPUT_MODE", "post_fall_v2_input_mode"),

@@ -546,6 +546,11 @@ class FallEventReporterServiceTest(unittest.TestCase):
                             "summary": "连续画面显示人员异常倒地。",
                             "review_points": ["建议人工复核事件关键帧。"],
                             "confidence": 0.92,
+                            "qwen_profile": "qwen4b_stable_v1",
+                            "model_name": "qwen3.5:4b",
+                            "prompt_version": "compact_v2",
+                            "schema_version": "compact_v1",
+                            "fusion_version": "demo_fusion_v2",
                             "snapshot_path": "E:\\internal\\snapshot.jpg",
                         }
                     }
@@ -560,8 +565,15 @@ class FallEventReporterServiceTest(unittest.TestCase):
             "summary",
             "review_points",
             "confidence",
+            "qwen_profile",
+            "qwen_model",
+            "prompt_version",
+            "schema_version",
+            "fusion_version",
         }
         assert payload["qwen_review"]["confidence"] == 0.92
+        assert payload["qwen_review"]["qwen_profile"] == "qwen4b_stable_v1"
+        assert payload["qwen_review"]["qwen_model"] == "qwen3.5:4b"
         assert "snapshot_path" not in payload["qwen_review"]
 
     def test_ack_event_id_mismatch_is_not_delivered(self) -> None:

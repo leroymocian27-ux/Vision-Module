@@ -16,6 +16,28 @@ E:\国赛\camera-service
 E:\国赛\camera-service
 ```
 
+### 右上角一键启动（推荐）
+
+在 VS Code 中打开：
+
+```text
+scripts/start_visual_gpu_auto.py
+```
+
+点击编辑器右上角的“运行 Python 文件”按钮即可。脚本按以下顺序选择第一个未被占用的端口：
+
+```text
+8000 -> 8001 -> 8002
+```
+
+启动器最终仍调用 `scripts/start_visual_gpu.ps1`，不会绕过固定 GPU Python、CUDA provider 检查或当前视频接收配置。终端会打印实际选中的端口和 Demo 地址。三个端口都被占用时，脚本会明确报错并停止，不会结束其他已有进程。
+
+也可以在“运行和调试”下拉列表选择：
+
+```text
+Vision Service GPU (Auto 8000-8002)
+```
+
 启动前可以先跑一次本地 GPU 预检：
 
 ```powershell

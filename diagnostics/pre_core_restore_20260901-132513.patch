@@ -1,0 +1,744 @@
+diff --git a/.env.example b/.env.example
+index 1c9478e..acc0c0c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -333,7 +333,11 @@ POST_FALL_V2_VLM_ENABLED=true
+ POST_FALL_V2_VLM_TIMEOUT_SECONDS=8
+ POST_FALL_V2_QWEN_ENABLED=true
+ POST_FALL_V2_QWEN_PROVIDER=qwen_keyframe
++POST_FALL_V2_QWEN_PROFILE=qwen4b_stable_v1
+ POST_FALL_V2_QWEN_MODEL=qwen3.5:4b
++POST_FALL_V2_QWEN_PROMPT_VERSION=compact_v2
++POST_FALL_V2_QWEN_SCHEMA_VERSION=compact_v1
++POST_FALL_V2_QWEN_FUSION_VERSION=demo_fusion_v2
+ POST_FALL_V2_QWEN_BASE_URL=http://127.0.0.1:11434/api/chat
+ POST_FALL_V2_QWEN_TIMEOUT_SECONDS=90
+ POST_FALL_V2_QWEN_MAX_IMAGES=3
+diff --git a/app/core/config.py b/app/core/config.py
+index 7cd30c0..1fbc3a2 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -395,8 +395,12 @@ class Settings:
+     post_fall_v2_vlm_enabled: bool = _get_bool("POST_FALL_V2_VLM_ENABLED", False)
+     post_fall_v2_vlm_timeout_seconds: float = _get_float("POST_FALL_V2_VLM_TIMEOUT_SECONDS", 8.0)
+     post_fall_v2_qwen_enabled: bool = _get_bool("POST_FALL_V2_QWEN_ENABLED", post_fall_v2_vlm_enabled)
++    post_fall_v2_qwen_profile: str = os.getenv("POST_FALL_V2_QWEN_PROFILE", "qwen4b_stable_v1").strip() or "qwen4b_stable_v1"
+     post_fall_v2_qwen_provider: str = os.getenv("POST_FALL_V2_QWEN_PROVIDER", "dummy").strip().lower()
+     post_fall_v2_qwen_model: str = os.getenv("POST_FALL_V2_QWEN_MODEL", os.getenv("EVENT_QWEN_KEYFRAME_MODEL", "qwen3.5:4b"))
++    post_fall_v2_qwen_prompt_version: str = os.getenv("POST_FALL_V2_QWEN_PROMPT_VERSION", "compact_v2").strip() or "compact_v2"
++    post_fall_v2_qwen_schema_version: str = os.getenv("POST_FALL_V2_QWEN_SCHEMA_VERSION", "compact_v1").strip() or "compact_v1"
++    post_fall_v2_qwen_fusion_version: str = os.getenv("POST_FALL_V2_QWEN_FUSION_VERSION", "demo_fusion_v2").strip() or "demo_fusion_v2"
+     post_fall_v2_qwen_base_url: str = os.getenv(
+         "POST_FALL_V2_QWEN_BASE_URL",
+         os.getenv("EVENT_QWEN_KEYFRAME_ENDPOINT", "http://127.0.0.1:11434/api/chat"),
+@@ -691,6 +695,12 @@ class Settings:
+             raise ValueError("POST_FALL_V2_POST_FALL_ALERT_MIN_MS must not be shorter than candidate confirmation")
+         if self.post_fall_v2_qwen_provider not in {"dummy", "qwen_keyframe"}:
+             raise ValueError("POST_FALL_V2_QWEN_PROVIDER must be dummy or qwen_keyframe")
++        if self.post_fall_v2_qwen_prompt_version not in {"compact_v2", "compact_2b_v1"}:
++            raise ValueError("POST_FALL_V2_QWEN_PROMPT_VERSION must be compact_v2 or compact_2b_v1")
++        if self.post_fall_v2_qwen_schema_version != "compact_v1":
++            raise ValueError("POST_FALL_V2_QWEN_SCHEMA_VERSION must be compact_v1")
++        if self.post_fall_v2_qwen_fusion_version != "demo_fusion_v2":
++            raise ValueError("POST_FALL_V2_QWEN_FUSION_VERSION must be demo_fusion_v2")
+         if self.post_fall_v2_qwen_max_images < 1 or self.post_fall_v2_qwen_max_images > 6:
+             raise ValueError("POST_FALL_V2_QWEN_MAX_IMAGES must be between 1 and 6")
+         if self.post_fall_v2_qwen_max_image_bytes < 1024:
+@@ -814,8 +824,12 @@ _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
+     "post_fall_v2_post_fall_alert_min_ms": ("POST_FALL_V2_POST_FALL_ALERT_MIN_MS", "post_fall_v2_post_fall_alert_min_ms"),
+     "post_fall_v2_vlm_enabled": ("POST_FALL_V2_VLM_ENABLED", "post_fall_v2_vlm_enabled"),
+     "post_fall_v2_qwen_enabled": ("POST_FALL_V2_QWEN_ENABLED", "post_fall_v2_qwen_enabled"),
++    "post_fall_v2_qwen_profile": ("POST_FALL_V2_QWEN_PROFILE", "post_fall_v2_qwen_profile"),
+     "post_fall_v2_qwen_provider": ("POST_FALL_V2_QWEN_PROVIDER", "post_fall_v2_qwen_provider"),
+     "post_fall_v2_qwen_model": ("POST_FALL_V2_QWEN_MODEL", "post_fall_v2_qwen_model"),
++    "post_fall_v2_qwen_prompt_version": ("POST_FALL_V2_QWEN_PROMPT_VERSION", "post_fall_v2_qwen_prompt_version"),
++    "post_fall_v2_qwen_schema_version": ("POST_FALL_V2_QWEN_SCHEMA_VERSION", "post_fall_v2_qwen_schema_version"),
++    "post_fall_v2_qwen_fusion_version": ("POST_FALL_V2_QWEN_FUSION_VERSION", "post_fall_v2_qwen_fusion_version"),
+     "post_fall_v2_shadow_enabled": ("POST_FALL_V2_SHADOW_ENABLED", "post_fall_v2_shadow_enabled"),
+     "post_fall_v2_input_policy": ("POST_FALL_V2_INPUT_POLICY", "post_fall_v2_input_policy"),
+     "post_fall_v2_input_mode": ("POST_FALL_V2_INPUT_MODE", "post_fall_v2_input_mode"),
+diff --git a/app/events/qwen_keyframe.py b/app/events/qwen_keyframe.py
+index 1389fc1..12872e9 100644
+--- a/app/events/qwen_keyframe.py
++++ b/app/events/qwen_keyframe.py
+@@ -5,7 +5,7 @@ import json
+ import re
+ import time
+ from collections.abc import Callable, Mapping, Sequence
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
+ from threading import Lock
+ from typing import Any, Union
+ from urllib.parse import urlsplit
+@@ -77,6 +77,7 @@ class QwenPostFallDetail:
+     vlm_is_true_fall: bool | None = None
+     last_frame_description: str | None = None
+     raw_compact_json: dict[str, Any] | None = None
++    qwen_profile: str | None = None
+     prompt_version: str | None = None
+     schema_version: str | None = None
+     fusion_version: str | None = None
+@@ -259,6 +260,7 @@ _FALL_VERDICT_ALIASES = {
+ POST_FALL_PROMPT_VERSION = "compact_v2"
+ POST_FALL_SCHEMA_VERSION = "compact_v1"
+ POST_FALL_FUSION_VERSION = "demo_fusion_v2"
++POST_FALL_QWEN_PROFILE = "qwen4b_stable_v1"
+ 
+ _POST_FALL_SYSTEM_PROMPT = """你负责复核养老场景中的跌倒候选事件。
+ 
+@@ -272,6 +274,20 @@ Binary FALL只是候选，不是视觉事实。
+ 只依据图片中可见事实判断，不推测疾病或身份。
+ 只返回符合Schema的JSON。"""
+ 
++_POST_FALL_2B_SYSTEM_PROMPT = """养老跌倒复核。
++
++三张图片按时间顺序，最后一张是当前状态。
++
++只根据画面选择：
++fall / risk / phone / reading / normal / uncertain。
++
++低姿态本身不是跌倒。坐地、躺卧、弯腰、休息或靠近地面，不能自动判断为fall。
++
++如果画面显示正常受控动作，不得因为人物靠近地面就选择fall。
++
++只依据可见事实。
++只输出Schema JSON。"""
++
+ 
+ class QwenKeyframeAnalyzer:
+     """Calls a localhost-only Ollama vision model with image bytes, never paths."""
+@@ -287,6 +303,10 @@ class QwenKeyframeAnalyzer:
+         max_output_tokens: int = 96,
+         temperature: float = 0.0,
+         context_retry_enabled: bool = True,
++        qwen_profile: str = POST_FALL_QWEN_PROFILE,
++        prompt_version: str = POST_FALL_PROMPT_VERSION,
++        schema_version: str = POST_FALL_SCHEMA_VERSION,
++        fusion_version: str = POST_FALL_FUSION_VERSION,
+     ) -> None:
+         self.endpoint_url = endpoint_url
+         self.model_name = model_name
+@@ -296,6 +316,10 @@ class QwenKeyframeAnalyzer:
+         self.max_output_tokens = max(64, min(1024, int(max_output_tokens)))
+         self.temperature = max(0.0, float(temperature))
+         self.context_retry_enabled = bool(context_retry_enabled)
++        self.qwen_profile = (qwen_profile or POST_FALL_QWEN_PROFILE).strip() or POST_FALL_QWEN_PROFILE
++        self.post_fall_prompt_version = (prompt_version or POST_FALL_PROMPT_VERSION).strip() or POST_FALL_PROMPT_VERSION
++        self.post_fall_schema_version = (schema_version or POST_FALL_SCHEMA_VERSION).strip() or POST_FALL_SCHEMA_VERSION
++        self.post_fall_fusion_version = (fusion_version or POST_FALL_FUSION_VERSION).strip() or POST_FALL_FUSION_VERSION
+         self._diagnostic_lock = Lock()
+         self._last_post_fall_diagnostic: dict[str, Any] | None = None
+ 
+@@ -413,6 +437,13 @@ class QwenKeyframeAnalyzer:
+         try:
+             parse_started = time.perf_counter()
+             parsed = _parse_post_fall_detail(_response_content(response_payload))
++            parsed = replace(
++                parsed,
++                qwen_profile=self.qwen_profile,
++                prompt_version=self.post_fall_prompt_version,
++                schema_version=self.post_fall_schema_version,
++                fusion_version=self.post_fall_fusion_version,
++            )
+             schema_parse_ms = (time.perf_counter() - parse_started) * 1000
+         except QwenKeyframeInvalidOutput as exc:
+             self._record_post_fall_diagnostic(
+@@ -541,10 +572,14 @@ class QwenKeyframeAnalyzer:
+         compact: bool = True,
+     ) -> dict[str, Any]:
+         countercheck = review_mode == "countercheck"
+-        task = _build_compact_post_fall_task(countercheck=countercheck) if compact else _build_post_fall_task(countercheck=countercheck)
++        task = self._post_fall_task(countercheck=countercheck, compact=compact)
+         content = {
+             "schema_version": "pfv2_post_fall_input.compact_v2" if compact else "pfv2_post_fall_input.v1",
+-            "prompt_version": POST_FALL_PROMPT_VERSION if compact else "full_legacy_v1",
++            "qwen_profile": self.qwen_profile,
++            "qwen_model": self.model_name,
++            "prompt_version": self.post_fall_prompt_version if compact else "full_legacy_v1",
++            "schema_contract_version": self.post_fall_schema_version if compact else "legacy_v1",
++            "fusion_version": self.post_fall_fusion_version,
+             "task": task,
+             "keyframes": [
+                 {"offset_ms": image.offset_ms, "role": image.role}
+@@ -559,7 +594,7 @@ class QwenKeyframeAnalyzer:
+                 "所有自然语言描述必须使用简体中文，不得出现英文单词。",
+                 "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
+             ],
+-            "profile": "compact_v2" if compact else "full_legacy",
++            "profile": self.post_fall_prompt_version if compact else "full_legacy",
+         }
+         serialized = json.dumps(content, ensure_ascii=False)
+         if _PATH_PATTERN.search(serialized) or _URL_PATTERN.search(serialized):
+@@ -574,7 +609,7 @@ class QwenKeyframeAnalyzer:
+             "messages": [
+                 {
+                     "role": "system",
+-                    "content": _POST_FALL_SYSTEM_PROMPT,
++                    "content": self._post_fall_system_prompt(compact=compact),
+                 },
+                 {
+                     "role": "user",
+@@ -591,6 +626,20 @@ class QwenKeyframeAnalyzer:
+             "temperature": self.temperature,
+         }
+ 
++    def _post_fall_system_prompt(self, *, compact: bool) -> str:
++        if not compact:
++            return _POST_FALL_SYSTEM_PROMPT
++        if self.post_fall_prompt_version == "compact_2b_v1":
++            return _POST_FALL_2B_SYSTEM_PROMPT
++        return _POST_FALL_SYSTEM_PROMPT
++
++    def _post_fall_task(self, *, countercheck: bool, compact: bool) -> str:
++        if not compact:
++            return _build_post_fall_task(countercheck=countercheck)
++        if self.post_fall_prompt_version == "compact_2b_v1":
++            return _build_compact_2b_post_fall_task(countercheck=countercheck)
++        return _build_compact_post_fall_task(countercheck=countercheck)
++
+     def _advisory(
+         self,
+         status: str,
+@@ -1707,6 +1756,46 @@ def _build_compact_post_fall_task(*, countercheck: bool) -> str:
+     return "\n".join(lines)
+ 
+ 
++def _build_compact_2b_post_fall_task(*, countercheck: bool) -> str:
++    lines = [
++        "养老跌倒复核。",
++        "",
++        "三张图片按时间顺序，最后一张是当前状态。",
++        "",
++        "只根据画面选择：",
++        "fall / risk / phone / reading / normal / uncertain。",
++        "",
++        "fall：",
++        "明确看到非自主失衡、失控下落或跌倒后的异常倒地。",
++        "",
++        "risk：",
++        "人物明显异常倒地，或出现痛苦、挣扎、求助等可见风险，但证据不足以确认完整跌倒。",
++        "",
++        "phone：",
++        "连续画面显示人物姿态稳定，并明确持续使用手机。",
++        "",
++        "reading：",
++        "连续画面显示人物姿态稳定，并明确持续阅读书本、资料或纸张。",
++        "",
++        "normal：",
++        "人物动作受控、姿态稳定，包括正常站立、行走、坐下、弯腰、休息或其他正常行为。",
++        "仅仅处于低位、坐地、躺卧，不能自动判断为fall。",
++        "",
++        "uncertain：",
++        "关键人物、动作或物体确实看不清。",
++        "",
++        "如果画面显示正常受控动作，不得因为人物靠近地面就选择fall。",
++        "第三张图片是最终需要描述的画面。",
++        "t使用一句不超过40个汉字的简体中文描述第三张图片。",
++        "",
++        "只依据可见事实。",
++        "只输出Schema JSON。",
++    ]
++    if countercheck:
++        lines.append("反证复核：低姿态或画面不足时输出uncertain，不要输出fall。")
++    return "\n".join(lines)
++
++
+ def _compact_post_fall_constraints() -> list[str]:
+     return [
+         "只返回字段 e、s、d、f、c、t。",
+diff --git a/app/main.py b/app/main.py
+index a8cc83e..f3735aa 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -194,6 +194,10 @@ async def lifespan(app: FastAPI):
+             max_output_tokens=settings.post_fall_v2_qwen_max_output_tokens,
+             temperature=settings.post_fall_v2_qwen_temperature,
+             context_retry_enabled=settings.post_fall_v2_qwen_context_retry_enabled,
++            qwen_profile=settings.post_fall_v2_qwen_profile,
++            prompt_version=settings.post_fall_v2_qwen_prompt_version,
++            schema_version=settings.post_fall_v2_qwen_schema_version,
++            fusion_version=settings.post_fall_v2_qwen_fusion_version,
+             image_provider=post_fall_v2_runtime_service.qwen_images_for_incident,
+         )
+     stream_service = StreamService(
+diff --git a/app/post_fall_v2/post_fall_runtime_service.py b/app/post_fall_v2/post_fall_runtime_service.py
+index 8514427..fc98293 100644
+--- a/app/post_fall_v2/post_fall_runtime_service.py
++++ b/app/post_fall_v2/post_fall_runtime_service.py
+@@ -476,6 +476,11 @@ class PostFallV2RuntimeService:
+             "follow_target_out_of_order_count": follow_status["out_of_order_count"],
+             "vlm_enabled": self._vlm.enabled,
+             "vlm_provider": getattr(self.settings, "post_fall_v2_qwen_provider", "dummy"),
++            "qwen_profile": getattr(self.settings, "post_fall_v2_qwen_profile", "qwen4b_stable_v1"),
++            "qwen_model": getattr(self.settings, "post_fall_v2_qwen_model", None),
++            "prompt_version": getattr(self.settings, "post_fall_v2_qwen_prompt_version", "compact_v2"),
++            "schema_version": getattr(self.settings, "post_fall_v2_qwen_schema_version", "compact_v1"),
++            "fusion_version": getattr(self.settings, "post_fall_v2_qwen_fusion_version", FUSION_VERSION),
+             "vlm_model": getattr(self.settings, "post_fall_v2_qwen_model", None),
+             "vlm_active_count": active_vlm,
+             "vlm_call_count": self._vlm.call_count,
+@@ -751,9 +756,11 @@ class PostFallV2RuntimeService:
+             "sampled_monotonic": sampled.sampled_monotonic,
+             "candidate_created_timestamp": decision.updated_at,
+             "candidate_latency_ms": round((time.monotonic() - sampled.captured_monotonic) * 1000, 3),
+-            "prompt_version": "compact_v2",
+-            "schema_version": "compact_v1",
+-            "fusion_version": FUSION_VERSION,
++            "prompt_version": getattr(self.settings, "post_fall_v2_qwen_prompt_version", "compact_v2"),
++            "schema_version": getattr(self.settings, "post_fall_v2_qwen_schema_version", "compact_v1"),
++            "fusion_version": getattr(self.settings, "post_fall_v2_qwen_fusion_version", FUSION_VERSION),
++            "qwen_profile": getattr(self.settings, "post_fall_v2_qwen_profile", "qwen4b_stable_v1"),
++            "qwen_model": getattr(self.settings, "post_fall_v2_qwen_model", None),
+         }
+         performance = getattr(raw, "performance", None)
+         if performance is not None:
+@@ -1002,6 +1009,10 @@ class PostFallV2RuntimeService:
+             camera_id=event.camera_id,
+             incident_id=event.incident_id,
+             model=getattr(self.settings, "post_fall_v2_qwen_model", None),
++            qwen_profile=getattr(self.settings, "post_fall_v2_qwen_profile", "qwen4b_stable_v1"),
++            prompt_version=getattr(self.settings, "post_fall_v2_qwen_prompt_version", "compact_v2"),
++            schema_version=getattr(self.settings, "post_fall_v2_qwen_schema_version", "compact_v1"),
++            fusion_version=getattr(self.settings, "post_fall_v2_qwen_fusion_version", FUSION_VERSION),
+             keyframe_status=keyframes.status,
+         )
+ 
+@@ -1072,6 +1083,10 @@ class PostFallV2RuntimeService:
+             fall_verdict=detail.fall_verdict,
+             confidence=detail.confidence,
+             model=detail.model_name,
++            qwen_profile=detail.qwen_profile,
++            prompt_version=detail.prompt_version,
++            schema_version=detail.schema_version,
++            fusion_version=detail.fusion_version,
+             summary=detail.summary,
+             error=detail.error_message,
+             qwen_start_frames_received=qwen_start_frames_received,
+diff --git a/app/post_fall_v2/qwen_fall_analyzer.py b/app/post_fall_v2/qwen_fall_analyzer.py
+index 1737b45..94d7339 100644
+--- a/app/post_fall_v2/qwen_fall_analyzer.py
++++ b/app/post_fall_v2/qwen_fall_analyzer.py
+@@ -49,6 +49,10 @@ class PFV2QwenFallAnalyzer:
+         max_output_tokens: int = 96,
+         temperature: float = 0.0,
+         context_retry_enabled: bool = True,
++        qwen_profile: str = "qwen4b_stable_v1",
++        prompt_version: str = "compact_v2",
++        schema_version: str = "compact_v1",
++        fusion_version: str = "demo_fusion_v2",
+     ) -> "PFV2QwenFallAnalyzer":
+         endpoint = urlsplit(endpoint_url)
+         if endpoint.scheme != "http" or endpoint.hostname not in {"localhost", "127.0.0.1", "::1"}:
+@@ -62,6 +66,10 @@ class PFV2QwenFallAnalyzer:
+                 max_output_tokens=max_output_tokens,
+                 temperature=temperature,
+                 context_retry_enabled=context_retry_enabled,
++                qwen_profile=qwen_profile,
++                prompt_version=prompt_version,
++                schema_version=schema_version,
++                fusion_version=fusion_version,
+             ),
+             image_provider=image_provider,
+         )
+@@ -87,9 +95,10 @@ class PFV2QwenFallAnalyzer:
+                 model_name=self.analyzer.model_name,
+                 error_message="no_qwen_keyframe_images",
+                 failure_reason="no_qwen_keyframe_images",
+-                prompt_version="compact_v2",
+-                schema_version="compact_v1",
+-                fusion_version="demo_fusion_v2",
++                qwen_profile=self.analyzer.qwen_profile,
++                prompt_version=self.analyzer.post_fall_prompt_version,
++                schema_version=self.analyzer.post_fall_schema_version,
++                fusion_version=self.analyzer.post_fall_fusion_version,
+                 request_started_at=request_started_at,
+                 completed_at=event_now_iso(),
+             )
+@@ -117,7 +126,7 @@ class PFV2QwenFallAnalyzer:
+                 incident_id=event.incident_id,
+                 error=str(exc),
+             )
+-            return _failure(event, "timeout", self.analyzer.model_name, "qwen_timeout", str(exc))
++            return _failure(event, "timeout", self.analyzer, "qwen_timeout", str(exc))
+         except QwenKeyframeNonChineseOutput as exc:
+             model_log_bus.publish(
+                 "qwen",
+@@ -127,7 +136,7 @@ class PFV2QwenFallAnalyzer:
+                 incident_id=event.incident_id,
+                 error=str(exc),
+             )
+-            return _failure(event, "parse_failed", self.analyzer.model_name, "qwen_non_chinese_output", str(exc))
++            return _failure(event, "parse_failed", self.analyzer, "qwen_non_chinese_output", str(exc))
+         except QwenKeyframeInvalidOutput as exc:
+             model_log_bus.publish(
+                 "qwen",
+@@ -137,7 +146,7 @@ class PFV2QwenFallAnalyzer:
+                 incident_id=event.incident_id,
+                 error=str(exc),
+             )
+-            return _failure(event, "parse_failed", self.analyzer.model_name, "qwen_invalid_output", str(exc))
++            return _failure(event, "parse_failed", self.analyzer, "qwen_invalid_output", str(exc))
+         except QwenKeyframeError as exc:
+             model_log_bus.publish(
+                 "qwen",
+@@ -147,7 +156,7 @@ class PFV2QwenFallAnalyzer:
+                 incident_id=event.incident_id,
+                 error=str(exc),
+             )
+-            return _failure(event, "failed", self.analyzer.model_name, "qwen_unavailable", str(exc))
++            return _failure(event, "failed", self.analyzer, "qwen_unavailable", str(exc))
+         except Exception as exc:
+             model_log_bus.publish(
+                 "qwen",
+@@ -157,7 +166,7 @@ class PFV2QwenFallAnalyzer:
+                 incident_id=event.incident_id,
+                 error=str(exc),
+             )
+-            return _failure(event, "failed", self.analyzer.model_name, "qwen_adapter_failed", str(exc))
++            return _failure(event, "failed", self.analyzer, "qwen_adapter_failed", str(exc))
+         model_log_bus.publish(
+             "qwen",
+             "qwen_review_result",
+@@ -204,6 +213,7 @@ class PFV2QwenFallAnalyzer:
+             vlm_is_true_fall=detail.vlm_is_true_fall,
+             last_frame_description=detail.last_frame_description,
+             raw_compact_json=detail.raw_compact_json,
++            qwen_profile=detail.qwen_profile,
+             prompt_version=detail.prompt_version,
+             schema_version=detail.schema_version,
+             fusion_version=detail.fusion_version,
+@@ -277,7 +287,7 @@ def _map_advisory(incident_id: str, advisory: QwenKeyframeAdvisory) -> FallDetai
+ def _failure(
+     event: FallEvent,
+     status: str,
+-    model_name: str,
++    analyzer: QwenKeyframeAnalyzer,
+     reason: str,
+     message: str,
+ ) -> FallDetailResult:
+@@ -295,12 +305,13 @@ def _failure(
+         summary=f"本地千问辅助分析未完成：{reason}。跌倒事件仍以二分类确认结果为准。",
+         review_points=["复核实时画面。", "检查本地 Ollama/Qwen 服务和关键帧输入。"],
+         confidence=None,
+-        model_name=model_name,
++        model_name=analyzer.model_name,
+         error_message=message or reason,
+         failure_reason=reason,
+-        prompt_version="compact_v2",
+-        schema_version="compact_v1",
+-        fusion_version="demo_fusion_v2",
++        qwen_profile=analyzer.qwen_profile,
++        prompt_version=analyzer.post_fall_prompt_version,
++        schema_version=analyzer.post_fall_schema_version,
++        fusion_version=analyzer.post_fall_fusion_version,
+         request_started_at=event_now_iso(),
+         completed_at=event_now_iso(),
+     )
+diff --git a/app/post_fall_v2/schemas.py b/app/post_fall_v2/schemas.py
+index cd89ea0..83ddd28 100644
+--- a/app/post_fall_v2/schemas.py
++++ b/app/post_fall_v2/schemas.py
+@@ -321,6 +321,7 @@ class FallDetailResult:
+     vlm_is_true_fall: bool | None = None
+     last_frame_description: str | None = None
+     raw_compact_json: dict[str, Any] | None = None
++    qwen_profile: str | None = None
+     prompt_version: str | None = None
+     schema_version: str | None = None
+     fusion_version: str | None = None
+diff --git a/app/post_fall_v2/test_archive_service.py b/app/post_fall_v2/test_archive_service.py
+index b92bad3..40cd74d 100644
+--- a/app/post_fall_v2/test_archive_service.py
++++ b/app/post_fall_v2/test_archive_service.py
+@@ -1343,6 +1343,11 @@ def _compact_qwen_review(detail: Any) -> dict[str, Any]:
+         "fall_verdict": source.get("fall_verdict"),
+         "high_risk_fall": source.get("high_risk_fall"),
+         "latency_ms": source.get("latency_ms"),
++        "qwen_profile": source.get("qwen_profile"),
++        "qwen_model": source.get("model_name"),
++        "prompt_version": source.get("prompt_version"),
++        "schema_version": source.get("schema_version"),
++        "fusion_version": source.get("fusion_version"),
+         "request_started_at": source.get("request_started_at"),
+         "completed_at": source.get("completed_at"),
+         "error_message": source.get("error_message"),
+diff --git a/app/post_fall_v2/vlm_review_service.py b/app/post_fall_v2/vlm_review_service.py
+index 15b09d9..ae6e45d 100644
+--- a/app/post_fall_v2/vlm_review_service.py
++++ b/app/post_fall_v2/vlm_review_service.py
+@@ -108,28 +108,32 @@ class VLMReviewService:
+             with self._lock:
+                 self.timeout_count += 1
+             future.cancel()
++            metadata = _analyzer_metadata(self.analyzer)
+             result = FallDetailResult(
+                 incident_id=event.incident_id,
+                 analysis_status="timeout",
+                 summary="VLM review timed out; binary FallEvent remains valid.",
+                 error_message=f"timeout after {self.timeout_seconds}s",
+                 failure_reason="timeout",
+-                prompt_version="compact_v2",
+-                schema_version="compact_v1",
+-                fusion_version=FUSION_VERSION,
++                qwen_profile=metadata["qwen_profile"],
++                prompt_version=metadata["prompt_version"],
++                schema_version=metadata["schema_version"],
++                fusion_version=metadata["fusion_version"],
+             )
+         except Exception as exc:
+             with self._lock:
+                 self.failure_count += 1
++            metadata = _analyzer_metadata(self.analyzer)
+             result = FallDetailResult(
+                 incident_id=event.incident_id,
+                 analysis_status="failed",
+                 summary="VLM review failed; binary FallEvent remains valid.",
+                 error_message=str(exc),
+                 failure_reason="exception",
+-                prompt_version="compact_v2",
+-                schema_version="compact_v1",
+-                fusion_version=FUSION_VERSION,
++                qwen_profile=metadata["qwen_profile"],
++                prompt_version=metadata["prompt_version"],
++                schema_version=metadata["schema_version"],
++                fusion_version=metadata["fusion_version"],
+             )
+         timing = {**(result.timing or {}), **queue_wait}
+         if result.confidence is not None:
+@@ -145,7 +149,10 @@ class VLMReviewService:
+         result = FallDetailResult(
+             **{
+                 **result.to_record(),
+-                "fusion_version": result.fusion_version or FUSION_VERSION,
++                "qwen_profile": result.qwen_profile or _analyzer_metadata(self.analyzer)["qwen_profile"],
++                "prompt_version": result.prompt_version or _analyzer_metadata(self.analyzer)["prompt_version"],
++                "schema_version": result.schema_version or _analyzer_metadata(self.analyzer)["schema_version"],
++                "fusion_version": result.fusion_version or _analyzer_metadata(self.analyzer)["fusion_version"],
+                 "timing": {**timing, "vlm_total_service_ms": round((time.monotonic() - started) * 1000, 3)},
+             }
+         )
+@@ -180,6 +187,16 @@ def _rejected(event: FallEvent, reason: str) -> FallDetailResult:
+     )
+ 
+ 
++def _analyzer_metadata(analyzer: FallVLMAnalyzer) -> dict[str, str]:
++    keyframe_analyzer = getattr(analyzer, "analyzer", None)
++    return {
++        "qwen_profile": str(getattr(keyframe_analyzer, "qwen_profile", "qwen4b_stable_v1") or "qwen4b_stable_v1"),
++        "prompt_version": str(getattr(keyframe_analyzer, "post_fall_prompt_version", "compact_v2") or "compact_v2"),
++        "schema_version": str(getattr(keyframe_analyzer, "post_fall_schema_version", "compact_v1") or "compact_v1"),
++        "fusion_version": str(getattr(keyframe_analyzer, "post_fall_fusion_version", FUSION_VERSION) or FUSION_VERSION),
++    }
++
++
+ def build_competition_decision(
+     *,
+     detail: FallDetailResult | None,
+diff --git a/app/services/fall_event_reporter_service.py b/app/services/fall_event_reporter_service.py
+index 6cc487f..d9ba1d0 100644
+--- a/app/services/fall_event_reporter_service.py
++++ b/app/services/fall_event_reporter_service.py
+@@ -1641,6 +1641,11 @@ def _compact_qwen_review(review: Any) -> dict[str, Any]:
+         "review_points": [str(item) for item in review_points[:3]]
+         if isinstance(review_points, list) else [],
+         "confidence": _as_float(source.get("confidence")),
++        "qwen_profile": source.get("qwen_profile"),
++        "qwen_model": source.get("model_name"),
++        "prompt_version": source.get("prompt_version"),
++        "schema_version": source.get("schema_version"),
++        "fusion_version": source.get("fusion_version"),
+     }
+ 
+ 
+diff --git a/configs/post_fall_v2_candidate.env b/configs/post_fall_v2_candidate.env
+index 9961e02..df3caab 100644
+--- a/configs/post_fall_v2_candidate.env
++++ b/configs/post_fall_v2_candidate.env
+@@ -62,7 +62,11 @@ POST_FALL_V2_VLM_ENABLED=true
+ POST_FALL_V2_VLM_TIMEOUT_SECONDS=8
+ POST_FALL_V2_QWEN_ENABLED=true
+ POST_FALL_V2_QWEN_PROVIDER=qwen_keyframe
++POST_FALL_V2_QWEN_PROFILE=qwen4b_stable_v1
+ POST_FALL_V2_QWEN_MODEL=qwen3.5:4b
++POST_FALL_V2_QWEN_PROMPT_VERSION=compact_v2
++POST_FALL_V2_QWEN_SCHEMA_VERSION=compact_v1
++POST_FALL_V2_QWEN_FUSION_VERSION=demo_fusion_v2
+ POST_FALL_V2_QWEN_BASE_URL=http://127.0.0.1:11434/api/chat
+ POST_FALL_V2_QWEN_TIMEOUT_SECONDS=90
+ POST_FALL_V2_QWEN_NUM_CTX=2048
+diff --git a/configs/safe_demo.env b/configs/safe_demo.env
+index 51ca61d..0404648 100644
+--- a/configs/safe_demo.env
++++ b/configs/safe_demo.env
+@@ -87,7 +87,11 @@ POST_FALL_V2_VLM_ENABLED=true
+ POST_FALL_V2_VLM_TIMEOUT_SECONDS=8
+ POST_FALL_V2_QWEN_ENABLED=true
+ POST_FALL_V2_QWEN_PROVIDER=qwen_keyframe
++POST_FALL_V2_QWEN_PROFILE=qwen4b_stable_v1
+ POST_FALL_V2_QWEN_MODEL=qwen3.5:4b
++POST_FALL_V2_QWEN_PROMPT_VERSION=compact_v2
++POST_FALL_V2_QWEN_SCHEMA_VERSION=compact_v1
++POST_FALL_V2_QWEN_FUSION_VERSION=demo_fusion_v2
+ POST_FALL_V2_QWEN_BASE_URL=http://127.0.0.1:11434/api/chat
+ POST_FALL_V2_QWEN_TIMEOUT_SECONDS=90
+ POST_FALL_V2_QWEN_NUM_CTX=2048
+diff --git a/tests/test_fall_event_reporter_service.py b/tests/test_fall_event_reporter_service.py
+index 9239523..9a93ca6 100644
+--- a/tests/test_fall_event_reporter_service.py
++++ b/tests/test_fall_event_reporter_service.py
+@@ -546,6 +546,11 @@ class FallEventReporterServiceTest(unittest.TestCase):
+                             "summary": "连续画面显示人员异常倒地。",
+                             "review_points": ["建议人工复核事件关键帧。"],
+                             "confidence": 0.92,
++                            "qwen_profile": "qwen4b_stable_v1",
++                            "model_name": "qwen3.5:4b",
++                            "prompt_version": "compact_v2",
++                            "schema_version": "compact_v1",
++                            "fusion_version": "demo_fusion_v2",
+                             "snapshot_path": "E:\\internal\\snapshot.jpg",
+                         }
+                     }
+@@ -560,8 +565,15 @@ class FallEventReporterServiceTest(unittest.TestCase):
+             "summary",
+             "review_points",
+             "confidence",
++            "qwen_profile",
++            "qwen_model",
++            "prompt_version",
++            "schema_version",
++            "fusion_version",
+         }
+         assert payload["qwen_review"]["confidence"] == 0.92
++        assert payload["qwen_review"]["qwen_profile"] == "qwen4b_stable_v1"
++        assert payload["qwen_review"]["qwen_model"] == "qwen3.5:4b"
+         assert "snapshot_path" not in payload["qwen_review"]
+ 
+     def test_ack_event_id_mismatch_is_not_delivered(self) -> None:
+diff --git a/tests/test_pipeline_mode_config.py b/tests/test_pipeline_mode_config.py
+index 956e8b6..0397ca5 100644
+--- a/tests/test_pipeline_mode_config.py
++++ b/tests/test_pipeline_mode_config.py
+@@ -76,12 +76,31 @@ class PipelineModeConfigTest(unittest.TestCase):
+         self.assertEqual(settings.post_fall_v2_candidate_min_ms, 0)
+         self.assertEqual(settings.event_keyframe_offsets_ms, (-1000, -500, 0))
+         self.assertEqual(settings.post_fall_v2_qwen_max_images, 3)
++        self.assertEqual(settings.post_fall_v2_qwen_profile, "qwen4b_stable_v1")
++        self.assertEqual(settings.post_fall_v2_qwen_model, "qwen3.5:4b")
++        self.assertEqual(settings.post_fall_v2_qwen_prompt_version, "compact_v2")
++        self.assertEqual(settings.post_fall_v2_qwen_schema_version, "compact_v1")
++        self.assertEqual(settings.post_fall_v2_qwen_fusion_version, "demo_fusion_v2")
+         self.assertEqual(settings.post_fall_v2_qwen_image_max_edge, 384)
+         self.assertEqual(settings.post_fall_v2_qwen_jpeg_quality, 86)
+         self.assertEqual(settings.post_fall_v2_qwen_max_output_tokens, 96)
+         self.assertEqual(settings.post_fall_v2_qwen_temperature, 0)
+         self.assertFalse(settings.post_fall_v2_keyframe_post_collection_enabled)
+ 
++    def test_post_fall_v2_accepts_qwen2b_experiment_profile(self) -> None:
++        settings = replace(
++            Settings(),
++            post_fall_v2_qwen_profile="qwen2b_experiment_v1",
++            post_fall_v2_qwen_model="qwen3.5:2b",
++            post_fall_v2_qwen_prompt_version="compact_2b_v1",
++            post_fall_v2_qwen_schema_version="compact_v1",
++            post_fall_v2_qwen_fusion_version="demo_fusion_v2",
++        )
++
++        self.assertEqual(settings.post_fall_v2_qwen_profile, "qwen2b_experiment_v1")
++        self.assertEqual(settings.post_fall_v2_qwen_model, "qwen3.5:2b")
++        self.assertEqual(settings.post_fall_v2_qwen_prompt_version, "compact_2b_v1")
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_post_fall_v2_qwen_fall_analyzer.py b/tests/test_post_fall_v2_qwen_fall_analyzer.py
+index 2afdc1d..6b1ff56 100644
+--- a/tests/test_post_fall_v2_qwen_fall_analyzer.py
++++ b/tests/test_post_fall_v2_qwen_fall_analyzer.py
+@@ -58,7 +58,11 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
+     assert "high_risk_fall" not in request_text
+     request_context = json.loads(received[0]["messages"][1]["content"])
+     assert request_context["profile"] == "compact_v2"
++    assert request_context["qwen_profile"] == "qwen4b_stable_v1"
++    assert request_context["qwen_model"] == "qwen-vision-cn:latest"
+     assert request_context["prompt_version"] == "compact_v2"
++    assert request_context["schema_contract_version"] == "compact_v1"
++    assert request_context["fusion_version"] == "demo_fusion_v2"
+     assert request_context["keyframe_timeline"] == [
+         "图片 1：T0，候选事件触发附近，角色 trigger",
+         "图片 2：T+1000ms，事件触发后，角色 trigger",
+@@ -155,6 +159,50 @@ def test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields() -> No
+     }
+ 
+ 
++def test_qwen_fall_analyzer_uses_2b_experiment_prompt_without_changing_schema() -> None:
++    received: list[dict] = []
++
++    def transport(payload: dict, timeout: float) -> dict:
++        received.append(payload)
++        return {"message": {"content": json.dumps({
++            "e": "normal",
++            "s": "ground",
++            "d": "no",
++            "f": False,
++            "c": 0.91,
++            "t": "人物低位但姿态稳定。",
++        }, ensure_ascii=False)}}
++
++    analyzer = _analyzer(
++        transport,
++        images=[_image(-1000), _image(-500), _image(0)],
++        qwen_profile="qwen2b_experiment_v1",
++        model_name="qwen3.5:2b",
++        prompt_version="compact_2b_v1",
++    )
++
++    detail = analyzer.analyze_fall_event(_event(), _package())
++    request_text = json.dumps(received[0], ensure_ascii=False)
++    request_context = json.loads(received[0]["messages"][1]["content"])
++
++    assert received[0]["model"] == "qwen3.5:2b"
++    assert received[0]["format"]["required"] == ["e", "s", "d", "f", "c", "t"]
++    assert request_context["qwen_profile"] == "qwen2b_experiment_v1"
++    assert request_context["qwen_model"] == "qwen3.5:2b"
++    assert request_context["prompt_version"] == "compact_2b_v1"
++    assert request_context["schema_contract_version"] == "compact_v1"
++    assert request_context["fusion_version"] == "demo_fusion_v2"
++    assert "仅仅处于低位、坐地、躺卧，不能自动判断为fall" in request_text
++    assert "如果画面显示正常受控动作，不得因为人物靠近地面就选择fall" in request_text
++    assert detail.qwen_profile == "qwen2b_experiment_v1"
++    assert detail.model_name == "qwen3.5:2b"
++    assert detail.prompt_version == "compact_2b_v1"
++    assert detail.schema_version == "compact_v1"
++    assert detail.fusion_version == "demo_fusion_v2"
++    assert detail.activity == "normal_activity"
++    assert detail.vlm_is_true_fall is False
++
++
+ def test_qwen_fall_analyzer_recovers_missing_detail_fields() -> None:
+     analyzer = _analyzer(
+         lambda *_: {"message": {"content": json.dumps({"schema_version": "pfv2_post_fall_detail.v1"})}},
+@@ -867,13 +915,22 @@ def _intentional_evidence(**updates) -> dict:
+     return evidence
+ 
+ 
+-def _analyzer(transport, *, images: list[QwenImageInput]) -> PFV2QwenFallAnalyzer:
++def _analyzer(
++    transport,
++    *,
++    images: list[QwenImageInput],
++    qwen_profile: str = "qwen4b_stable_v1",
++    model_name: str = "qwen-vision-cn:latest",
++    prompt_version: str = "compact_v2",
++) -> PFV2QwenFallAnalyzer:
+     return PFV2QwenFallAnalyzer(
+         analyzer=QwenKeyframeAnalyzer(
+             endpoint_url="http://127.0.0.1:11434/api/chat",
+-            model_name="qwen-vision-cn:latest",
++            model_name=model_name,
+             timeout_seconds=1,
+             transport=transport,
++            qwen_profile=qwen_profile,
++            prompt_version=prompt_version,
+         ),
+         image_provider=lambda _: (images, []),
+     )

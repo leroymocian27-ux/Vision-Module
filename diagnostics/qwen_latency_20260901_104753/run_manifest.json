@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-09-01T10:47:53.125+08:00",
+  "endpoint": "http://127.0.0.1:11434",
+  "model": "qwen3.5:4b",
+  "repeats": 3,
+  "request_timeout_seconds": 180.0,
+  "flash_attention_ab": "NOT RUN",
+  "production_precheck": {
+    "status": "BUSY",
+    "session_state": "RUNNING",
+    "session_id": "test_20260901_024609",
+    "qwen_active_count": 0,
+    "qwen_queue_depth": 0
+  },
+  "finished_at": "2026-09-01T10:47:58.861+08:00",
+  "status": "BLOCKED_BY_RUNNING_PRODUCTION_SESSION",
+  "result_count": 0
+}

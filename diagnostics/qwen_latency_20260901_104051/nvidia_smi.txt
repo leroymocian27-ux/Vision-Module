@@ -1,0 +1,55 @@
+===== nvidia-smi (exit=0) =====
+Tue Sep  1 10:40:57 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 577.03                 Driver Version: 577.03         CUDA Version: 12.9     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5060 ...  WDDM  |   00000000:01:00.0  On |                  N/A |
+| N/A   44C    P8             13W /   95W |    1696MiB /   8151MiB |     15%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3664    C+G   ...de\Microsoft VS Code\Code.exe      N/A      |
+|    0   N/A  N/A            5984    C+G   ...crosoft OneDrive\OneDrive.exe      N/A      |
+|    0   N/A  N/A           14316    C+G   ...em32\ApplicationFrameHost.exe      N/A      |
+|    0   N/A  N/A           17576    C+G   C:\Windows\explorer.exe               N/A      |
+|    0   N/A  N/A           18024    C+G   ...5n1h2txyewy\TextInputHost.exe      N/A      |
+|    0   N/A  N/A           18344    C+G   ..._cw5n1h2txyewy\SearchHost.exe      N/A      |
+|    0   N/A  N/A           18352    C+G   ...y\StartMenuExperienceHost.exe      N/A      |
+|    0   N/A  N/A           19172    C+G   ...Chrome\Application\chrome.exe      N/A      |
+|    0   N/A  N/A           23228      C   ...camera-service-gpu\python.exe      N/A      |
+|    0   N/A  N/A           25688    C+G   ...ntrolPanel\SystemSettings.exe      N/A      |
+|    0   N/A  N/A           26100    C+G   C:\Windows\explorer.exe               N/A      |
+|    0   N/A  N/A           28612    C+G   ...indows\System32\ShellHost.exe      N/A      |
+|    0   N/A  N/A           28724    C+G   ...ffice6\promecefpluginhost.exe      N/A      |
+|    0   N/A  N/A           28856    C+G   C:\Windows\explorer.exe               N/A      |
++-----------------------------------------------------------------------------------------+
+
+===== nvidia-smi -L (exit=0) =====
+GPU 0: NVIDIA GeForce RTX 5060 Laptop GPU (UUID: GPU-d82c4159-6281-e272-9463-ed0b11e82923)
+
+===== GPU processes (exit=0) =====
+pid, process_name, used_gpu_memory [MiB]
+2612, [Insufficient Permissions], [N/A]
+18024, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TextInputHost.exe, [N/A]
+18352, C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe, [N/A]
+17576, C:\Windows\explorer.exe, [N/A]
+23228, E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe, [N/A]
+18344, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe, [N/A]
+19172, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+3664, D:\VSCode\Microsoft VS Code\Code.exe, [N/A]
+26100, C:\Windows\explorer.exe, [N/A]
+28856, C:\Windows\explorer.exe, [N/A]
+14316, C:\Windows\System32\ApplicationFrameHost.exe, [N/A]
+25688, C:\Windows\ImmersiveControlPanel\SystemSettings.exe, [N/A]
+28612, C:\Windows\System32\ShellHost.exe, [N/A]
+28724, E:\WPS\WPS������\WPS Office\12.1.0.28043\office6\promecefpluginhost.exe, [N/A]
+5984, C:\Program Files\Microsoft OneDrive\OneDrive.exe, [N/A]

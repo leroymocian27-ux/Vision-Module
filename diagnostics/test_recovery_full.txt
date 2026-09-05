@@ -1,0 +1,115 @@
+C:\Users\YANG\.conda\envs\AI\lib\site-packages\pytest_asyncio\plugin.py:207: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+........................................................................ [  8%]
+........................................................................ [ 16%]
+.............................F.......................................... [ 24%]
+........................................................................ [ 32%]
+........................................................................ [ 41%]
+........................................................................ [ 49%]
+........................................................................ [ 57%]
+........................................................................ [ 65%]
+........................................................................ [ 73%]
+........................................................................ [ 82%]
+........................................................................ [ 90%]
+........................................................................ [ 98%]
+.............                                                            [100%]
+================================== FAILURES ===================================
+_____________ VisionPipelineE2ETest.test_camera_to_alert_pipeline _____________
+
+self = <test_end_to_end_pipeline.VisionPipelineE2ETest testMethod=test_camera_to_alert_pipeline>
+
+    def test_camera_to_alert_pipeline(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            settings = replace(
+                Settings(),
+                default_rtsp_url=None,
+                mock_camera_enabled=True,
+                mock_camera_fps=12,
+                detection_interval_ms=80,
+                enable_tracking=True,
+                enable_identity=False,
+                enable_identity_binding=False,
+                enable_pose=False,
+                enable_behavior=False,
+                enable_temporal=False,
+                fall_detector_enabled=True,
+                fall_detector_promote_unmatched=False,
+                field_fall_candidate_enabled=False,
+                fall_detector_confirm_enabled=True,
+                fall_detector_confirm_min_probability=0.3,
+                fall_detector_confirm_min_person_confidence=0.2,
+                fall_detector_confirm_frames=2,
+                fall_detector_confirm_ms=0,
+                result_publish_fps=12.0,
+                tracking_worker_fps=12.0,
+                main_system_alert_enabled=True,
+                main_system_report_dry_run=False,
+                main_system_base_url="http://alert-host/api/v1",
+                main_system_fall_event_path="/alerts/fall",
+                main_system_alert_timeout_ms=1000,
+                main_system_alert_cooldown_seconds=0.0,
+                vision_service_public_base_url="http://testserver",
+                fall_event_snapshot_dir=str(temp_path / "snapshots"),
+            )
+            reporter_spy = _ReporterSpy()
+    
+            original_post = None
+            app = self._build_test_app(settings, reporter_spy)
+            try:
+                import app.services.fall_event_reporter_service as reporter_module
+    
+                original_post = reporter_module.requests.post
+                reporter_module.requests.post = reporter_spy.post
+    
+                with TestClient(app) as client:
+                    start = client.post(
+                        "/stream/start",
+                        json={"camera_id": "camera_01", "rtsp_url": "mock://colorbars"},
+                    )
+                    self.assertEqual(start.status_code, 200, start.text)
+                    self.assertIn(start.json()["status"], {"started", "running", "restarted"})
+    
+                    latest = self._wait_for_result(client, camera_id="camera_01")
+                    self.assertEqual(latest["camera_id"], "camera_01")
+                    self.assertTrue(latest["objects"], latest)
+    
+                    person = next(item for item in latest["objects"] if item["label"] == "person")
+                    self.assertIsNotNone(person.get("track_id"))
+                    self.assertTrue(person.get("is_target"))
+                    self.assertEqual((person.get("pose") or {}).get("pose_provider"), "disabled_placeholder")
+                    self.assertEqual((person.get("pose") or {}).get("keypoints"), [])
+    
+                    alarm = person.get("alarm_preview") or {}
+                    decision = person.get("fall_decision") or {}
+                    self.assertTrue(alarm.get("confirmed"), latest)
+                    self.assertEqual(decision.get("fall_state"), "fallen_confirmed", latest)
+    
+                    status = client.get("/status", params={"camera_id": "camera_01"})
+                    self.assertEqual(status.status_code, 200, status.text)
+                    status_payload = status.json()
+                    self.assertTrue(status_payload["cameras"][0]["connected"], status_payload)
+                    self.assertGreater(status_payload["cameras"][0]["frame_seq"], 0, status_payload)
+                    self.assertGreaterEqual(status_payload["latest_result"]["latest_objects_count"], 1, status_payload)
+                    self.assertTrue(status_payload["latest_result"]["alarm_confirmed"], status_payload)
+                    self.assertFalse(status_payload["latest_result"]["pose_available"], status_payload)
+                    self.assertEqual(status_payload["pose"]["pose_provider"], "disabled_placeholder", status_payload)
+    
+                    self.assertFalse(reporter_spy.requests.empty(), "expected fall reporter to post an alert")
+                    url, payload, timeout = reporter_spy.requests.get(timeout=2)
+                    self.assertEqual(url, "http://alert-host/api/v1/alerts/fall")
+>                   self.assertGreater(timeout, 0)
+E                   TypeError: '>' not supported between instances of 'tuple' and 'int'
+
+tests\test_end_to_end_pipeline.py:197: TypeError
+============================== warnings summary ===============================
+tests/test_evaluate_fall_lstm_metrics.py::test_schema
+  E:\MathModelingTools\conda-envs\camera-service-gpu\lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_evaluate_fall_lstm_metrics.py::test_schema returned {'schema_version': 'test_schema', 'schema_hash': 'abc123', 'input_dim': 4, 'window_size': 2, 'feature_names': ['bbox', 'speed', 'pose_available', 'head_height_ratio_filled'], 'missing_pose_fill': {'pose_available': 0.0, 'head_height_ratio_filled': -1.0}}, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_end_to_end_pipeline.py::VisionPipelineE2ETest::test_camera_to_alert_pipeline
+1 failed, 876 passed, 1 warning in 50.42s

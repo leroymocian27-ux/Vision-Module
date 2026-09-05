@@ -1,0 +1,24 @@
+C:\Users\YANG\.conda\envs\AI\lib\site-packages\pytest_asyncio\plugin.py:207: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 24%]
+........................................................................ [ 32%]
+........................................................................ [ 41%]
+........................................................................ [ 49%]
+........................................................................ [ 57%]
+........................................................................ [ 65%]
+........................................................................ [ 73%]
+........................................................................ [ 82%]
+........................................................................ [ 90%]
+........................................................................ [ 98%]
+.............                                                            [100%]
+============================== warnings summary ===============================
+tests/test_evaluate_fall_lstm_metrics.py::test_schema
+  E:\MathModelingTools\conda-envs\camera-service-gpu\lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_evaluate_fall_lstm_metrics.py::test_schema returned {'schema_version': 'test_schema', 'schema_hash': 'abc123', 'input_dim': 4, 'window_size': 2, 'feature_names': ['bbox', 'speed', 'pose_available', 'head_height_ratio_filled'], 'missing_pose_fill': {'pose_available': 0.0, 'head_height_ratio_filled': -1.0}}, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+877 passed, 1 warning in 42.87s

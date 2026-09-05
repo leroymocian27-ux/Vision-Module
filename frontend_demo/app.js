@@ -25,6 +25,7 @@ const ANNOTATED_OVERLAY_ENABLED = false;
 const WEBRTC_DEFAULT_ICE_SERVERS = [];
 const ALARM_INDICATOR_RESET_MS = 5000;
 const ALARM_INDICATOR_MARGIN_PX = 22;
+const JUDGMENT_RESET_QUIET_MS = 3000;
 const ACKNOWLEDGED_FALL_EVENTS_KEY = "vision-dashboard-acknowledged-fall-events-v1";
 const ACKNOWLEDGED_FALL_EVENTS_MAX = 30;
 const ALARM_INDICATOR_TITLES = {
@@ -112,7 +113,14 @@ const state = {
   userEditedRtspUrl: false,
   lastPlayError: null,
   sessionHotkeyBusy: false,
+  stagedControlHotkeyBusy: false,
   acknowledgedFallEventIds: loadAcknowledgedFallEventIds(),
+  judgmentReset: {
+    active: false,
+    incidentIds: new Set(),
+    resetAt: null,
+    quietSince: null,
+  },
   demoFall: {
     active: false,
     scenario: null,
@@ -1827,6 +1835,7 @@ async function toggleQwenModel() {
 
 async function postModelToggle(kind, enabled, buttonId, resultId) {
   const button = $(buttonId);
+  let succeeded = false;
   if (button) {
     button.disabled = true;
   }
@@ -1844,11 +1853,83 @@ async function postModelToggle(kind, enabled, buttonId, resultId) {
     state.lastControlStatus = payload;
     renderControlStatus(payload);
     setControlResult(resultId, `${kind === "binary" ? "二分类" : "千问"}已${enabled ? "开启" : "关闭"}`, "success");
+    succeeded = true;
   } catch (error) {
     setControlResult(resultId, `操作失败：${error}`, "error");
   } finally {
     await refreshControlStatus();
   }
+  return succeeded;
+}
+
+async function startVideoOnly() {
+  setControlResult("sessionControlResult", "F5：正在启动独立视频...", "pending");
+  await Promise.all([refreshSessionStatus(), refreshControlStatus()]);
+  const sessionState = String(state.lastSessionStatus?.state || "IDLE").toUpperCase();
+  if (["STARTING", "RUNNING", "STOPPING"].includes(sessionState)) {
+    setControlResult("sessionControlResult", "完整检测会话正在运行，请先按 F8 结束并保存，再使用 F5。", "error");
+    return false;
+  }
+
+  const control = state.lastControlStatus || {};
+  const binaryActive = Boolean(control.binary_enabled || control.binary_requested);
+  const qwenActive = Boolean(control.qwen_enabled || control.qwen_requested);
+  if (binaryActive) {
+    const disabled = await postModelToggle("binary", false, "binaryToggleBtn", "modelControlResult");
+    if (!disabled) {
+      setControlResult("sessionControlResult", "F5 启动失败：无法关闭当前模型。", "error");
+      return false;
+    }
+  } else if (qwenActive) {
+    const disabled = await postModelToggle("qwen", false, "qwenToggleBtn", "modelControlResult");
+    if (!disabled) {
+      setControlResult("sessionControlResult", "F5 启动失败：无法关闭当前千问模型。", "error");
+      return false;
+    }
+  }
+
+  try {
+    await startStreamRequest({ updateUi: false });
+    await Promise.all([refreshControlStatus(), refreshStatus()]);
+    setControlResult("sessionControlResult", "F5：视频已启动，二分类与千问暂未启动。", "success");
+    return true;
+  } catch (error) {
+    setControlResult("sessionControlResult", `F5 视频启动失败：${error}`, "error");
+    return false;
+  }
+}
+
+async function startBothModels() {
+  setControlResult("sessionControlResult", "F6：正在启动二分类与千问...", "pending");
+  await refreshControlStatus();
+  if (!state.lastControlStatus?.stream_connected) {
+    setControlResult("sessionControlResult", "F6 启动失败：请先按 F5 启动视频。", "error");
+    return false;
+  }
+
+  if (!state.lastControlStatus.binary_enabled) {
+    const binaryStarted = await postModelToggle("binary", true, "binaryToggleBtn", "modelControlResult");
+    if (!binaryStarted) {
+      setControlResult("sessionControlResult", "F6 启动失败：二分类模型未能启动。", "error");
+      return false;
+    }
+  }
+  if (!state.lastControlStatus?.qwen_enabled) {
+    const qwenStarted = await postModelToggle("qwen", true, "qwenToggleBtn", "modelControlResult");
+    if (!qwenStarted) {
+      setControlResult("sessionControlResult", "F6 启动失败：千问模型未能启动。", "error");
+      return false;
+    }
+  }
+
+  await refreshControlStatus();
+  const ready = Boolean(state.lastControlStatus?.binary_enabled && state.lastControlStatus?.qwen_enabled);
+  setControlResult(
+    "sessionControlResult",
+    ready ? "F6：二分类与千问均已启动。" : "F6 启动未完成，请查看模型状态。",
+    ready ? "success" : "error",
+  );
+  return ready;
 }
 
 async function startTimedTest() {
@@ -2004,11 +2085,13 @@ function renderPresentationResult(presentation, session) {
   const result = state.lastResult || {};
   const incomingPresentation = presentation;
   const incomingDecision = targetFallDecision(result);
+  const judgmentSuppressed = state.judgmentReset.active;
   const presentationAcknowledged = isAcknowledgedFallEventId(incomingPresentation?.event_id);
   const decisionAcknowledged = isAcknowledgedFallEventId(incomingDecision?.incident_id);
-  const suppressStaleRuntime = presentationAcknowledged && (!incomingDecision?.incident_id || decisionAcknowledged);
-  presentation = presentationAcknowledged ? null : incomingPresentation;
-  const decision = decisionAcknowledged ? null : incomingDecision;
+  const suppressStaleRuntime = judgmentSuppressed
+    || (presentationAcknowledged && (!incomingDecision?.incident_id || decisionAcknowledged));
+  presentation = judgmentSuppressed || presentationAcknowledged ? null : incomingPresentation;
+  const decision = judgmentSuppressed || decisionAcknowledged ? null : incomingDecision;
   const qwenActive = suppressStaleRuntime
     ? false
     : Number(session?.components?.qwen?.active_count || control?.runtime?.vlm_active_count || 0) > 0;
@@ -2098,6 +2181,95 @@ function acknowledgeCurrentFall() {
   }
   renderDashboard();
   setControlResult("sessionControlResult", "跌倒信息已确认收到，当前事件告警已解除。", "success");
+}
+
+function currentJudgmentSnapshot() {
+  const session = state.lastSessionStatus || {};
+  const control = state.lastControlStatus || {};
+  const presentation = session.presentation_result || session.archive?.presentation_result || null;
+  const decision = targetFallDecision(state.lastResult || {}) || {};
+  const presentationId = presentation?.is_real_fall === true
+    ? normalizedIncidentId(presentation.event_id)
+    : "";
+  const incidentIds = [
+    presentationId,
+    decision.incident_id,
+    state.alarmIndicator.currentEventId,
+  ].map(normalizedIncidentId).filter(Boolean);
+  return {
+    incidentIds: Array.from(new Set(incidentIds)),
+    binaryWarning: String(decision.binary_label || control.runtime?.binary_last_label || "").toUpperCase() === "FALL",
+    qwenActive: Number(session.components?.qwen?.active_count || control.runtime?.vlm_active_count || 0) > 0,
+  };
+}
+
+function acknowledgeJudgmentIncidentIds(incidentIds) {
+  let changed = false;
+  for (const incidentId of incidentIds) {
+    if (!state.acknowledgedFallEventIds.has(incidentId)) {
+      state.acknowledgedFallEventIds.add(incidentId);
+      changed = true;
+    }
+    state.judgmentReset.incidentIds.add(incidentId);
+  }
+  if (changed) {
+    persistAcknowledgedFallEventIds();
+  }
+}
+
+function synchronizeJudgmentReset() {
+  if (!state.judgmentReset.active) {
+    return false;
+  }
+  const snapshot = currentJudgmentSnapshot();
+  acknowledgeJudgmentIncidentIds(snapshot.incidentIds);
+  const signalActive = snapshot.binaryWarning || snapshot.qwenActive;
+  if (signalActive) {
+    state.judgmentReset.quietSince = null;
+    return true;
+  }
+
+  if (state.judgmentReset.incidentIds.size > 0) {
+    state.judgmentReset.active = false;
+    state.judgmentReset.quietSince = null;
+    return true;
+  }
+  const now = Date.now();
+  state.judgmentReset.quietSince ??= now;
+  if (now - state.judgmentReset.quietSince >= JUDGMENT_RESET_QUIET_MS) {
+    state.judgmentReset.active = false;
+    state.judgmentReset.quietSince = null;
+  }
+  return true;
+}
+
+function resetCurrentJudgment() {
+  if (state.demoFall.active) {
+    resetDemoFall("F7：当前模拟判断已停止，页面恢复持续监测状态。");
+    return;
+  }
+
+  const snapshot = currentJudgmentSnapshot();
+  const viewerState = document.querySelector(".viewer")?.dataset.alertState || "idle";
+  const hasCurrentJudgment = Boolean(
+    snapshot.incidentIds.length
+    || snapshot.binaryWarning
+    || snapshot.qwenActive
+    || ["warning", "danger"].includes(viewerState),
+  );
+  state.judgmentReset.active = hasCurrentJudgment;
+  state.judgmentReset.incidentIds = new Set();
+  state.judgmentReset.resetAt = Date.now();
+  state.judgmentReset.quietSince = hasCurrentJudgment ? null : Date.now();
+  acknowledgeJudgmentIncidentIds(snapshot.incidentIds);
+  forceIdleAlarmIndicator();
+  setViewerAlertState("idle");
+  renderDashboard();
+  setControlResult(
+    "sessionControlResult",
+    hasCurrentJudgment ? "F7：当前判断已停止，页面已恢复持续监测。" : "F7：页面已处于默认监测状态。",
+    "success",
+  );
 }
 
 function renderQwenDescription(presentation) {
@@ -2399,11 +2571,13 @@ function renderRealModelSentinels() {
   const session = state.lastSessionStatus || {};
   const incomingPresentation = session.presentation_result || session.archive?.presentation_result || null;
   const incomingDecision = targetFallDecision(result) || {};
+  const judgmentSuppressed = state.judgmentReset.active;
   const presentationAcknowledged = isAcknowledgedFallEventId(incomingPresentation?.event_id);
   const decisionAcknowledged = isAcknowledgedFallEventId(incomingDecision.incident_id);
-  const suppressStaleRuntime = presentationAcknowledged && (!incomingDecision.incident_id || decisionAcknowledged);
-  const presentation = presentationAcknowledged ? null : incomingPresentation;
-  const decision = decisionAcknowledged ? {} : incomingDecision;
+  const suppressStaleRuntime = judgmentSuppressed
+    || (presentationAcknowledged && (!incomingDecision.incident_id || decisionAcknowledged));
+  const presentation = judgmentSuppressed || presentationAcknowledged ? null : incomingPresentation;
+  const decision = judgmentSuppressed || decisionAcknowledged ? {} : incomingDecision;
   const binaryLabel = suppressStaleRuntime
     ? ""
     : String(decision.binary_label || control.runtime?.binary_last_label || "").toUpperCase();
@@ -2901,6 +3075,10 @@ function updateFallPreview(target) {
 }
 
 function updateAlarmIndicatorFromResult(result) {
+  if (synchronizeJudgmentReset()) {
+    forceIdleAlarmIndicator();
+    return;
+  }
   const signal = alarmIndicatorSignalFromResult(result);
   if (!signal) {
     return;
@@ -4091,6 +4269,7 @@ function renderEventPanel(model) {
 }
 
 function renderDashboard() {
+  synchronizeJudgmentReset();
   window.__VISION_DASHBOARD__?.render?.({
     status: state.lastStatus,
     control: state.lastControlStatus,
@@ -4858,6 +5037,33 @@ function handleSessionHotkey(event) {
   });
 }
 
+function handleStagedControlHotkey(event) {
+  if (!["F5", "F6", "F7"].includes(event.key)) {
+    return;
+  }
+  const target = event.target;
+  const tagName = String(target?.tagName || "").toLowerCase();
+  if (tagName === "input" || tagName === "textarea" || tagName === "select" || target?.isContentEditable) {
+    return;
+  }
+  event.preventDefault();
+  if (event.repeat) {
+    return;
+  }
+  if (event.key === "F7") {
+    resetCurrentJudgment();
+    return;
+  }
+  if (state.stagedControlHotkeyBusy) {
+    return;
+  }
+  state.stagedControlHotkeyBusy = true;
+  const action = event.key === "F5" ? startVideoOnly() : startBothModels();
+  Promise.resolve(action).finally(() => {
+    state.stagedControlHotkeyBusy = false;
+  });
+}
+
 function handleDemoHotkey(event) {
   if (event.key !== "F9" && event.key !== "F10") {
     return;
@@ -4940,6 +5146,7 @@ window.addEventListener("resize", () => {
   }
 });
 window.addEventListener("scroll", syncAlarmIndicatorPosition, { passive: true });
+window.addEventListener("keydown", handleStagedControlHotkey);
 window.addEventListener("keydown", handleSessionHotkey);
 window.addEventListener("keydown", handleDemoHotkey);
 window.addEventListener("error", (event) => pushDebugError("error", event));

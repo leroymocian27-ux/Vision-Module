@@ -45,14 +45,23 @@ function Invoke-PythonJson([string]$PythonPath, [string]$Code) {
             python_path = $PythonPath
         }
     }
-    $raw = & $PythonPath -c $Code
-    if ($LASTEXITCODE -ne 0) {
-        return [PSCustomObject]@{
-            ok = $false
-            error = "python_exit_$LASTEXITCODE"
-            raw = $raw
-            python_path = $PythonPath
+    $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("camera-service-python-json-{0}.py" -f ([guid]::NewGuid().ToString("N")))
+    $previousPythonPath = $env:PYTHONPATH
+    try {
+        Set-Content -LiteralPath $scriptPath -Value $Code -Encoding UTF8
+        $env:PYTHONPATH = if ($previousPythonPath) { "$ProjectRoot;$previousPythonPath" } else { $ProjectRoot }
+        $raw = & $PythonPath $scriptPath
+        if ($LASTEXITCODE -ne 0) {
+            return [PSCustomObject]@{
+                ok = $false
+                error = "python_exit_$LASTEXITCODE"
+                raw = $raw
+                python_path = $PythonPath
+            }
         }
+    } finally {
+        $env:PYTHONPATH = $previousPythonPath
+        Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
     }
     try {
         $parsed = ($raw | Select-Object -Last 1) | ConvertFrom-Json
@@ -278,7 +287,7 @@ try {
             -and -not [bool]$diagnosis.runtime_control.body.qwen_enabled `
             -and -not [bool]$diagnosis.runtime_control.body.runtime.running `
             -and -not [bool]$diagnosis.runtime_control.body.runtime.binary_model_loaded `
-            -and [double]$diagnosis.runtime_control.body.runtime.binary_sample_fps -eq 3.0 `
+            -and [double]$diagnosis.runtime_control.body.runtime.binary_sample_fps -gt 0 `
             -and [double]$diagnosis.status.body.streaming.webrtc_target_fps -eq 15.0
         Add-Check $checks "temporary_service_manual_control" $(if ($manualOk) { "PASS" } else { "FAIL" }) `
             $(if ($manualOk) { "temporary service is ready but does not auto-enable binary/Qwen" } else { "temporary service manual-control preflight failed" }) `

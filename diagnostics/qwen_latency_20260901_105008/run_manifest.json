@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-09-01T10:50:08.352+08:00",
+  "endpoint": "http://127.0.0.1:11434",
+  "model": "qwen3.5:4b",
+  "repeats": 3,
+  "request_timeout_seconds": 180.0,
+  "flash_attention_ab": "NOT RUN",
+  "production_precheck": {
+    "status": "QUIESCENT",
+    "session_state": "COMPLETED",
+    "session_id": "test_20260901_024609",
+    "qwen_active_count": 0,
+    "qwen_queue_depth": 0
+  },
+  "finished_at": "2026-09-01T11:03:34.212+08:00",
+  "source_event_dir": "E:\\国赛\\event\\binary-classification\\full\\pfv2-go2_front_camera-9f95b35d595b",
+  "result_count": 153
+}

@@ -11,9 +11,13 @@ if (-not (Test-Path -LiteralPath $Python)) {
     throw "GPU Python not found: $Python"
 }
 
-if (-not $env:POST_FALL_V2_BINARY_ONNX_PROVIDERS) {
-    $env:POST_FALL_V2_BINARY_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
-}
+$env:PYTHONPATH = $ProjectRoot
+$env:POST_FALL_V2_BINARY_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
+$env:TEMPORAL_ONNX_PROVIDERS = "CUDAExecutionProvider,CPUExecutionProvider"
+$env:YOLO_DEVICE = "cuda:0"
+$env:YOLO_FALL_DEVICE = "cuda:0"
+$env:YOLO_POSE_DEVICE = "cuda:0"
+$env:YOLO11_POSE_DEVICE = "cuda:0"
 
 Push-Location $ProjectRoot
 try {

@@ -99,6 +99,14 @@ class FallBinaryClassifierService:
 
         self.available_providers = list(ort.get_available_providers())
         available = set(self.available_providers)
+        if wants_cuda and "CUDAExecutionProvider" not in available:
+            self.provider_degraded = True
+            self.provider_warning = "CUDAExecutionProvider requested but unavailable"
+            self.last_error = (
+                "CUDAExecutionProvider was requested for Post-Fall V2 binary inference, "
+                f"but available providers are {self.available_providers}"
+            )
+            raise FallBinaryClassifierError(self.last_error)
         selected = [provider for provider in self.providers if provider in available]
         if not selected:
             selected = ["CPUExecutionProvider"]
@@ -109,6 +117,14 @@ class FallBinaryClassifierService:
             self._session = ort.InferenceSession(str(self.model_path), providers=selected)
             timings["inference_session"] = round((time.monotonic() - session_started) * 1000, 2)
         except Exception as exc:
+            if wants_cuda:
+                self.provider_degraded = True
+                self.provider_warning = f"CUDAExecutionProvider session failed: {exc}"
+                self.last_error = (
+                    "CUDAExecutionProvider was requested for Post-Fall V2 binary inference, "
+                    f"but session creation failed: {exc}"
+                )
+                raise FallBinaryClassifierError(self.last_error) from exc
             if selected != ["CPUExecutionProvider"] and "CPUExecutionProvider" in available:
                 self.provider_degraded = True
                 self.provider_warning = f"requested provider session failed; using CPUExecutionProvider: {exc}"
@@ -135,6 +151,11 @@ class FallBinaryClassifierService:
                 self.available_providers,
                 self.active_providers,
             )
+            self.last_error = (
+                "CUDAExecutionProvider was requested for Post-Fall V2 binary inference, "
+                f"but active providers are {self.active_providers}"
+            )
+            raise FallBinaryClassifierError(self.last_error)
         logger.info(
             "post_fall_v2_binary_provider_selected requested=%s available=%s active=%s degraded=%s",
             self.providers,
@@ -162,29 +183,21 @@ class FallBinaryClassifierService:
             self._warmup(inputs[0])
             timings["warmup"] = round((time.monotonic() - warmup_started) * 1000, 2)
         except Exception as exc:
-            if self.provider == "CUDAExecutionProvider" and "CPUExecutionProvider" in available:
+            if wants_cuda:
                 self.provider_degraded = True
-                self.provider_warning = f"CUDA warm-up failed; using CPUExecutionProvider: {exc}"
+                self.provider_warning = f"CUDAExecutionProvider warm-up failed: {exc}"
+                self.last_error = (
+                    "CUDAExecutionProvider was requested for Post-Fall V2 binary inference, "
+                    f"but warm-up failed: {exc}"
+                )
                 logger.warning(
                     "post_fall_v2_binary_cuda_warmup_failed requested=%s available=%s error=%s",
                     self.providers,
                     self.available_providers,
                     exc,
                 )
-                self._session = ort.InferenceSession(str(self.model_path), providers=["CPUExecutionProvider"])
-                self.active_providers = self._session.get_providers()
-                self.provider = self.active_providers[0] if self.active_providers else None
-                inputs = self._session.get_inputs()
-                outputs = self._session.get_outputs()
-                if len(inputs) != 1 or inputs[0].name != "input":
-                    raise FallBinaryClassifierError("unexpected ONNX input contract")
-                if len(outputs) != 1 or outputs[0].name != "logits":
-                    raise FallBinaryClassifierError("unexpected ONNX output contract")
-                warmup_started = time.monotonic()
-                self._warmup(inputs[0])
-                timings["warmup"] = round((time.monotonic() - warmup_started) * 1000, 2)
-            else:
-                raise
+                raise FallBinaryClassifierError(self.last_error) from exc
+            raise
         timings["total"] = round((time.monotonic() - load_started) * 1000, 2)
         self.load_timings_ms = timings
         self.loaded = True

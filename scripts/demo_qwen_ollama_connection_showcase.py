@@ -234,6 +234,9 @@ def send_showcase_qwen_review(
     model: str = DEFAULT_MODEL,
     timeout_seconds: float = 30,
 ) -> tuple[dict[str, Any], str]:
+
+
+    
     #
     endpoint = "http://127.0.0.1:11434"
     #
@@ -242,6 +245,10 @@ def send_showcase_qwen_review(
     response = post_json(f"{endpoint}/api/chat", {"model": model, "messages": messages, "stream": False}, timeout=30)
     #
     reply = response["message"]["content"]
+
+    
+
+
     return response, str(reply).strip()
 
 

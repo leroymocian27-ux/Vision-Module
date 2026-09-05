@@ -1,0 +1,1724 @@
+C:\Users\YANG\.conda\envs\AI\lib\site-packages\pytest_asyncio\plugin.py:207: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF.FF.                                     [100%]
+================================== FAILURES ===================================
+____ test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail _____
+
+    def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> None:
+        received: list[dict] = []
+    
+        def transport(payload: dict, timeout: float) -> dict:
+            received.append(payload)
+            return {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "posture": "���Ʋ����ڵ��渽����",
+                "movement_level": "slight",
+                "attempt_to_stand": "not_observed",
+                "persistent_ground_state": "observed",
+                "possible_help_gesture": "not_observed",
+                "visibility": "limited",
+                "occlusion": "partial",
+                "scene_risks": ["��Աλ��ͨ������"],
+                "summary": "��Ա�Դ��ڵ�λ��������δ����������������",
+                "review_points": ["������Ա�Ƿ�������ء�"],
+                "confidence": 0.65,
+            }, ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(transport, images=[_image(0), _image(1000), _image(3000)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:32: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail.<locals>.transport at 0x000001724BFBC0D0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_same_images _
+
+    def test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_same_images() -> None:
+        received: list[dict] = []
+    
+        def transport(payload: dict, timeout: float) -> dict:
+            received.append(payload)
+            if len(received) == 1:
+                raise QwenKeyframeContextExceeded("request exceeds the available context size")
+            return {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "fall_verdict": "unclear",
+                "posture": "��Ա���ڵ�λ��̬��",
+                "summary": "���йؼ�֡�����Կɿ�ȷ����ʵ������",
+                "confidence": 0.5,
+            }, ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_same_images.<locals>.transport at 0x000001727B67DE10>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+__________ test_qwen_fall_analyzer_parse_failure_keeps_event_context __________
+
+    def test_qwen_fall_analyzer_parse_failure_keeps_event_context() -> None:
+>       analyzer = _analyzer(lambda *_: {"message": {"content": "not-json"}}, images=[_image(0)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:111: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_parse_failure_keeps_event_context.<locals>.<lambda> at 0x000001724BD14310>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+____ test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields _____
+
+    def test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "e": "phone",
+                            "s": "ground",
+                            "d": "no",
+                            "f": False,
+                            "c": 0.98,
+                            "t": "���Ӹ����ڵ�����˫�ֳ��ֻ���",
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            },
+            images=[_image(-1000), _image(-500), _image(0)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields.<locals>.<lambda> at 0x0000017248832DD0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+__ test_qwen_fall_analyzer_uses_2b_experiment_prompt_without_changing_schema __
+
+    def test_qwen_fall_analyzer_uses_2b_experiment_prompt_without_changing_schema() -> None:
+        received: list[dict] = []
+    
+        def transport(payload: dict, timeout: float) -> dict:
+            received.append(payload)
+            return {"message": {"content": json.dumps({
+                "e": "normal",
+                "s": "ground",
+                "d": "no",
+                "f": False,
+                "c": 0.91,
+                "t": "�����λ����̬�ȶ���",
+            }, ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(
+            transport,
+            images=[_image(-1000), _image(-500), _image(0)],
+            qwen_profile="qwen2b_experiment_v1",
+            model_name="qwen3.5:2b",
+            prompt_version="compact_2b_v1",
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:176: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_uses_2b_experiment_prompt_without_changing_schema.<locals>.transport at 0x000001724BFBD7E0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+___________ test_qwen_fall_analyzer_recovers_missing_detail_fields ____________
+
+    def test_qwen_fall_analyzer_recovers_missing_detail_fields() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({"schema_version": "pfv2_post_fall_detail.v1"})}},
+            images=[_image(0)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:207: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_recovers_missing_detail_fields.<locals>.<lambda> at 0x000001724BFBD480>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+__ test_qwen_fall_analyzer_maps_non_fall_seated_rest_to_safe_internal_result __
+
+    def test_qwen_fall_analyzer_maps_non_fall_seated_rest_to_safe_internal_result() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "high_risk_fall": 0,
+                "fall_verdict": "non_fall",
+                "scene_type": "seated_rest",
+                "recommended_action": "no_alert",
+                "positive_evidence": [],
+                "negative_evidence": ["�����ܵ������ȶ�֧��", "δ��ͻȻʧ��򵹵�"],
+                "activity": "������������Ϣ",
+                "posture_state": "seated",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": True,
+                "recovery_observed": None,
+                "persistent_ground_state": "not_observed",
+                "posture": "�����ȶ�������������Ϣ��",
+                "summary": "���������ȶ���������֧�ţ������ڵ�����",
+                "confidence": 0.96,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_maps_non_fall_seated_rest_to_safe_internal_result.<locals>.<lambda> at 0x000001727B75B640>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_confirmed_fall_when_high_risk_gate_is_zero _
+
+    def test_qwen_fall_analyzer_downgrades_confirmed_fall_when_high_risk_gate_is_zero() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "high_risk_fall": 0,
+                "fall_verdict": "confirmed_fall",
+                "scene_type": "fall",
+                "recommended_action": "manual_review",
+                "positive_evidence": ["���Ƶ�λ"],
+                "negative_evidence": ["δ����ȷʧ�⵹��"],
+                **_transition_evidence(high_risk_fall=0, recommended_action="manual_review"),
+                "posture": "���ﴦ�ڵ�λ��",
+                "summary": "�ɼ�ʧ�⵹�ع��̡�",
+                "confidence": 0.8,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:254: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_confirmed_fall_when_high_risk_gate_is_zero.<locals>.<lambda> at 0x000001727B75A830>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_____ test_qwen_fall_analyzer_downgrades_high_risk_non_fall_contradiction _____
+
+    def test_qwen_fall_analyzer_downgrades_high_risk_non_fall_contradiction() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "high_risk_fall": 1,
+                "fall_verdict": "non_fall",
+                "scene_type": "seated_rest",
+                "recommended_action": "emergency_alert",
+                "positive_evidence": [],
+                "negative_evidence": ["������������Ϣ"],
+                "activity": "������������Ϣ",
+                "posture_state": "seated",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": True,
+                "recovery_observed": None,
+                "persistent_ground_state": "not_observed",
+                "posture": "�����ȶ����������ϡ�",
+                "summary": "����������������Ϣ��δ��������",
+                "confidence": 0.9,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:280: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_high_risk_non_fall_contradiction.<locals>.<lambda> at 0x000001727B75BE20>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+__ test_qwen_fall_analyzer_downgrades_non_fall_with_abnormal_ground_conflict __
+
+    def test_qwen_fall_analyzer_downgrades_non_fall_with_abnormal_ground_conflict() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "high_risk_fall": 0,
+                "fall_verdict": "non_fall",
+                "scene_type": "unknown",
+                "recommended_action": "manual_review",
+                "positive_evidence": ["���ﴦ�ڵ�λ"],
+                "negative_evidence": ["δ����ȷ�����֤��"],
+                "activity": "��λ״̬����",
+                "posture_state": "ground_low",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": False,
+                "recovery_observed": False,
+                "persistent_ground_state": "observed",
+                "posture": "����������ڵ����λ��",
+                "summary": "���ﴦ�ڵ�λ����û����ȷ������Ϊ֤�ݡ�",
+                "confidence": 0.6,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:311: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_non_fall_with_abnormal_ground_conflict.<locals>.<lambda> at 0x000001727B75AEF0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+___ test_qwen_fall_analyzer_rejects_ground_low_rest_without_strong_support ____
+
+    def test_qwen_fall_analyzer_rejects_ground_low_rest_without_strong_support() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "high_risk_fall": 0,
+                "fall_verdict": "non_fall",
+                "scene_type": "intentional_low_posture",
+                "recommended_action": "no_alert",
+                "positive_evidence": [
+                    "�����վ����̬�����������ܿ����ڵص���",
+                    "�����������������̬ƽ���ڵ���",
+                ],
+                "negative_evidence": [
+                    "δ��ͻȻʧ�⡢����������������������",
+                    "δ���������ʹ������ֹ״̬",
+                ],
+                "activity": "����������ƽ����Ϣ",
+                "posture_state": "lying",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": True,
+                "recovery_observed": False,
+                "persistent_ground_state": "observed",
+                "posture": "�����ܿصش�վ���������أ����������������ƽ���ڵ��档",
+                "summary": "����������ʾ�����վ����̬�������������²�������ƽ�ɣ������ܿ�����ʧ�⼣������������Ϣ��Ϊ��",
+                "confidence": 0.95,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:341: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_rejects_ground_low_rest_without_strong_support.<locals>.<lambda> at 0x000001727B75B130>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_recovers_format_language_and_schema_variations[\u6a21\u578b\u8f93\u51fa\u5982\u4e0b\uff1a\n```json\n{"posture":"\u4fa7\u5367","activity_level":"\u8f7b\u5fae\u6d3b\u52a8","attempting_to_stand":"\u672a\u89c1\u5c1d\u8bd5\u8d77\u8eab","persistent_ground":"\u4ecd\u5728\u5730\u9762","visibility_level":"\u6e05\u6670","occlusion_level":"\u65e0\u906e\u6321","scene_risk":"\u901a\u884c\u533a\u57df\u6709\u969c\u788d\u7269","review_point":"\u590d\u6838\u662f\u5426\u5c1d\u8bd5\u8d77\u8eab","confidence_score":"65%"}\n```\n\u4ee5\u4e0a\u4e3a\u5206\u6790\u7ed3\u679c\u3002-expected0] _
+
+content = 'ģ��������£�\n```json\n{"posture":"����","activity_level":"��΢�","attempting_to_stand":"δ����������","persistent_ground":"���ڵ���","...����","occlusion_level":"���ڵ�","scene_risk":"ͨ���������ϰ���","review_point":"�����Ƿ�������","confidence_score":"65%"}\n```\n����Ϊ���������'
+expected = {'attempt_to_stand': 'not_observed', 'confidence': 0.65, 'movement_level': 'slight', 'occlusion': 'none', ...}
+
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            (
+                """ģ��������£�
+    ```json
+    {"posture":"����","activity_level":"��΢�","attempting_to_stand":"δ����������","persistent_ground":"���ڵ���","visibility_level":"����","occlusion_level":"���ڵ�","scene_risk":"ͨ���������ϰ���","review_point":"�����Ƿ�������","confidence_score":"65%"}
+    ```
+    ����Ϊ���������""",
+                {
+                    "movement_level": "slight",
+                    "attempt_to_stand": "not_observed",
+                    "persistent_ground_state": "observed",
+                    "visibility": "good",
+                    "occlusion": "none",
+                    "confidence": 0.65,
+                },
+            ),
+            (
+                json.dumps({
+                    "posture_description": "Kneeling posture.",
+                    "movement": "none",
+                    "attempting_to_stand": False,
+                    "ground_state": True,
+                    "visibility": "poor",
+                    "occlusion": "partial",
+                    "risks": ["Floor obstacle."],
+                    "review_point": "Check the live view.",
+                }),
+                {
+                    "movement_level": "none_observed",
+                    "attempt_to_stand": "not_observed",
+                    "persistent_ground_state": "observed",
+                    "visibility": "limited",
+                    "occlusion": "partial",
+                    "confidence": None,
+                },
+            ),
+        ],
+    )
+    def test_qwen_fall_analyzer_recovers_format_language_and_schema_variations(content, expected) -> None:
+>       analyzer = _analyzer(lambda *_: {"message": {"content": content}}, images=[_image(0)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:419: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_recovers_format_language_and_schema_variations.<locals>.<lambda> at 0x000001727B75AB90>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_recovers_format_language_and_schema_variations[{"posture_description": "Kneeling posture.", "movement": "none", "attempting_to_stand": false, "ground_state": true, "visibility": "poor", "occlusion": "partial", "risks": ["Floor obstacle."], "review_point": "Check the live view."}-expected1] _
+
+content = '{"posture_description": "Kneeling posture.", "movement": "none", "attempting_to_stand": false, "ground_state": true, "visibility": "poor", "occlusion": "partial", "risks": ["Floor obstacle."], "review_point": "Check the live view."}'
+expected = {'attempt_to_stand': 'not_observed', 'confidence': None, 'movement_level': 'none_observed', 'occlusion': 'partial', ...}
+
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            (
+                """ģ��������£�
+    ```json
+    {"posture":"����","activity_level":"��΢�","attempting_to_stand":"δ����������","persistent_ground":"���ڵ���","visibility_level":"����","occlusion_level":"���ڵ�","scene_risk":"ͨ���������ϰ���","review_point":"�����Ƿ�������","confidence_score":"65%"}
+    ```
+    ����Ϊ���������""",
+                {
+                    "movement_level": "slight",
+                    "attempt_to_stand": "not_observed",
+                    "persistent_ground_state": "observed",
+                    "visibility": "good",
+                    "occlusion": "none",
+                    "confidence": 0.65,
+                },
+            ),
+            (
+                json.dumps({
+                    "posture_description": "Kneeling posture.",
+                    "movement": "none",
+                    "attempting_to_stand": False,
+                    "ground_state": True,
+                    "visibility": "poor",
+                    "occlusion": "partial",
+                    "risks": ["Floor obstacle."],
+                    "review_point": "Check the live view.",
+                }),
+                {
+                    "movement_level": "none_observed",
+                    "attempt_to_stand": "not_observed",
+                    "persistent_ground_state": "observed",
+                    "visibility": "limited",
+                    "occlusion": "partial",
+                    "confidence": None,
+                },
+            ),
+        ],
+    )
+    def test_qwen_fall_analyzer_recovers_format_language_and_schema_variations(content, expected) -> None:
+>       analyzer = _analyzer(lambda *_: {"message": {"content": content}}, images=[_image(0)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:419: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_recovers_format_language_and_schema_variations.<locals>.<lambda> at 0x000001727B75B130>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+____ test_qwen_fall_analyzer_removes_medical_diagnosis_from_recovered_text ____
+
+    def test_qwen_fall_analyzer_removes_medical_diagnosis_from_recovered_text() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "posture": "�����ڵ��档",
+                "movement_level": "none_observed",
+                "attempt_to_stand": "not_observed",
+                "persistent_ground_state": "observed",
+                "possible_help_gesture": "unknown",
+                "visibility": "good",
+                "occlusion": "none",
+                "scene_risks": ["���ƹ��ۡ�"],
+                "summary": "���ƻ��ԡ�",
+                "review_points": ["ȷ����ʶ�����״����"],
+            }, ensure_ascii=False)}},
+            images=[_image(0)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:429: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_removes_medical_diagnosis_from_recovered_text.<locals>.<lambda> at 0x0000017248832DD0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+______ test_qwen_fall_analyzer_preserves_intentional_low_posture_verdict ______
+
+    def test_qwen_fall_analyzer_preserves_intentional_low_posture_verdict() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "intentional_low_posture",
+                **_intentional_evidence(),
+                "posture": "��Ա�ȶ����ڵ������Ķ���",
+                "movement_level": "slight",
+                "attempt_to_stand": "not_observed",
+                "persistent_ground_state": "not_observed",
+                "possible_help_gesture": "not_observed",
+                "visibility": "good",
+                "occlusion": "none",
+                "scene_risks": [],
+                "summary": "������ʾ���������Ķ���δ��ʧ�ȵ�����",
+                "review_points": ["�ؼ�֡����̬�ȶ���"],
+                "confidence": 0.9,
+            }, ensure_ascii=False)}},
+            images=[_image(0)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:454: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_preserves_intentional_low_posture_verdict.<locals>.<lambda> at 0x000001724BFBD1B0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_preserves_unclear_ground_evidence_without_fabricating_transition _
+
+    def test_qwen_fall_analyzer_preserves_unclear_ground_evidence_without_fabricating_transition() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "fall_verdict": "unclear",
+                "activity": "��λ״̬����",
+                "posture_state": "ground_low",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": None,
+                "recovery_observed": False,
+                "persistent_ground_state": "observed",
+                "posture": "�����������ؼ�֡�г������ڵ����λ��",
+                "summary": "δ���������λ�Ĺ��̣��޷��ж��Ƿ���������",
+                "confidence": 0.55,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:480: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_preserves_unclear_ground_evidence_without_fabricating_transition.<locals>.<lambda> at 0x000001727B6B5C60>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+__ test_qwen_fall_analyzer_rejects_confirmed_fall_without_visible_transition __
+
+    def test_qwen_fall_analyzer_rejects_confirmed_fall_without_visible_transition() -> None:
+        calls = 0
+    
+        def transport(*_) -> dict:
+            nonlocal calls
+            calls += 1
+            return {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "fall_verdict": "confirmed_fall",
+                "activity": "��λ״̬����",
+                "posture_state": "ground_low",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": None,
+                "recovery_observed": False,
+                "persistent_ground_state": "observed",
+                "posture": "����������ڵ����λ��",
+                "summary": "û�п���������ν����λ��",
+                "confidence": 0.7,
+            }, ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:525: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_rejects_confirmed_fall_without_visible_transition.<locals>.transport at 0x000001724BFBD5A0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_allows_high_risk_post_fall_abnormal_state_without_transition _
+
+    def test_qwen_fall_analyzer_allows_high_risk_post_fall_abnormal_state_without_transition() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "schema_version": "pfv2_post_fall_detail.v1",
+                "high_risk_fall": 1,
+                "fall_verdict": "confirmed_fall",
+                "scene_type": "fall",
+                "recommended_action": "emergency_alert",
+                "positive_evidence": ["���������쳣����", "�����ؼ�֡δ�ָ�"],
+                "negative_evidence": [],
+                "activity": "��Σ�������쳣����",
+                "posture_state": "ground_low",
+                "fall_transition_visible": False,
+                "intentional_action_evidence": False,
+                "recovery_observed": False,
+                "persistent_ground_state": "observed",
+                "posture": "���ﴦ�������쳣���ص�λ��",
+                "summary": "��δ������������̣�����������쳣��������������Ϊ֤�ݡ�",
+                "confidence": 0.88,
+            }, ensure_ascii=False)}} ,
+            images=[_image(0), _image(1000), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:537: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_allows_high_risk_post_fall_abnormal_state_without_transition.<locals>.<lambda> at 0x000001727B75B880>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_contradictory_active_reading_false_positive _
+
+    def test_qwen_fall_analyzer_downgrades_contradictory_active_reading_false_positive() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "������վ����̬ʧ�⵹�أ��漴���ڵ������Ķ��鼮���������ָ���λ����ʧ�ȡ�",
+                "movement_level": "unknown",
+                "attempt_to_stand": "unknown",
+                "persistent_ground_state": "unknown",
+                "possible_help_gesture": "unknown",
+                "visibility": "unknown",
+                "occlusion": "unknown",
+                "scene_risks": [],
+                "summary": "��϶�֡�����жϣ���֡Ϊ�������¶��飬������������λ��Ϊ��",
+                "review_points": ["�����˹������¼��ؼ�֡��"],
+                "confidence": 0.9,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:567: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_contradictory_active_reading_false_positive.<locals>.<lambda> at 0x000001727B75BB50>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_controlled_sitting_even_when_enum_is_wrong _
+
+    def test_qwen_fall_analyzer_downgrades_controlled_sitting_even_when_enum_is_wrong() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "���������ܿص����º��Ķ���",
+                "summary": "����������ʾ���������������ܿ����ڵص��ϣ�����ȶ����˵�ͷ���飬δ��ͻȻʧ���ʧ����׹���̡�",
+                "review_points": ["�����˹������¼��ؼ�֡��"],
+                "confidence": 0.92,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:592: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_controlled_sitting_even_when_enum_is_wrong.<locals>.<lambda> at 0x000001727B759990>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+____ test_qwen_fall_analyzer_downgrades_walking_motion_blur_false_positive ____
+
+    def test_qwen_fall_analyzer_downgrades_walking_motion_blur_false_positive() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "���ﴦ��վ��������״̬��",
+                "summary": "����ֻ���������߾�����ͷ�������˶�ģ����δ����ȷʧ�⵹�ع��̡�",
+                "confidence": 0.82,
+            }, ensure_ascii=False)}} ,
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:610: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_walking_motion_blur_false_positive.<locals>.<lambda> at 0x000001727B759D80>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u5750\u4e0b\u770b\u4e66\uff0c\u8fc7\u7a0b\u53d7\u63a7\uff0c\u672a\u89c1\u5931\u8861\u3002] _
+
+summary = '�����������¿��飬�����ܿأ�δ��ʧ�⡣'
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "�����������¿��飬�����ܿأ�δ��ʧ�⡣",
+            "���������������ֻ������������ȶ����ˡ�",
+            "���������������ֻ���δ����ʧ�����䡣",
+            "������������˯������̬��Ȼ�ȶ���",
+            "�����������¿��飬û�з���������",
+        ],
+    )
+    def test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases(summary: str) -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "��Ա���ڵ�λ��̬��",
+                "summary": summary,
+                "confidence": 0.88,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:637: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases.<locals>.<lambda> at 0x000001727B75A200>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u5750\u4e0b\u73a9\u624b\u673a\uff0c\u540e\u7eed\u4fdd\u6301\u7a33\u5b9a\u5750\u59ff\u3002] _
+
+summary = '���������������ֻ������������ȶ����ˡ�'
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "�����������¿��飬�����ܿأ�δ��ʧ�⡣",
+            "���������������ֻ������������ȶ����ˡ�",
+            "���������������ֻ���δ����ʧ�����䡣",
+            "������������˯������̬��Ȼ�ȶ���",
+            "�����������¿��飬û�з���������",
+        ],
+    )
+    def test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases(summary: str) -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "��Ա���ڵ�λ��̬��",
+                "summary": summary,
+                "confidence": 0.88,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:637: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases.<locals>.<lambda> at 0x000001727B75A680>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u8eba\u4e0b\u73a9\u624b\u673a\uff0c\u672a\u770b\u5230\u5931\u63a7\u4e0b\u843d\u3002] _
+
+summary = '���������������ֻ���δ����ʧ�����䡣'
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "�����������¿��飬�����ܿأ�δ��ʧ�⡣",
+            "���������������ֻ������������ȶ����ˡ�",
+            "���������������ֻ���δ����ʧ�����䡣",
+            "������������˯������̬��Ȼ�ȶ���",
+            "�����������¿��飬û�з���������",
+        ],
+    )
+    def test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases(summary: str) -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "��Ա���ڵ�λ��̬��",
+                "summary": summary,
+                "confidence": 0.88,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:637: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases.<locals>.<lambda> at 0x000001727B75A200>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u8eba\u4e0b\u7761\u89c9\uff0c\u59ff\u6001\u81ea\u7136\u7a33\u5b9a\u3002] _
+
+summary = '������������˯������̬��Ȼ�ȶ���'
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "�����������¿��飬�����ܿأ�δ��ʧ�⡣",
+            "���������������ֻ������������ȶ����ˡ�",
+            "���������������ֻ���δ����ʧ�����䡣",
+            "������������˯������̬��Ȼ�ȶ���",
+            "�����������¿��飬û�з���������",
+        ],
+    )
+    def test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases(summary: str) -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "��Ա���ڵ�λ��̬��",
+                "summary": summary,
+                "confidence": 0.88,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:637: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases.<locals>.<lambda> at 0x000001727B75B640>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u8eba\u4e0b\u770b\u4e66\uff0c\u6ca1\u6709\u53d1\u751f\u8dcc\u5012\u3002] _
+
+summary = '�����������¿��飬û�з���������'
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "�����������¿��飬�����ܿأ�δ��ʧ�⡣",
+            "���������������ֻ������������ȶ����ˡ�",
+            "���������������ֻ���δ����ʧ�����䡣",
+            "������������˯������̬��Ȼ�ȶ���",
+            "�����������¿��飬û�з���������",
+        ],
+    )
+    def test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases(summary: str) -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                "posture": "��Ա���ڵ�λ��̬��",
+                "summary": summary,
+                "confidence": 0.88,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:637: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases.<locals>.<lambda> at 0x000001724BD14310>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_keeps_true_fall_when_summary_denies_active_lie_down _
+
+    def test_qwen_fall_analyzer_keeps_true_fall_when_summary_denies_active_lie_down() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                **_transition_evidence(),
+                "posture": "�����ֱ��λ��Ѹ�ٵ��²����ڵ��ϡ�",
+                "movement_level": "none_observed",
+                "attempt_to_stand": "not_observed",
+                "persistent_ground_state": "observed",
+                "possible_help_gesture": "not_observed",
+                "visibility": "good",
+                "occlusion": "none",
+                "scene_risks": [],
+                "summary": "������ʾ�����ֱ��λ��Ѹ�ٵ��²����ڵ��ϣ�û���������µļ���",
+                "review_points": ["�ؼ�֡��ʾͻȻ���ع��̡�"],
+                "confidence": 0.94,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:654: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_keeps_true_fall_when_summary_denies_active_lie_down.<locals>.<lambda> at 0x000001727B6B5BD0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_______ test_qwen_fall_analyzer_keeps_true_fall_before_later_phone_use ________
+
+    def test_qwen_fall_analyzer_keeps_true_fall_before_later_phone_use() -> None:
+>       analyzer = _analyzer(
+            lambda *_: {"message": {"content": json.dumps({
+                "fall_verdict": "confirmed_fall",
+                **_transition_evidence(
+                    posture_state="seated",
+                    recovery_observed=True,
+                    persistent_ground_state="not_observed",
+                ),
+                "posture": "�����ȷ������Է�����������֮���������ֻ���",
+                "summary": "��ǰ�������ʧ�⵹�ع��̣��������ֻ������Ʒ���ʵ������",
+                "review_points": ["�ؼ�֡��ʾʧ��󵹵ء�"],
+                "confidence": 0.94,
+            }, ensure_ascii=False)}},
+            images=[_image(-1000), _image(0), _image(3000)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:680: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_keeps_true_fall_before_later_phone_use.<locals>.<lambda> at 0x000001727B75B520>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+________ test_qwen_fall_analyzer_accepts_single_confirmed_fall_verdict ________
+
+    def test_qwen_fall_analyzer_accepts_single_confirmed_fall_verdict() -> None:
+        calls = 0
+    
+        response = {
+            "fall_verdict": "confirmed_fall",
+            **_transition_evidence(),
+            "posture": "��Աʧ��󵹵ء�",
+            "movement_level": "none_observed",
+            "attempt_to_stand": "not_observed",
+            "persistent_ground_state": "observed",
+            "possible_help_gesture": "not_observed",
+            "visibility": "good",
+            "occlusion": "none",
+            "scene_risks": [],
+            "summary": "�ɼ�ʧ�⵹�ع��̡�",
+            "review_points": ["�ؼ�֡��ʾʧ��󵹵ء�"],
+            "confidence": 0.9,
+        }
+    
+        def transport(*_) -> dict:
+            nonlocal calls
+            calls += 1
+            return {"message": {"content": json.dumps(response, ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(
+            transport,
+            images=[_image(0)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:726: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_accepts_single_confirmed_fall_verdict.<locals>.transport at 0x000001727B759990>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+________ test_qwen_fall_analyzer_does_not_countercheck_confirmed_fall _________
+
+    def test_qwen_fall_analyzer_does_not_countercheck_confirmed_fall() -> None:
+        calls = 0
+        review_modes: list[str] = []
+        responses = [
+            {
+                "fall_verdict": "confirmed_fall",
+                **_transition_evidence(),
+                "posture": "����ͻȻʧ��󵹵ء�",
+                "summary": "�ؼ�֡��ʾ������ʧ�⵹�ع��̡�",
+                "confidence": 0.9,
+            },
+            {
+                "fall_verdict": "unclear",
+                "posture": "���ﴦ��վ��������״̬��",
+                "summary": "��֤����δ����ȷʧ�ص��ع��̣�����ֻ�����߻��˶�ģ����",
+                "confidence": 0.8,
+            },
+        ]
+    
+        def transport(payload, _timeout):
+            nonlocal calls
+            calls += 1
+            context = json.loads(payload["messages"][1]["content"])
+            review_modes.append(context["review_mode"])
+            return {"message": {"content": json.dumps(responses[calls - 1], ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:764: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_does_not_countercheck_confirmed_fall.<locals>.transport at 0x000001727B75BD90>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_ test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl _
+
+    def test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl() -> None:
+        calls = 0
+        responses = [
+            {
+                "fall_verdict": "confirmed_fall",
+                **_transition_evidence(),
+                "posture": "����ͻȻʧ��󵹵ء�",
+                "summary": "�ɼ����Է��������ع��̡�",
+                "confidence": 0.92,
+            },
+            {
+                "fall_verdict": "intentional_low_posture",
+                "posture": "�����ܿ����ڵ����ϡ�",
+                "summary": "��������λ��̬��������������Ϊ�ܿء�",
+                "confidence": 0.7,
+            },
+        ]
+    
+        def transport(*_args):
+            nonlocal calls
+            calls += 1
+            return {"message": {"content": json.dumps(responses[calls - 1], ensure_ascii=False)}}
+    
+>       analyzer = _analyzer(transport, images=[_image(-1000), _image(0), _image(3000)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:797: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl.<locals>.transport at 0x000001727B81C700>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_____ test_qwen_fall_analyzer_extracts_json_from_outer_markdown_response ______
+
+    def test_qwen_fall_analyzer_extracts_json_from_outer_markdown_response() -> None:
+>       analyzer = _analyzer(
+            lambda *_: """�������£�
+    ```json
+    {"posture":"����","movement_level":"none_observed","attempt_to_stand":"not_observed","persistent_ground_state":"observed","possible_help_gesture":"unknown","visibility":"good","occlusion":"none","scene_risks":[],"summary":"��Ա���ڵ�λ��","review_points":["�����ֳ���"],"confidence":0.7}
+    ```""",
+            images=[_image(0)],
+        )
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:806: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_extracts_json_from_outer_markdown_response.<locals>.<lambda> at 0x000001727B81D990>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+_________ test_qwen_fall_analyzer_maps_timeout_and_transport_failure __________
+
+    def test_qwen_fall_analyzer_maps_timeout_and_transport_failure() -> None:
+>       timeout = _analyzer(lambda *_: (_ for _ in ()).throw(TimeoutError("slow")), images=[_image(0)])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:844: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_maps_timeout_and_transport_failure.<locals>.<lambda> at 0x000001727B81EE60>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+__________ test_qwen_fall_analyzer_no_images_fails_without_qwen_call __________
+
+    def test_qwen_fall_analyzer_no_images_fails_without_qwen_call() -> None:
+        calls = 0
+    
+        def transport(*_) -> dict:
+            nonlocal calls
+            calls += 1
+            return {}
+    
+>       analyzer = _analyzer(transport, images=[])
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:863: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+transport = <function test_qwen_fall_analyzer_no_images_fails_without_qwen_call.<locals>.transport at 0x000001727B81EEF0>
+
+    def _analyzer(
+        transport,
+        *,
+        images: list[QwenImageInput],
+        qwen_profile: str = "qwen4b_stable_v1",
+        model_name: str = "qwen-vision-cn:latest",
+        prompt_version: str = "compact_v2",
+    ) -> PFV2QwenFallAnalyzer:
+        return PFV2QwenFallAnalyzer(
+>           analyzer=QwenKeyframeAnalyzer(
+                endpoint_url="http://127.0.0.1:11434/api/chat",
+                model_name=model_name,
+                timeout_seconds=1,
+                transport=transport,
+                qwen_profile=qwen_profile,
+                prompt_version=prompt_version,
+            ),
+            image_provider=lambda _: (images, []),
+        )
+E       TypeError: QwenKeyframeAnalyzer.__init__() got an unexpected keyword argument 'qwen_profile'
+
+tests\test_post_fall_v2_qwen_fall_analyzer.py:927: TypeError
+=========================== short test summary info ===========================
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_same_images
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_parse_failure_keeps_event_context
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_uses_2b_experiment_prompt_without_changing_schema
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_recovers_missing_detail_fields
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_maps_non_fall_seated_rest_to_safe_internal_result
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_confirmed_fall_when_high_risk_gate_is_zero
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_high_risk_non_fall_contradiction
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_non_fall_with_abnormal_ground_conflict
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_rejects_ground_low_rest_without_strong_support
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_recovers_format_language_and_schema_variations[\u6a21\u578b\u8f93\u51fa\u5982\u4e0b\uff1a\n```json\n{"posture":"\u4fa7\u5367","activity_level":"\u8f7b\u5fae\u6d3b\u52a8","attempting_to_stand":"\u672a\u89c1\u5c1d\u8bd5\u8d77\u8eab","persistent_ground":"\u4ecd\u5728\u5730\u9762","visibility_level":"\u6e05\u6670","occlusion_level":"\u65e0\u906e\u6321","scene_risk":"\u901a\u884c\u533a\u57df\u6709\u969c\u788d\u7269","review_point":"\u590d\u6838\u662f\u5426\u5c1d\u8bd5\u8d77\u8eab","confidence_score":"65%"}\n```\n\u4ee5\u4e0a\u4e3a\u5206\u6790\u7ed3\u679c\u3002-expected0]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_recovers_format_language_and_schema_variations[{"posture_description": "Kneeling posture.", "movement": "none", "attempting_to_stand": false, "ground_state": true, "visibility": "poor", "occlusion": "partial", "risks": ["Floor obstacle."], "review_point": "Check the live view."}-expected1]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_removes_medical_diagnosis_from_recovered_text
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_preserves_intentional_low_posture_verdict
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_preserves_unclear_ground_evidence_without_fabricating_transition
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_rejects_confirmed_fall_without_visible_transition
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_allows_high_risk_post_fall_abnormal_state_without_transition
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_contradictory_active_reading_false_positive
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_controlled_sitting_even_when_enum_is_wrong
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_walking_motion_blur_false_positive
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u5750\u4e0b\u770b\u4e66\uff0c\u8fc7\u7a0b\u53d7\u63a7\uff0c\u672a\u89c1\u5931\u8861\u3002]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u5750\u4e0b\u73a9\u624b\u673a\uff0c\u540e\u7eed\u4fdd\u6301\u7a33\u5b9a\u5750\u59ff\u3002]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u8eba\u4e0b\u73a9\u624b\u673a\uff0c\u672a\u770b\u5230\u5931\u63a7\u4e0b\u843d\u3002]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u8eba\u4e0b\u7761\u89c9\uff0c\u59ff\u6001\u81ea\u7136\u7a33\u5b9a\u3002]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_downgrades_common_active_low_posture_phrases[\u4eba\u7269\u4e3b\u52a8\u8eba\u4e0b\u770b\u4e66\uff0c\u6ca1\u6709\u53d1\u751f\u8dcc\u5012\u3002]
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_keeps_true_fall_when_summary_denies_active_lie_down
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_keeps_true_fall_before_later_phone_use
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_accepts_single_confirmed_fall_verdict
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_does_not_countercheck_confirmed_fall
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_does_not_overturn_fall_for_generic_countercheck_adl
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_extracts_json_from_outer_markdown_response
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_maps_timeout_and_transport_failure
+FAILED tests/test_post_fall_v2_qwen_fall_analyzer.py::test_qwen_fall_analyzer_no_images_fails_without_qwen_call
+34 failed, 2 passed in 1.45s

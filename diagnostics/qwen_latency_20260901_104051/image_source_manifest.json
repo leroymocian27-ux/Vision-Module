@@ -1,0 +1,21 @@
+{
+  "source_event_dir": "E:\\国赛\\event\\binary-classification\\full\\pfv2-go2_front_camera-a281e3dc889a",
+  "source_shapes": [
+    [
+      216,
+      384,
+      3
+    ],
+    [
+      216,
+      384,
+      3
+    ],
+    [
+      216,
+      384,
+      3
+    ]
+  ],
+  "alternate_available": true
+}

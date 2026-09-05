@@ -1,0 +1,21 @@
+{
+  "model": "qwen3.5:4b",
+  "stream": false,
+  "think": false,
+  "keep_alive": -1,
+  "options": {
+    "num_ctx": 12288,
+    "num_predict": 1,
+    "temperature": 0
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "你负责复核养老场景中的跌倒候选事件。\n\nBinary FALL只是候选，不是视觉事实。\n\n根据三张按时间排序的图片判断人物是真实跌倒、异常风险、玩手机、阅读、正常活动还是无法确认。\n\n真实跌倒包括明显非自主失衡、失控下落或异常倒地。\n稳定玩手机、稳定阅读以及明确正常活动属于非真实跌倒。\n\n只依据图片中可见事实判断，不推测疾病或身份。\n只返回符合Schema的JSON。"
+    },
+    {
+      "role": "user",
+      "content": "{\"schema_version\": \"pfv2_post_fall_input.compact_v2\", \"qwen_profile\": \"qwen4b_stable_v1\", \"qwen_model\": \"qwen3.5:4b\", \"prompt_version\": \"compact_v2\", \"schema_contract_version\": \"compact_v1\", \"fusion_version\": \"demo_fusion_v2\", \"task\": \"养老跌倒复核。\\n\\n三张图片按时间顺序排列，第三张是最后画面。\\n\\ne只能选择：\\nfall / risk / phone / reading / normal / uncertain。\\n\\nfall：\\n看到明显非自主失衡、失控下落或异常倒地。\\n\\nrisk：\\n人物处于明显异常低位、异常倒地，或可见痛苦、挣扎、求助等风险状态，但不足以完整确认跌倒过程。\\n\\nphone：\\n多帧明确显示人物稳定使用手机。\\n\\nreading：\\n多帧明确显示人物稳定阅读书本、资料或纸张。\\n\\nnormal：\\n明确为正常站立、行走、坐下、弯腰、休息或其他受控正常活动。\\n\\nuncertain：\\n关键人物、物体或状态确实无法看清。\\n\\n第三张图片是最终需要描述的画面。\\nt使用一句不超过40个汉字的简体中文描述第三张图片。\\n\\n只输出Schema JSON。\", \"keyframes\": [], \"keyframe_timeline\": [], \"keyframe_status\": \"ready\", \"missing_offsets_ms\": [], \"review_mode\": \"首次复核\", \"constraints\": [\"只返回字段 e、s、d、f、c、t。\", \"e = semantic_event。\", \"s = posture_state，只能是 ground/upright/unclear。\", \"d = visible_distress，只能是 yes/no/unclear。\", \"f = VLM直接判断是否为真实跌倒/风险。\", \"c = confidence，范围0到1。\", \"t = last_frame_description，不超过40个汉字。\", \"不得输出路径、URL、RTSP 地址、凭据或任何标识符。\"], \"profile\": \"compact_v2\"}"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "e",
+    "s",
+    "d",
+    "f",
+    "c",
+    "t"
+  ],
+  "properties": {
+    "e": {
+      "type": "string",
+      "enum": [
+        "fall",
+        "risk",
+        "phone",
+        "reading",
+        "normal",
+        "uncertain"
+      ]
+    },
+    "s": {
+      "type": "string",
+      "enum": [
+        "ground",
+        "upright",
+        "unclear"
+      ]
+    },
+    "d": {
+      "type": "string",
+      "enum": [
+        "yes",
+        "no",
+        "unclear"
+      ]
+    },
+    "f": {
+      "type": "boolean"
+    },
+    "c": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "t": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    }
+  }
+}

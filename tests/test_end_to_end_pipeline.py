@@ -45,14 +45,14 @@ class _FakeResponse:
 
 class _ReporterSpy:
     def __init__(self) -> None:
-        self.requests: queue.Queue[tuple[str, dict[str, Any], float]] = queue.Queue()
+        self.requests: queue.Queue[tuple[str, dict[str, Any], tuple[float, float]]] = queue.Queue()
 
     def post(
         self,
         url: str,
         json: dict[str, Any],
         headers: dict[str, str] | None = None,
-        timeout: float = 0.0,
+        timeout: tuple[float, float] = (0.0, 0.0),
     ) -> _FakeResponse:
         del headers
         self.requests.put((url, json, timeout))
@@ -144,6 +144,8 @@ class VisionPipelineE2ETest(unittest.TestCase):
                 main_system_base_url="http://alert-host/api/v1",
                 main_system_fall_event_path="/alerts/fall",
                 main_system_alert_timeout_ms=1000,
+                main_system_connect_timeout_sec=1.0,
+                main_system_read_timeout_sec=4.0,
                 main_system_alert_cooldown_seconds=0.0,
                 vision_service_public_base_url="http://testserver",
                 fall_event_snapshot_dir=str(temp_path / "snapshots"),
@@ -194,25 +196,38 @@ class VisionPipelineE2ETest(unittest.TestCase):
                     self.assertFalse(reporter_spy.requests.empty(), "expected fall reporter to post an alert")
                     url, payload, timeout = reporter_spy.requests.get(timeout=2)
                     self.assertEqual(url, "http://alert-host/api/v1/alerts/fall")
-                    self.assertGreater(timeout, 0)
+                    self.assertEqual(timeout, (1.0, 4.0))
                     self.assertEqual(payload["camera_id"], "camera_01")
-                    self.assertEqual(payload["event_type"], "fall_confirmed")
-                    self.assertTrue(payload["fall_detected"])
-                    self.assertEqual(payload["status"], "fallen_confirmed")
-                    self.assertIsInstance(payload.get("bbox"), list)
-                    self.assertIsInstance(payload.get("metadata"), dict)
-                    event_metadata = payload["metadata"].get("event")
+                    self.assertEqual(payload["schema_version"], "1.0")
+                    self.assertEqual(payload["source"], "camera-service")
+                    self.assertEqual(payload["alert_type"], "fall")
+                    self.assertEqual(payload["safety_outcome"], "alert")
+                    self.assertEqual(payload["fall_verdict"], "confirmed_fall")
+                    self.assertEqual(payload["event_id"], payload["incident_id"])
+                    self.assertIsInstance(payload.get("binary_result"), dict)
+
+                    legacy_payload = payload.get("legacy_payload")
+                    self.assertIsInstance(legacy_payload, dict)
+                    self.assertEqual(legacy_payload["event_type"], "fall_confirmed")
+                    self.assertTrue(legacy_payload["fall_detected"])
+                    self.assertEqual(legacy_payload["status"], "fallen_confirmed")
+
+                    internal_payload = app.state.runtime.fall_event_reporter.latest_alert("camera_01")
+                    self.assertIsNotNone(internal_payload)
+                    self.assertIsInstance(internal_payload.get("bbox"), list)
+                    self.assertIsInstance(internal_payload.get("metadata"), dict)
+                    event_metadata = internal_payload["metadata"].get("event")
                     self.assertIsInstance(event_metadata, dict)
-                    self.assertEqual(event_metadata["incident_id"], payload["incident_id"])
+                    self.assertEqual(event_metadata["incident_id"], payload["event_id"])
                     self.assertEqual(event_metadata["camera_id"], payload["camera_id"])
-                    self.assertEqual(event_metadata["state"], payload["state"])
-                    self.assertEqual(event_metadata["status"], payload["status"])
-                    self.assertEqual(event_metadata["fall_score"], payload["fall_score"])
-                    self.assertEqual(event_metadata["snapshot_path"], payload["snapshot_path"])
+                    self.assertEqual(event_metadata["state"], internal_payload["state"])
+                    self.assertEqual(event_metadata["status"], internal_payload["status"])
+                    self.assertEqual(event_metadata["fall_score"], internal_payload["fall_score"])
+                    self.assertEqual(event_metadata["snapshot_path"], internal_payload["snapshot_path"])
                     self.assertIsInstance(event_metadata.get("injury"), dict)
                     self.assertIsInstance(event_metadata.get("multimodal_review"), dict)
 
-                    snapshot_url = payload.get("snapshot_url")
+                    snapshot_url = internal_payload.get("snapshot_url")
                     self.assertIsInstance(snapshot_url, str)
                     self.assertIn("/fall-events/snapshots/", snapshot_url)
 

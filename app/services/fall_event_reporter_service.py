@@ -1641,6 +1641,11 @@ def _compact_qwen_review(review: Any) -> dict[str, Any]:
         "review_points": [str(item) for item in review_points[:3]]
         if isinstance(review_points, list) else [],
         "confidence": _as_float(source.get("confidence")),
+        "qwen_profile": source.get("qwen_profile"),
+        "qwen_model": source.get("model_name"),
+        "prompt_version": source.get("prompt_version"),
+        "schema_version": source.get("schema_version"),
+        "fusion_version": source.get("fusion_version"),
     }
 
 

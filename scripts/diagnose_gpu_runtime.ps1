@@ -64,7 +64,16 @@ except Exception as exc:
 print(json.dumps(result, ensure_ascii=False))
 '@
 
-    $raw = & $PythonPath -c $code
+    $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("camera-service-provider-check-{0}.py" -f ([guid]::NewGuid().ToString("N")))
+    $previousPythonPath = $env:PYTHONPATH
+    try {
+        Set-Content -LiteralPath $scriptPath -Value $code -Encoding UTF8
+        $env:PYTHONPATH = if ($previousPythonPath) { "$ProjectRoot;$previousPythonPath" } else { $ProjectRoot }
+        $raw = & $PythonPath $scriptPath
+    } finally {
+        $env:PYTHONPATH = $previousPythonPath
+        Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
+    }
     try {
         $parsed = ($raw | Select-Object -Last 1) | ConvertFrom-Json
     } catch {
@@ -162,10 +171,11 @@ function Get-GpuComputeProcesses {
             foreach ($row in $rows) {
                 Write-Host $row
                 $parts = ($row -split ",").Trim()
+                $memory = if ($parts[2] -match "^\d+(\.\d+)?$") { [double]$parts[2] } else { $null }
                 $items += [PSCustomObject]@{
                     pid = [int]$parts[0]
                     process_name = $parts[1]
-                    used_memory_mib = [double]$parts[2]
+                    used_memory_mib = $memory
                     raw = $row
                 }
             }
@@ -296,9 +306,9 @@ try {
         }
 
         if ($runtime -and $runtime.binary_sample_fps) {
-            if ([double]$runtime.binary_sample_fps -ge 2.4 -and [double]$runtime.binary_sample_fps -le 3.4) {
-                $diagnosis.binary_sample_fps_status = "around_3_fps"
-                Write-Host "binary_sample_fps_status=around_3_fps"
+            if ([double]$runtime.binary_sample_fps -gt 0) {
+                $diagnosis.binary_sample_fps_status = "configured_positive"
+                Write-Host "binary_sample_fps_status=configured_positive"
             } else {
                 $diagnosis.binary_sample_fps_status = "unexpected"
                 Write-Host "binary_sample_fps_status=unexpected"

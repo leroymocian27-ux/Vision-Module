@@ -1,0 +1,3 @@
+===== ollama ps (exit=0) =====
+NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL   
+qwen3.5:4b    2a654d98e6fb    3.5 GB    100% GPU     12288      Forever

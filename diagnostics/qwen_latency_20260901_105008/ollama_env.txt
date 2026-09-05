@@ -1,0 +1,24 @@
+===== OLLAMA environment (exit=0) =====
+Name  : OLLAMA_CONTEXT_LENGTH
+Value : 4096
+
+Name  : OLLAMA_NUM_PARALLEL
+Value : 1
+
+Name  : OLLAMA_MODELS
+Value : E:\Ollama\models
+
+Name  : OLLAMA_HOST
+Value : 127.0.0.1:11434
+
+Name  : OLLAMA_NO_CLOUD
+Value : 1
+
+Name  : OLLAMA_FLASH_ATTENTION
+Value : 1
+
+Name  : OLLAMA_KEEP_ALIVE
+Value : 5m
+
+Name  : OLLAMA_MAX_LOADED_MODELS
+Value : 1

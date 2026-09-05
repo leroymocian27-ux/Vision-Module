@@ -1,0 +1,19 @@
+===== ollama --version (exit=0) =====
+ollama version is 0.33.1
+
+===== Windows / processor (exit=0) =====
+Name                           Value                                                                                   
+----                           -----                                                                                   
+PSVersion                      5.1.26100.7920                                                                          
+PSEdition                      Desktop                                                                                 
+PSCompatibleVersions           {1.0, 2.0, 3.0, 4.0...}                                                                 
+BuildVersion                   10.0.26100.7920                                                                         
+CLRVersion                     4.0.30319.42000                                                                         
+WSManStackVersion              3.0                                                                                     
+PSRemotingProtocolVersion      2.3                                                                                     
+SerializationVersion           1.1.0.1                                                                                 
+
+OsName                : Microsoft Windows 11 家庭版 中文版
+OsVersion             : 10.0.26200
+CsProcessors          : {Intel(R) Core(TM) i9-14900HX}
+CsTotalPhysicalMemory : 33970462720
