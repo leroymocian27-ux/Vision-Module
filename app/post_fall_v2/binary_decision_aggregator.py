@@ -21,7 +21,11 @@ class BinaryDecisionAggregatorConfig:
     window_size: int = 8
     min_positive_frames: int = 4
     min_consecutive_frames: int = 3
-    candidate_min_ms: int = 800
+    candidate_min_ms: int = 0
+    high_confidence_threshold: float = 0.90
+    high_confidence_min_consecutive_frames: int = 2
+    recovery_threshold: float = 0.45
+    recovery_min_consecutive_frames: int = 5
     recovery_min_ms: int = 1500
     cooldown_ms: int = 3000
 
@@ -47,75 +51,88 @@ class BinaryDecisionAggregator:
         window.append((now, result))
 
         state = self._state.get(camera_id, "NORMAL")
-        is_positive = bool(
-            result.valid
-            and result.fall_probability is not None
-            and result.fall_probability >= self.config.threshold
-        )
+        is_positive = self._is_positive(result)
+        recovery_low_count = self._recovery_low_count(window)
+        recovered = recovery_low_count >= self.config.recovery_min_consecutive_frames
+        normal_candidate = self._normal_candidate_condition(window, now)
+        high_conf_candidate = self._high_confidence_candidate_condition(window)
+        candidate_triggered = False
+        trigger_reason = "none"
         event_created = False
         rearmed = False
-        reason = "updated"
+        reason = "none"
 
         if state == "NORMAL":
-            if is_positive:
+            if normal_candidate or high_conf_candidate:
                 self._candidate_started_at[camera_id] = now
-                if self._is_confirmed(camera_id, window, now):
-                    incident_id = self._active_incident_id.get(camera_id) or self._new_incident_id(camera_id)
-                    self._active_incident_id[camera_id] = incident_id
-                    self._event_count[camera_id] = self._event_count.get(camera_id, 0) + 1
-                    state = "EVENT_ACTIVE"
-                    event_created = True
-                    reason = "fall_confirmed"
-                else:
-                    state = "FALL_CANDIDATE"
-                    reason = "fall_candidate_started"
-            else:
-                reason = "non_fall"
-        elif state == "FALL_CANDIDATE":
-            if not is_positive:
-                self._candidate_started_at.pop(camera_id, None)
-                state = "NORMAL"
-                reason = "fall_candidate_cancelled"
-            elif self._is_confirmed(camera_id, window, now):
                 incident_id = self._active_incident_id.get(camera_id) or self._new_incident_id(camera_id)
                 self._active_incident_id[camera_id] = incident_id
                 self._event_count[camera_id] = self._event_count.get(camera_id, 0) + 1
                 state = "EVENT_ACTIVE"
                 event_created = True
-                reason = "fall_confirmed"
+                candidate_triggered = True
+                trigger_reason = "high_confidence_fast_path" if high_conf_candidate else "normal_temporal_confirmation"
+                reason = trigger_reason
+            elif is_positive:
+                reason = "temporal_collecting"
             else:
-                reason = "fall_candidate_collecting"
-        elif state == "EVENT_ACTIVE":
-            if is_positive:
-                self._recovery_started_at.pop(camera_id, None)
-                reason = "event_active_fall_persisting"
-            else:
-                self._recovery_started_at.setdefault(camera_id, now)
-                state = "RECOVERY_PENDING"
-                reason = "recovery_pending"
-        elif state == "RECOVERY_PENDING":
-            if is_positive:
-                self._recovery_started_at.pop(camera_id, None)
-                state = "EVENT_ACTIVE"
-                reason = "fall_returned_before_recovery"
-            elif now - self._recovery_started_at.get(camera_id, now) >= self.config.recovery_min_ms / 1000:
+                reason = "non_fall"
+        elif state == "FALL_CANDIDATE":
+            if recovered:
                 self._cooldown_started_at[camera_id] = now
                 self._active_incident_id.pop(camera_id, None)
                 self._candidate_started_at.pop(camera_id, None)
                 state = "COOLDOWN"
                 reason = "recovery_confirmed"
             else:
+                state = "EVENT_ACTIVE"
+                reason = "event_active_fall_persisting"
+        elif state == "EVENT_ACTIVE":
+            if recovered:
+                self._cooldown_started_at[camera_id] = now
+                self._active_incident_id.pop(camera_id, None)
+                self._candidate_started_at.pop(camera_id, None)
+                self._recovery_started_at.pop(camera_id, None)
+                state = "COOLDOWN"
+                reason = "recovery_confirmed"
+            elif recovery_low_count > 0:
+                self._recovery_started_at.setdefault(camera_id, now)
+                state = "RECOVERY_PENDING"
+                reason = "recovery_pending"
+            else:
+                self._recovery_started_at.pop(camera_id, None)
+                reason = "event_active_fall_persisting"
+        elif state == "RECOVERY_PENDING":
+            if recovered:
+                self._cooldown_started_at[camera_id] = now
+                self._active_incident_id.pop(camera_id, None)
+                self._candidate_started_at.pop(camera_id, None)
+                self._recovery_started_at.pop(camera_id, None)
+                state = "COOLDOWN"
+                reason = "recovery_confirmed"
+            elif recovery_low_count > 0:
+                self._recovery_started_at.setdefault(camera_id, now)
                 reason = "recovery_collecting"
+            else:
+                self._recovery_started_at.pop(camera_id, None)
+                state = "EVENT_ACTIVE"
+                reason = "fall_returned_before_recovery"
         elif state == "COOLDOWN":
             if now - self._cooldown_started_at.get(camera_id, now) >= self.config.cooldown_ms / 1000:
                 state = "NORMAL"
                 rearmed = True
                 reason = "post_fall_v2_rearmed"
                 self._cooldown_started_at.pop(camera_id, None)
-                if is_positive:
+                if normal_candidate or high_conf_candidate:
                     self._candidate_started_at[camera_id] = now
-                    state = "FALL_CANDIDATE"
-                    reason = "post_fall_v2_rearmed_new_candidate"
+                    incident_id = self._active_incident_id.get(camera_id) or self._new_incident_id(camera_id)
+                    self._active_incident_id[camera_id] = incident_id
+                    self._event_count[camera_id] = self._event_count.get(camera_id, 0) + 1
+                    state = "EVENT_ACTIVE"
+                    event_created = True
+                    candidate_triggered = True
+                    trigger_reason = "high_confidence_fast_path" if high_conf_candidate else "normal_temporal_confirmation"
+                    reason = trigger_reason
             else:
                 reason = "cooldown"
 
@@ -128,6 +145,12 @@ class BinaryDecisionAggregator:
             event_created=event_created,
             rearmed=rearmed,
             reason=reason,
+            frame_positive=is_positive,
+            normal_candidate_condition=normal_candidate,
+            high_conf_candidate_condition=high_conf_candidate,
+            candidate_triggered=candidate_triggered,
+            recovery_low_count=recovery_low_count,
+            trigger_reason=trigger_reason,
             now=now,
         )
         self._last_decision[camera_id] = decision
@@ -187,6 +210,19 @@ class BinaryDecisionAggregator:
             and duration_ms >= self.config.candidate_min_ms
         )
 
+    def _normal_candidate_condition(self, window: deque[tuple[float, BinaryFrameResult]], now: float) -> bool:
+        if len(window) < self.config.window_size:
+            return False
+        duration_ms = self._positive_duration_ms(window, now)
+        return (
+            self._positive_count(window) >= self.config.min_positive_frames
+            and self._consecutive_positive_count(window) >= self.config.min_consecutive_frames
+            and duration_ms >= self.config.candidate_min_ms
+        )
+
+    def _high_confidence_candidate_condition(self, window: deque[tuple[float, BinaryFrameResult]]) -> bool:
+        return self._high_confidence_consecutive_count(window) >= self.config.high_confidence_min_consecutive_frames
+
     def _build_decision(
         self,
         *,
@@ -197,6 +233,12 @@ class BinaryDecisionAggregator:
         event_created: bool,
         rearmed: bool,
         reason: str,
+        frame_positive: bool,
+        normal_candidate_condition: bool,
+        high_conf_candidate_condition: bool,
+        candidate_triggered: bool,
+        recovery_low_count: int,
+        trigger_reason: str,
         now: float,
     ) -> BinaryAggregateDecision:
         probabilities = [
@@ -214,6 +256,15 @@ class BinaryDecisionAggregator:
             max_fall_probability=round(max(probabilities), 6) if probabilities else None,
             candidate_duration_ms=candidate_duration_ms,
             threshold=self.config.threshold,
+            frame_positive=frame_positive,
+            tail_consecutive_positive=self._consecutive_positive_count(window),
+            high_conf_consecutive=self._high_confidence_consecutive_count(window),
+            normal_candidate_condition=normal_candidate_condition,
+            high_conf_candidate_condition=high_conf_candidate_condition,
+            candidate_triggered=candidate_triggered,
+            recovery_low_count=recovery_low_count,
+            candidate_active=state in {"FALL_CANDIDATE", "EVENT_ACTIVE", "RECOVERY_PENDING", "FALL_CONFIRMED"},
+            trigger_reason=trigger_reason,
             probability_window=self.recent_probabilities(camera_id, limit=3),
             persistent_strong_candidate=self.persistent_strong_candidate(camera_id),
         )
@@ -236,17 +287,56 @@ class BinaryDecisionAggregator:
         return sum(
             1
             for _, item in window
-            if item.valid and item.fall_probability is not None and item.fall_probability >= self.config.threshold
+            if self._is_positive(item)
         )
 
     def _consecutive_positive_count(self, window: deque[tuple[float, BinaryFrameResult]]) -> int:
         count = 0
         for _, item in reversed(window):
-            if item.valid and item.fall_probability is not None and item.fall_probability >= self.config.threshold:
+            if self._is_positive(item):
                 count += 1
                 continue
             break
         return count
+
+    def _high_confidence_consecutive_count(self, window: deque[tuple[float, BinaryFrameResult]]) -> int:
+        count = 0
+        for _, item in reversed(window):
+            if (
+                item.valid
+                and item.fall_probability is not None
+                and item.fall_probability >= self.config.high_confidence_threshold
+            ):
+                count += 1
+                continue
+            break
+        return count
+
+    def _recovery_low_count(self, window: deque[tuple[float, BinaryFrameResult]]) -> int:
+        count = 0
+        for _, item in reversed(window):
+            if (
+                item.valid
+                and item.fall_probability is not None
+                and item.fall_probability < self.config.recovery_threshold
+            ):
+                count += 1
+                continue
+            break
+        return count
+
+    def _is_positive(self, result: BinaryFrameResult) -> bool:
+        return bool(
+            result.valid
+            and result.fall_probability is not None
+            and result.fall_probability >= self.config.threshold
+        )
+
+    def _positive_duration_ms(self, window: deque[tuple[float, BinaryFrameResult]], now: float) -> int:
+        for item_time, item in window:
+            if self._is_positive(item):
+                return max(0, int((now - item_time) * 1000))
+        return 0
 
     def _status_one(self, camera_id: str) -> dict:
         latest = self._last_decision.get(camera_id)

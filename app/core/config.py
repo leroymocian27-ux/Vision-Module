@@ -366,10 +366,11 @@ class Settings:
         "POST_FALL_V2_BINARY_CANDIDATE_THRESHOLD",
         0.3979087471961975,
     )
-    # Engineering/default threshold from current OOF evidence; NOT_PRODUCTION_CALIBRATED.
+    # Previous OOF audit threshold was 0.3979087471961975. The current
+    # experiment raises the runtime binary gate to reduce single-frame FPs.
     post_fall_v2_binary_threshold: float = _get_float(
         "POST_FALL_V2_BINARY_THRESHOLD",
-        _get_float("POST_FALL_V2_BINARY_CANDIDATE_THRESHOLD", 0.3979087471961975),
+        _get_float("POST_FALL_V2_BINARY_CANDIDATE_THRESHOLD", 0.60),
     )
     post_fall_v2_sample_fps: float = _get_float("POST_FALL_V2_SAMPLE_FPS", 10.0)
     post_fall_v2_max_frame_age_ms: int = _get_int("POST_FALL_V2_MAX_FRAME_AGE_MS", 1000)
@@ -384,10 +385,17 @@ class Settings:
     follow_target_roi_width_ratio: float = _get_float("FOLLOW_TARGET_ROI_WIDTH_RATIO", 0.50)
     follow_target_grace_roi_width_ratio: float = _get_float("FOLLOW_TARGET_GRACE_ROI_WIDTH_RATIO", 0.70)
     follow_target_calibration_log_enabled: bool = _get_bool("FOLLOW_TARGET_CALIBRATION_LOG_ENABLED", False)
-    post_fall_v2_window_size: int = _get_int("POST_FALL_V2_WINDOW_SIZE", 10)
-    post_fall_v2_min_positive_frames: int = _get_int("POST_FALL_V2_MIN_POSITIVE_FRAMES", 1)
-    post_fall_v2_min_consecutive_frames: int = _get_int("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES", 1)
+    post_fall_v2_window_size: int = _get_int("POST_FALL_V2_WINDOW_SIZE", 8)
+    post_fall_v2_min_positive_frames: int = _get_int("POST_FALL_V2_MIN_POSITIVE_FRAMES", 4)
+    post_fall_v2_min_consecutive_frames: int = _get_int("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES", 3)
     post_fall_v2_candidate_min_ms: int = _get_int("POST_FALL_V2_CANDIDATE_MIN_MS", 0)
+    post_fall_v2_high_confidence_threshold: float = _get_float("POST_FALL_V2_HIGH_CONFIDENCE_THRESHOLD", 0.90)
+    post_fall_v2_high_confidence_min_consecutive_frames: int = _get_int(
+        "POST_FALL_V2_HIGH_CONFIDENCE_MIN_CONSECUTIVE_FRAMES",
+        2,
+    )
+    post_fall_v2_recovery_threshold: float = _get_float("POST_FALL_V2_RECOVERY_THRESHOLD", 0.45)
+    post_fall_v2_recovery_min_consecutive_frames: int = _get_int("POST_FALL_V2_RECOVERY_MIN_CONSECUTIVE_FRAMES", 5)
     post_fall_v2_recovery_min_ms: int = _get_int("POST_FALL_V2_RECOVERY_MIN_MS", 1500)
     post_fall_v2_cooldown_ms: int = _get_int("POST_FALL_V2_COOLDOWN_MS", 3000)
     post_fall_v2_post_fall_alert_min_ms: int = _get_int("POST_FALL_V2_POST_FALL_ALERT_MIN_MS", 10000)
@@ -689,6 +697,12 @@ class Settings:
             raise ValueError("POST_FALL_V2_MIN_POSITIVE_FRAMES must be at least 1")
         if self.post_fall_v2_min_consecutive_frames < 1:
             raise ValueError("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES must be at least 1")
+        if self.post_fall_v2_high_confidence_min_consecutive_frames < 1:
+            raise ValueError("POST_FALL_V2_HIGH_CONFIDENCE_MIN_CONSECUTIVE_FRAMES must be at least 1")
+        if self.post_fall_v2_recovery_min_consecutive_frames < 1:
+            raise ValueError("POST_FALL_V2_RECOVERY_MIN_CONSECUTIVE_FRAMES must be at least 1")
+        if self.post_fall_v2_recovery_threshold >= self.post_fall_v2_binary_threshold:
+            raise ValueError("POST_FALL_V2_RECOVERY_THRESHOLD must be lower than POST_FALL_V2_BINARY_THRESHOLD")
         if self.post_fall_v2_event_buffer_seconds <= 0:
             raise ValueError("POST_FALL_V2_EVENT_BUFFER_SECONDS must be positive")
         if self.post_fall_v2_post_fall_alert_min_ms < self.post_fall_v2_candidate_min_ms:
@@ -821,6 +835,16 @@ _SAFE_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
     "post_fall_v2_window_size": ("POST_FALL_V2_WINDOW_SIZE", "post_fall_v2_window_size"),
     "post_fall_v2_min_positive_frames": ("POST_FALL_V2_MIN_POSITIVE_FRAMES", "post_fall_v2_min_positive_frames"),
     "post_fall_v2_min_consecutive_frames": ("POST_FALL_V2_MIN_CONSECUTIVE_FRAMES", "post_fall_v2_min_consecutive_frames"),
+    "post_fall_v2_high_confidence_threshold": ("POST_FALL_V2_HIGH_CONFIDENCE_THRESHOLD", "post_fall_v2_high_confidence_threshold"),
+    "post_fall_v2_high_confidence_min_consecutive_frames": (
+        "POST_FALL_V2_HIGH_CONFIDENCE_MIN_CONSECUTIVE_FRAMES",
+        "post_fall_v2_high_confidence_min_consecutive_frames",
+    ),
+    "post_fall_v2_recovery_threshold": ("POST_FALL_V2_RECOVERY_THRESHOLD", "post_fall_v2_recovery_threshold"),
+    "post_fall_v2_recovery_min_consecutive_frames": (
+        "POST_FALL_V2_RECOVERY_MIN_CONSECUTIVE_FRAMES",
+        "post_fall_v2_recovery_min_consecutive_frames",
+    ),
     "post_fall_v2_post_fall_alert_min_ms": ("POST_FALL_V2_POST_FALL_ALERT_MIN_MS", "post_fall_v2_post_fall_alert_min_ms"),
     "post_fall_v2_vlm_enabled": ("POST_FALL_V2_VLM_ENABLED", "post_fall_v2_vlm_enabled"),
     "post_fall_v2_qwen_enabled": ("POST_FALL_V2_QWEN_ENABLED", "post_fall_v2_qwen_enabled"),

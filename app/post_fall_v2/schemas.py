@@ -200,6 +200,15 @@ class BinaryDecisionEvidence:
     max_fall_probability: float | None
     candidate_duration_ms: int
     threshold: float
+    frame_positive: bool = False
+    tail_consecutive_positive: int = 0
+    high_conf_consecutive: int = 0
+    normal_candidate_condition: bool = False
+    high_conf_candidate_condition: bool = False
+    candidate_triggered: bool = False
+    recovery_low_count: int = 0
+    candidate_active: bool = False
+    trigger_reason: str = "none"
     probability_window: list[float] = field(default_factory=list)
     persistent_strong_candidate: bool = False
 

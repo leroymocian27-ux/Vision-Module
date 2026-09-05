@@ -124,6 +124,10 @@ class PostFallV2RuntimeService:
                 min_positive_frames=settings.post_fall_v2_min_positive_frames,
                 min_consecutive_frames=settings.post_fall_v2_min_consecutive_frames,
                 candidate_min_ms=settings.post_fall_v2_candidate_min_ms,
+                high_confidence_threshold=settings.post_fall_v2_high_confidence_threshold,
+                high_confidence_min_consecutive_frames=settings.post_fall_v2_high_confidence_min_consecutive_frames,
+                recovery_threshold=settings.post_fall_v2_recovery_threshold,
+                recovery_min_consecutive_frames=settings.post_fall_v2_recovery_min_consecutive_frames,
                 recovery_min_ms=settings.post_fall_v2_recovery_min_ms,
                 cooldown_ms=settings.post_fall_v2_cooldown_ms,
             )

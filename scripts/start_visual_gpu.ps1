@@ -1,6 +1,7 @@
 param(
     [string]$HostName = "127.0.0.1",
-    [int]$Port = 8000
+    [int]$Port = 8000,
+    [switch]$SkipOllamaCudaPreflight
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +22,38 @@ $env:YOLO11_POSE_DEVICE = "cuda:0"
 
 Push-Location $ProjectRoot
 try {
+    function Get-DotEnvValue {
+        param(
+            [string]$Path,
+            [string]$Name,
+            [string]$Default = ""
+        )
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return $Default
+        }
+        $line = Get-Content -LiteralPath $Path | Where-Object {
+            $_ -match "^\s*$([regex]::Escape($Name))\s*="
+        } | Select-Object -Last 1
+        if (-not $line) {
+            return $Default
+        }
+        return (($line -split "=", 2)[1]).Trim().Trim('"').Trim("'")
+    }
+
+    $envPath = Join-Path $ProjectRoot ".env"
+    $qwenEnabled = (Get-DotEnvValue -Path $envPath -Name "POST_FALL_V2_QWEN_ENABLED" -Default "false").ToLowerInvariant()
+    $qwenProvider = (Get-DotEnvValue -Path $envPath -Name "POST_FALL_V2_QWEN_PROVIDER" -Default "").ToLowerInvariant()
+    if (-not $SkipOllamaCudaPreflight -and $qwenEnabled -in @("1", "true", "yes", "on") -and $qwenProvider -eq "qwen_keyframe") {
+        $ollamaCudaStart = Join-Path $ProjectRoot "tools\start_ollama_cuda.ps1"
+        if (-not (Test-Path -LiteralPath $ollamaCudaStart)) {
+            throw "Qwen CUDA backend unavailable. Expected NVIDIA CUDA but startup script is missing: $ollamaCudaStart"
+        }
+        & $ollamaCudaStart
+        if ($LASTEXITCODE -ne 0) {
+            throw "Qwen CUDA backend unavailable. Expected NVIDIA CUDA but CUDA verification failed. Vulkan fallback is disabled."
+        }
+    }
+
     $providerCheck = @'
 import os
 import sys
