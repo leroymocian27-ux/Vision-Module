@@ -258,6 +258,9 @@ class KeyframeCollectionSession:
         tolerance_seconds = self.tolerance_ms / 1000.0
         for offset_ms in self.required_offsets_ms:
             target = self.confirmed_monotonic + (offset_ms / 1000.0)
+            if offset_ms > 0 and target > now_monotonic:
+                resolved.append(_ResolvedFrame(item=self._missing(offset_ms, "future_frame_not_available_yet"), frame=None))
+                continue
             if target > now_monotonic + tolerance_seconds:
                 resolved.append(_ResolvedFrame(item=self._missing(offset_ms, "future_frame_not_available_yet"), frame=None))
                 continue

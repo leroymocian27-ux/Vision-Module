@@ -28,52 +28,32 @@ if hasattr(sys.stdout, "reconfigure"):
 #定义数据增强方法
 def build_augmentation():
 
-    # # 水平翻转
-    # hf = A.HorizontalFlip(p=0.5)
+    # 水平翻转
+    hf = A.HorizontalFlip(p=0.5)
 
-    # # 改变亮度、对比度
-    # bc = A.RandomBrightnessContrast(
-    #     brightness_limit=0.20,
-    #     contrast_limit=0.20,
-    #     p=0.5,
-    # )
-
-    # # 模拟模糊
-    # mb = A.MotionBlur(blur_limit=(3, 7), p=0.25)
-    # gb = A.GaussianBlur(blur_limit=(3, 5), p=0.15)
-
-    # # 缩放、平移、旋转、剪切
-    # af = A.Affine(
-    #     scale=(0.95, 1.05),
-    #     translate_percent=(-0.03, 0.03),
-    #     rotate=(-8, 8),
-    #     shear=(-2, 2),
-    #     border_mode=cv2.BORDER_REFLECT_101,
-    #     p=0.3,
-    # )
-
-    #水平翻转
-    hf = A.HorizontalFlip( p= 0.5)
-
-    #改变亮度、对比度
-    bc= A.RandomBrightnessContrast(
+    # 改变亮度、对比度
+    bc = A.RandomBrightnessContrast(
         brightness_limit=0.20,
         contrast_limit=0.20,
         p=0.5,
     )
 
-    #模拟模糊
-    mb = A.MotionBlur(blur_limit=(3,7), p= 0.25)
-    gb = A.GaussianBlur(blur_limit=(3,5), p=0.15)
+    # 模拟模糊
+    mb = A.MotionBlur(blur_limit=(3, 7), p=0.25)
+    gb = A.GaussianBlur(blur_limit=(3, 5), p=0.15)
 
+    # 缩放、平移、旋转、剪切
     af = A.Affine(
         scale=(0.95, 1.05),
-        translate_percent = (-0.03, 0.03),
-        rotate= (-8,8),
-        shear = (-2,2),
+        translate_percent=(-0.03, 0.03),
+        rotate=(-8, 8),
+        shear=(-2, 2),
         border_mode=cv2.BORDER_REFLECT_101,
         p=0.3,
     )
+
+    
+
 
     # 6. 将前面的增强方法按顺序放入列表
     operations = [
@@ -253,11 +233,9 @@ def create_single_image_effect_preview(
         raise FileNotFoundError("输入文件夹中没有找到图片。")
 
     original_path = image_paths[0]
-    original_preview_path = output_dir / "original_preview.jpg"
-    save_original_preview(original_path, original_preview_path)
-    print(f"原始图片预览图：{original_preview_path}")
     if open_original:
-        open_preview_image(original_preview_path, zoom_steps=1)
+        print(f"原始图片：{original_path}")
+        open_preview_image(original_path, zoom_steps=1)
         print(f"等待 {wait_seconds} 秒后展示增强效果。\n")
         time.sleep(wait_seconds)
 
@@ -310,26 +288,7 @@ def create_single_image_effect_preview(
     save_effect_gallery(gallery_items, preview_path)
     print(f"\n处理完成：1 张原图，共生成 {generated} 张单项增强图。")
     print(f"效果预览图：{preview_path}")
-    return original_preview_path, preview_path
-
-
-def save_original_preview(original_path, preview_path):
-    canvas_w, canvas_h = 1920, 1080
-    pad = 24
-    label_h = 42
-    canvas = Image.new("RGB", (canvas_w, canvas_h), "white")
-    draw = ImageDraw.Draw(canvas)
-    label_font = load_preview_font(28)
-
-    with Image.open(original_path) as image:
-        image = image.convert("RGB")
-        image.thumbnail((canvas_w - pad * 2, canvas_h - pad * 2 - label_h))
-
-    draw.text((pad, pad), "原始图片", fill=(20, 20, 20), font=label_font)
-    paste_x = (canvas_w - image.width) // 2
-    paste_y = pad + label_h + (canvas_h - pad * 2 - label_h - image.height) // 2
-    canvas.paste(image, (paste_x, paste_y))
-    canvas.save(preview_path, quality=92)
+    return preview_path
 
 
 def save_effect_gallery(items, preview_path):
@@ -505,7 +464,7 @@ def main():
         print("演示模式：只选择 1 张原图，生成 4 张单项增强效果图。")
         print("已启用覆盖旧输出，方便在 VS Code 中重复点击运行。\n")
         reset_demo_output(args.output, default_output)
-        _, preview_path = create_single_image_effect_preview(
+        preview_path = create_single_image_effect_preview(
             input_dir=args.input,
             output_dir=args.output,
             seed=args.seed,

@@ -42,5 +42,5 @@ E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -m app.cli model q
 实时视频地址：
 
 ```text
-http://192.168.8.254:8093/stream.mjpg
+http://192.168.8.249:8093/stream.mjpg
 ```

@@ -5,10 +5,11 @@ import time
 from threading import BoundedSemaphore, Lock
 from typing import Any, Protocol
 
+from app.events.qwen_keyframe import POST_FALL_FUSION_VERSION, POST_FALL_PROMPT_VERSION, POST_FALL_SCHEMA_VERSION
 from app.post_fall_v2.schemas import FallDetailResult, FallEvent, KeyframePackage
 
 
-FUSION_VERSION = "demo_fusion_v2"
+FUSION_VERSION = POST_FALL_FUSION_VERSION
 
 
 class FallVLMAnalyzer(Protocol):
@@ -114,8 +115,8 @@ class VLMReviewService:
                 summary="VLM review timed out; binary FallEvent remains valid.",
                 error_message=f"timeout after {self.timeout_seconds}s",
                 failure_reason="timeout",
-                prompt_version="compact_v2",
-                schema_version="compact_v1",
+                prompt_version=POST_FALL_PROMPT_VERSION,
+                schema_version=POST_FALL_SCHEMA_VERSION,
                 fusion_version=FUSION_VERSION,
             )
         except Exception as exc:
@@ -127,8 +128,8 @@ class VLMReviewService:
                 summary="VLM review failed; binary FallEvent remains valid.",
                 error_message=str(exc),
                 failure_reason="exception",
-                prompt_version="compact_v2",
-                schema_version="compact_v1",
+                prompt_version=POST_FALL_PROMPT_VERSION,
+                schema_version=POST_FALL_SCHEMA_VERSION,
                 fusion_version=FUSION_VERSION,
             )
         timing = {**(result.timing or {}), **queue_wait}
@@ -174,8 +175,8 @@ def _rejected(event: FallEvent, reason: str) -> FallDetailResult:
         review_points=["复核实时画面。"],
         error_message=reason,
         failure_reason=reason,
-        prompt_version="compact_v2",
-        schema_version="compact_v1",
+        prompt_version=POST_FALL_PROMPT_VERSION,
+        schema_version=POST_FALL_SCHEMA_VERSION,
         fusion_version=FUSION_VERSION,
     )
 

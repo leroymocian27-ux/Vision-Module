@@ -45,20 +45,22 @@ def test_qwen_fall_analyzer_maps_valid_multimage_advisory_to_fall_detail() -> No
     assert len(received[0]["messages"][1]["images"]) == 3
     assert received[0]["format"]["required"] == ["e", "s", "d", "f", "c", "t"]
     assert set(received[0]["format"]["properties"]) == {"e", "s", "d", "f", "c", "t"}
-    assert received[0]["format"]["properties"]["e"]["enum"] == ["fall", "risk", "phone", "reading", "normal", "uncertain"]
+    assert received[0]["format"]["properties"]["e"]["enum"] == ["fall", "non_fall", "uncertain"]
     assert received[0]["format"]["properties"]["t"]["maxLength"] == 40
     assert received[0]["options"]["num_ctx"] == 2048
     assert received[0]["keep_alive"] == -1
     assert received[0]["options"]["num_predict"] == 96
     assert received[0]["options"]["temperature"] == 0.0
     request_text = json.dumps(received[0], ensure_ascii=False)
-    assert "养老跌倒复核" in request_text
-    assert "fall / risk / phone / reading / normal / uncertain" in request_text
+    assert "复核本次低姿态候选事件" in request_text
+    assert "fall / non_fall / uncertain" in request_text
     assert "示例 1 主动坐下看书或玩手机" not in request_text
     assert "high_risk_fall" not in request_text
     request_context = json.loads(received[0]["messages"][1]["content"])
-    assert request_context["profile"] == "compact_v2"
-    assert request_context["prompt_version"] == "compact_v2"
+    assert request_context["profile"] == "competition_v1"
+    assert request_context["prompt_version"] == "competition_v1"
+    assert "non_fall 必须有明确主动行为证据" in request_context["task"]
+    assert "不得因为没有看到跌倒过程而选择 non_fall" in request_context["task"]
     assert request_context["keyframe_timeline"] == [
         "图片 1：T0，候选事件触发附近，角色 trigger",
         "图片 2：T+1000ms，事件触发后，角色 trigger",
@@ -95,9 +97,10 @@ def test_qwen_fall_analyzer_retries_context_exceeded_with_compact_prompt_and_sam
     assert len(received[1]["messages"][1]["images"]) == 3
     first_context = json.loads(received[0]["messages"][1]["content"])
     retry_context = json.loads(received[1]["messages"][1]["content"])
-    assert first_context["profile"] == "compact_v2"
-    assert retry_context["profile"] == "compact_v2"
-    assert "养老跌倒复核" in first_context["task"]
+    assert first_context["profile"] == "competition_v1"
+    assert retry_context["profile"] == "competition_v1"
+    assert retry_context["prompt_version"] == "competition_v1"
+    assert "复核本次低姿态候选事件" in first_context["task"]
     assert "示例 1 主动坐下看书或玩手机" not in retry_context["task"]
     assert received[1]["options"]["num_ctx"] == 2048
     assert received[1]["keep_alive"] == -1
@@ -120,7 +123,7 @@ def test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields() -> No
             "message": {
                 "content": json.dumps(
                     {
-                        "e": "phone",
+                        "e": "non_fall",
                         "s": "ground",
                         "d": "no",
                         "f": False,
@@ -137,22 +140,51 @@ def test_qwen_fall_analyzer_maps_compact_schema_to_final_activity_fields() -> No
     detail = analyzer.analyze_fall_event(_event(), _package())
 
     assert detail.analysis_status == "completed"
-    assert detail.semantic_event == "phone"
-    assert detail.activity == "lying_using_phone"
+    assert detail.semantic_event == "non_fall"
+    assert detail.activity == "non_fall"
     assert detail.visible_distress == "no"
     assert detail.vlm_is_true_fall is False
     assert detail.confidence == 0.98
     assert detail.last_frame_description == "男子俯卧在垫子上双手持手机。"
-    assert detail.prompt_version == "compact_v2"
+    assert detail.prompt_version == "competition_v1"
     assert detail.schema_version == "compact_v1"
     assert detail.raw_compact_json == {
         "c": 0.98,
         "d": "no",
-        "e": "phone",
+        "e": "non_fall",
         "f": False,
         "s": "ground",
         "t": "男子俯卧在垫子上双手持手机。",
     }
+
+
+def test_qwen_fall_analyzer_keeps_legacy_reading_compact_output_compatible() -> None:
+    analyzer = _analyzer(
+        lambda *_: {
+            "message": {
+                "content": json.dumps(
+                    {
+                        "e": "reading",
+                        "s": "ground",
+                        "d": "no",
+                        "f": False,
+                        "c": 0.91,
+                        "t": "人物低位稳定看书。",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        },
+        images=[_image(-800), _image(0), _image(400)],
+    )
+
+    detail = analyzer.analyze_fall_event(_event(), _package())
+
+    assert detail.analysis_status == "completed"
+    assert detail.semantic_event == "reading"
+    assert detail.activity == "lying_reading"
+    assert detail.fall_verdict == "non_fall"
+    assert detail.high_risk_fall == 0
 
 
 def test_qwen_fall_analyzer_recovers_missing_detail_fields() -> None:

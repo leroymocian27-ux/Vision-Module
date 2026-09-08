@@ -408,7 +408,7 @@ class Settings:
     post_fall_v2_qwen_profile: str = os.getenv("POST_FALL_V2_QWEN_PROFILE", "qwen4b_stable_v1").strip() or "qwen4b_stable_v1"
     post_fall_v2_qwen_provider: str = os.getenv("POST_FALL_V2_QWEN_PROVIDER", "dummy").strip().lower()
     post_fall_v2_qwen_model: str = os.getenv("POST_FALL_V2_QWEN_MODEL", os.getenv("EVENT_QWEN_KEYFRAME_MODEL", "qwen3.5:4b"))
-    post_fall_v2_qwen_prompt_version: str = os.getenv("POST_FALL_V2_QWEN_PROMPT_VERSION", "compact_v2").strip() or "compact_v2"
+    post_fall_v2_qwen_prompt_version: str = os.getenv("POST_FALL_V2_QWEN_PROMPT_VERSION", "competition_v1").strip() or "competition_v1"
     post_fall_v2_qwen_schema_version: str = os.getenv("POST_FALL_V2_QWEN_SCHEMA_VERSION", "compact_v1").strip() or "compact_v1"
     post_fall_v2_qwen_fusion_version: str = os.getenv("POST_FALL_V2_QWEN_FUSION_VERSION", "demo_fusion_v2").strip() or "demo_fusion_v2"
     post_fall_v2_qwen_base_url: str = os.getenv(
@@ -570,7 +570,7 @@ class Settings:
     event_incident_cooldown_seconds: float = _get_float("EVENT_INCIDENT_COOLDOWN_SECONDS", 30.0)
     event_keyframe_offsets_ms: tuple[int, ...] = tuple(
         int(part.strip())
-        for part in os.getenv("EVENT_KEYFRAME_OFFSETS_MS", "-1000,-500,0").split(",")
+        for part in os.getenv("EVENT_KEYFRAME_OFFSETS_MS", "-800,0,400").split(",")
         if part.strip()
     )
     event_post_keyframe_collection_enabled: bool = _get_bool("EVENT_POST_KEYFRAME_COLLECTION_ENABLED", False)
@@ -711,8 +711,10 @@ class Settings:
             raise ValueError("POST_FALL_V2_POST_FALL_ALERT_MIN_MS must not be shorter than candidate confirmation")
         if self.post_fall_v2_qwen_provider not in {"dummy", "qwen_keyframe"}:
             raise ValueError("POST_FALL_V2_QWEN_PROVIDER must be dummy or qwen_keyframe")
-        if self.post_fall_v2_qwen_prompt_version not in {"compact_v2", "compact_2b_v1"}:
-            raise ValueError("POST_FALL_V2_QWEN_PROMPT_VERSION must be compact_v2 or compact_2b_v1")
+        if self.post_fall_v2_qwen_prompt_version not in {"competition_v1", "compact_v3", "compact_v2", "compact_2b_v1"}:
+            raise ValueError(
+                "POST_FALL_V2_QWEN_PROMPT_VERSION must be competition_v1, compact_v3, compact_v2 or compact_2b_v1"
+            )
         if self.post_fall_v2_qwen_schema_version != "compact_v1":
             raise ValueError("POST_FALL_V2_QWEN_SCHEMA_VERSION must be compact_v1")
         if self.post_fall_v2_qwen_fusion_version != "demo_fusion_v2":

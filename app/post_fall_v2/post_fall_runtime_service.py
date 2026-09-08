@@ -755,8 +755,8 @@ class PostFallV2RuntimeService:
             "sampled_monotonic": sampled.sampled_monotonic,
             "candidate_created_timestamp": decision.updated_at,
             "candidate_latency_ms": round((time.monotonic() - sampled.captured_monotonic) * 1000, 3),
-            "prompt_version": "compact_v2",
-            "schema_version": "compact_v1",
+            "prompt_version": getattr(self.settings, "post_fall_v2_qwen_prompt_version", "competition_v1"),
+            "schema_version": getattr(self.settings, "post_fall_v2_qwen_schema_version", "compact_v1"),
             "fusion_version": FUSION_VERSION,
         }
         performance = getattr(raw, "performance", None)
@@ -1056,7 +1056,8 @@ class PostFallV2RuntimeService:
         updated = self._apply_safety_decision(updated, aggregate)
         if self._evidence_exporter is not None:
             try:
-                self._evidence_exporter.export_qwen_confirmation(updated)
+                qwen_images = self._evidence_exporter.export_qwen_review(updated)
+                self._evidence_exporter.export_qwen_confirmation(updated, images=qwen_images)
             except Exception:
                 logger.exception("post_fall_v2_qwen_evidence_export_failed incident_id=%s", incident_id)
         if self._test_archive is not None:

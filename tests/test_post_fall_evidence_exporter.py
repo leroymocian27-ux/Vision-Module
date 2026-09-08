@@ -77,3 +77,55 @@ def test_evidence_exporter_writes_compact_binary_and_qwen_files(tmp_path) -> Non
     assert len(qwen["event_description"]) <= 81
     assert "event" not in qwen
     assert "qwen_analysis" not in qwen
+
+
+def test_evidence_exporter_writes_every_qwen_review_outcome(tmp_path) -> None:
+    exporter = PostFallEvidenceExporter(
+        enabled=True,
+        binary_output_dir=str(tmp_path / "xiao"),
+        qwen_output_dir=str(tmp_path / "da"),
+    )
+    event = FallEvent(
+        incident_id="incident-2",
+        camera_id="camera_01",
+        state="fall_confirmed",
+        started_at="2026-08-25T00:00:00.000+00:00",
+        confirmed_at="2026-08-25T00:00:01.000+00:00",
+        binary_evidence={},
+        vlm_analysis=FallDetailResult(
+            incident_id="incident-2",
+            analysis_status="completed",
+            fall_verdict="non_fall",
+            high_risk_fall=0,
+            semantic_event="non_fall",
+            raw_compact_json={
+                "e": "non_fall",
+                "s": "ground",
+                "d": "no",
+                "f": False,
+                "c": 0.88,
+                "t": "人物低位稳定看书。",
+            },
+            summary="人物低位稳定看书。",
+            confidence=0.88,
+            latency_ms=742.5,
+            timing={"ollama_request_ms": 700.0},
+            qwen_start_frames_received=10,
+            qwen_end_frames_received=15,
+            frames_received_during_qwen=5,
+        ),
+    )
+    images = [QwenImageInput(offset_ms=-800, role="pre", image_bytes=b"jpeg-1")]
+
+    saved_images = exporter.export_qwen_review(event, images=images)
+    qwen = json.loads((tmp_path / "da" / event.incident_id / "qwen_review.json").read_text(encoding="utf-8"))
+
+    assert saved_images == images
+    assert qwen["schema_version"] == "post_fall_local_qwen_review.v1"
+    assert qwen["decision"] == "非真实跌倒"
+    assert qwen["fall_verdict"] == "non_fall"
+    assert qwen["raw_compact_json"]["e"] == "non_fall"
+    assert qwen["latency_ms"] == 742.5
+    assert qwen["frames_received_during_qwen"] == 5
+    assert qwen["keyframes"] == [{"role": "pre", "offset_ms": -800, "file": "01_-0800ms_pre.jpg"}]
+    assert (tmp_path / "da" / event.incident_id / "01_-0800ms_pre.jpg").read_bytes() == b"jpeg-1"

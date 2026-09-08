@@ -28,6 +28,25 @@ def test_future_offsets_remain_collecting_until_real_future_frames_arrive() -> N
     assert [item.frame_seq for item in package.frames if item.frame_seq] == [1, 2, 3]
 
 
+def test_short_post_frame_is_not_filled_before_target_time_even_with_wide_tolerance() -> None:
+    session = KeyframeCollectionSession(
+        incident_id="incident-short-post",
+        camera_id="camera_01",
+        confirmed_monotonic=10.0,
+        required_offsets_ms=(-800, 0, 400),
+        tolerance_ms=750,
+        collection_window_seconds=2,
+    )
+    for seq, offset_ms in enumerate((-800, -300, 0), start=1):
+        session.observe_buffered_frame(_frame(seq, 10.0 + offset_ms / 1000.0))
+
+    package = session.build_package(now_monotonic=10.2)
+
+    assert package.status == "collecting"
+    assert package.resolved_offsets_ms == [-800, 0]
+    assert package.missing_offsets_ms == [400]
+
+
 def test_session_becomes_ready_when_all_future_offsets_have_distinct_frames() -> None:
     session = KeyframeCollectionSession(
         incident_id="incident-2",

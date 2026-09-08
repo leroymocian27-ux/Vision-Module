@@ -60,6 +60,7 @@ _EXPECTED_PROVIDER_FIELDS = {
 # f=VLM direct true-fall/risk judgement, c=confidence, t=last_frame_description.
 EVENT_MAP = {
     "fall": "confirmed_fall",
+    "non_fall": "non_fall",
     "risk": "possible_fall_or_distress",
     "phone": "lying_using_phone",
     "reading": "lying_reading",

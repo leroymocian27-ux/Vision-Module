@@ -34,7 +34,7 @@ from app.post_fall_v2.schemas import (  # noqa: E402
 )
 
 
-DEFAULT_STREAM_URL = "http://192.168.8.254:8093/stream.mjpg"
+DEFAULT_STREAM_URL = "http://192.168.8.249:8093/stream.mjpg"
 DEFAULT_MODEL = CAMERA_SERVICE_ROOT / "models/post_fall_v2/efficientnet_b0/fall_candidate_efficientnet_b0.onnx"
 DEFAULT_SHA256 = "e9871cdb4687055fb5d934dd994c2ad883adac0c2acab375c240f8e005ee04cc"
 # Previous OOF/audit threshold: 0.3979087471961975

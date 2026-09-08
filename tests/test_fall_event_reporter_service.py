@@ -548,7 +548,7 @@ class FallEventReporterServiceTest(unittest.TestCase):
                             "confidence": 0.92,
                             "qwen_profile": "qwen4b_stable_v1",
                             "model_name": "qwen3.5:4b",
-                            "prompt_version": "compact_v2",
+                            "prompt_version": "competition_v1",
                             "schema_version": "compact_v1",
                             "fusion_version": "demo_fusion_v2",
                             "snapshot_path": "E:\\internal\\snapshot.jpg",

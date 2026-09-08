@@ -256,20 +256,36 @@ _FALL_VERDICT_ALIASES = {
     "画面不足": "insufficient_visual_evidence",
 }
 
-POST_FALL_PROMPT_VERSION = "compact_v2"
+POST_FALL_PROMPT_VERSION = "competition_v1"
 POST_FALL_SCHEMA_VERSION = "compact_v1"
 POST_FALL_FUSION_VERSION = "demo_fusion_v2"
 
-_POST_FALL_SYSTEM_PROMPT = """你负责复核养老场景中的跌倒候选事件。
+_POST_FALL_SYSTEM_PROMPT = """你负责复核二分类模型筛选出的低姿态候选事件。
 
-Binary FALL只是候选，不是视觉事实。
+图片按时间顺序排列，最多3张。
 
-根据三张按时间排序的图片判断人物是真实跌倒、异常风险、玩手机、阅读、正常活动还是无法确认。
+只判断：
+fall：真实跌倒；
+non_fall：有明确证据表明人物主动、受控地进入或保持低姿态；
+uncertain：现有图片无法可靠区分。
 
-真实跌倒包括明显非自主失衡、失控下落或异常倒地。
-稳定玩手机、稳定阅读以及明确正常活动属于非真实跌倒。
+必须比较人物前后姿态变化，不要只看最后一张。
 
-只依据图片中可见事实判断，不推测疾病或身份。
+【fall】
+出现明显失衡、突然倾倒、快速非受控下降，或人物在短时间内从正常/较高姿态明显变为倒地，可判断为 fall。
+没有拍到完整落地过程，不代表没有发生跌倒。
+
+【non_fall】
+只有看到明确的主动行为证据，才能判断 non_fall。
+例如主动屈膝、平稳降低重心、主动手撑地、受控坐下或躺下，以及连续稳定阅读、使用手机等行为。
+
+手撑地本身既不是跌倒证据，也不是非跌倒证据，必须结合前后动作判断。
+人物附近存在书本或手机，不能作为 non_fall 的依据。
+
+不得因为“没有看到明显跌倒动作”就判断 non_fall。
+如果既没有足够跌倒证据，也没有明确主动行为证据，选 uncertain。
+
+只依据图片中可见事实判断。
 只返回符合Schema的JSON。"""
 
 
@@ -559,7 +575,7 @@ class QwenKeyframeAnalyzer:
                 "所有自然语言描述必须使用简体中文，不得出现英文单词。",
                 "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
             ],
-            "profile": "compact_v2" if compact else "full_legacy",
+            "profile": POST_FALL_PROMPT_VERSION if compact else "full_legacy",
         }
         serialized = json.dumps(content, ensure_ascii=False)
         if _PATH_PATTERN.search(serialized) or _URL_PATTERN.search(serialized):
@@ -747,7 +763,7 @@ def _ollama_post_fall_json_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "required": ["e", "s", "d", "f", "c", "t"],
         "properties": {
-            "e": {"type": "string", "enum": ["fall", "risk", "phone", "reading", "normal", "uncertain"]},
+            "e": {"type": "string", "enum": ["fall", "non_fall", "uncertain"]},
             "s": {"type": "string", "enum": ["ground", "upright", "unclear"]},
             "d": {"type": "string", "enum": ["yes", "no", "unclear"]},
             "f": {"type": "boolean"},
@@ -941,6 +957,7 @@ def _parse_compact_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallD
     activity = EVENT_MAP[semantic_event]
     fall_verdict = {
         "fall": "confirmed_fall",
+        "non_fall": "non_fall",
         "risk": "unclear",
         "phone": "non_fall",
         "reading": "non_fall",
@@ -949,6 +966,7 @@ def _parse_compact_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallD
     }[semantic_event]
     scene_type = {
         "fall": "fall",
+        "non_fall": "intentional_low_posture",
         "risk": "other",
         "phone": "intentional_low_posture",
         "reading": "intentional_low_posture",
@@ -963,7 +981,7 @@ def _parse_compact_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallD
         scene_type=scene_type,
         recommended_action=recommended_action,
         positive_evidence=[description] if semantic_event in {"fall", "risk"} else [],
-        negative_evidence=[description] if semantic_event in {"phone", "reading", "normal"} else [],
+        negative_evidence=[description] if semantic_event in {"non_fall", "phone", "reading", "normal"} else [],
         posture=description,
         movement_level="unknown",
         attempt_to_stand="unknown",
@@ -982,7 +1000,7 @@ def _parse_compact_post_fall_detail(payload: Mapping[str, Any]) -> QwenPostFallD
         activity=activity,
         posture_state=posture_state,
         fall_transition_visible=True if semantic_event == "fall" else False,
-        intentional_action_evidence=True if semantic_event in {"phone", "reading"} else (False if semantic_event in {"fall", "risk"} else None),
+        intentional_action_evidence=True if semantic_event in {"non_fall", "phone", "reading"} else (False if semantic_event in {"fall", "risk"} else None),
         recovery_observed=False if semantic_event in {"fall", "risk"} else None,
         semantic_event=semantic_event,
         visible_distress=visible_distress,
@@ -1672,35 +1690,34 @@ def _build_post_fall_task(*, countercheck: bool) -> str:
 
 def _build_compact_post_fall_task(*, countercheck: bool) -> str:
     lines = [
-        "养老跌倒复核。",
+        "复核本次低姿态候选事件。",
         "",
-        "三张图片按时间顺序排列，第三张是最后画面。",
+        "图片按时间顺序排列，最后一张是最新画面。",
         "",
-        "e只能选择：",
-        "fall / risk / phone / reading / normal / uncertain。",
+        "按以下顺序判断：",
         "",
-        "fall：",
-        "看到明显非自主失衡、失控下落或异常倒地。",
+        "1. 先比较人物前后位置、身体方向和姿态是否发生明显突变。",
         "",
-        "risk：",
-        "人物处于明显异常低位、异常倒地，或可见痛苦、挣扎、求助等风险状态，但不足以完整确认跌倒过程。",
+        "2. 如果存在突然失衡、快速倾斜、非受控下降，或从正常/较高姿态短时间明显变为倒地，选 fall。",
         "",
-        "phone：",
-        "多帧明确显示人物稳定使用手机。",
+        "3. 如果人物主动屈膝、平稳降低重心、主动手撑地并受控坐下或躺下，或者连续稳定阅读、使用手机，选 non_fall。",
         "",
-        "reading：",
-        "多帧明确显示人物稳定阅读书本、资料或纸张。",
+        "4. non_fall 必须有明确主动行为证据。",
+        "不得因为没有看到跌倒过程而选择 non_fall。",
         "",
-        "normal：",
-        "明确为正常站立、行走、坐下、弯腰、休息或其他受控正常活动。",
+        "5. 书本、手机、垫子等物体本身不能证明人物正在进行正常行为。",
         "",
-        "uncertain：",
-        "关键人物、物体或状态确实无法看清。",
+        "6. 如果 fall 和 non_fall 的证据都不足，选 uncertain。",
         "",
-        "第三张图片是最终需要描述的画面。",
-        "t使用一句不超过40个汉字的简体中文描述第三张图片。",
+        "e只能是 fall / non_fall / uncertain。",
         "",
-        "只输出Schema JSON。",
+        "s：最后一张姿态，ground/upright/unclear。",
+        "d：最后一张是否可见明显痛苦、挣扎或求助，yes/no/unclear。",
+        "f：fall=true；non_fall和uncertain=false。",
+        "c：0到1置信度。",
+        "t：不超过40个汉字，只描述最后一张图片。",
+        "",
+        "只输出JSON。",
     ]
     if countercheck:
         lines.append("反证复核：证据不足时输出uncertain。")
@@ -1710,12 +1727,12 @@ def _build_compact_post_fall_task(*, countercheck: bool) -> str:
 def _compact_post_fall_constraints() -> list[str]:
     return [
         "只返回字段 e、s、d、f、c、t。",
-        "e = semantic_event。",
+        "e = semantic_event，只能是 fall/non_fall/uncertain。",
         "s = posture_state，只能是 ground/upright/unclear。",
         "d = visible_distress，只能是 yes/no/unclear。",
-        "f = VLM直接判断是否为真实跌倒/风险。",
+        "f = VLM直接判断是否为真实跌倒；fall 必须为 true，non_fall/uncertain 必须为 false。",
         "c = confidence，范围0到1。",
-        "t = last_frame_description，不超过40个汉字。",
+        "t = last_frame_description，只描述最后一张图片，不超过40个汉字。",
         "不得输出路径、URL、RTSP 地址、凭据或任何标识符。",
     ]
 

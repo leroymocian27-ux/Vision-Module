@@ -5,6 +5,9 @@ import re
 from urllib.parse import urlsplit
 
 from app.events.qwen_keyframe import (
+    POST_FALL_FUSION_VERSION,
+    POST_FALL_PROMPT_VERSION,
+    POST_FALL_SCHEMA_VERSION,
     QwenImageInput,
     QwenKeyframeAnalyzer,
     QwenKeyframeError,
@@ -87,9 +90,9 @@ class PFV2QwenFallAnalyzer:
                 model_name=self.analyzer.model_name,
                 error_message="no_qwen_keyframe_images",
                 failure_reason="no_qwen_keyframe_images",
-                prompt_version="compact_v2",
-                schema_version="compact_v1",
-                fusion_version="demo_fusion_v2",
+                prompt_version=POST_FALL_PROMPT_VERSION,
+                schema_version=POST_FALL_SCHEMA_VERSION,
+                fusion_version=POST_FALL_FUSION_VERSION,
                 request_started_at=request_started_at,
                 completed_at=event_now_iso(),
             )
@@ -298,9 +301,9 @@ def _failure(
         model_name=model_name,
         error_message=message or reason,
         failure_reason=reason,
-        prompt_version="compact_v2",
-        schema_version="compact_v1",
-        fusion_version="demo_fusion_v2",
+        prompt_version=POST_FALL_PROMPT_VERSION,
+        schema_version=POST_FALL_SCHEMA_VERSION,
+        fusion_version=POST_FALL_FUSION_VERSION,
         request_started_at=event_now_iso(),
         completed_at=event_now_iso(),
     )

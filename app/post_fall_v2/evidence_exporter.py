@@ -99,6 +99,56 @@ class PostFallEvidenceExporter:
         )
         return True
 
+    def export_qwen_review(
+        self,
+        event: FallEvent,
+        images: list[QwenImageInput] | None = None,
+    ) -> list[QwenImageInput]:
+        """Write every Qwen review outcome so false accepts/denies are inspectable."""
+        if not self.enabled:
+            return []
+        detail = event.vlm_analysis
+        if detail is None:
+            return []
+        if images is None:
+            with self._lock:
+                images = self._images.pop(event.incident_id, [])
+        output_dir = self._incident_dir(self.qwen_output_dir, event.incident_id)
+        frame_files = self._write_images(output_dir, images)
+        self._write_json(
+            output_dir / "qwen_review.json",
+            {
+                "schema_version": "post_fall_local_qwen_review.v1",
+                "stage": "qwen_review",
+                "decision": _qwen_decision_label(detail.fall_verdict),
+                "incident_id": event.incident_id,
+                "camera_id": event.camera_id,
+                "confirmed_at": event.confirmed_at,
+                "analysis_status": detail.analysis_status,
+                "fall_verdict": detail.fall_verdict,
+                "high_risk_fall": detail.high_risk_fall,
+                "semantic_event": detail.semantic_event,
+                "raw_compact_json": detail.raw_compact_json,
+                "confidence": detail.confidence,
+                "latency_ms": detail.latency_ms,
+                "timing": detail.timing,
+                "qwen_start_frames_received": detail.qwen_start_frames_received,
+                "qwen_end_frames_received": detail.qwen_end_frames_received,
+                "frames_received_during_qwen": detail.frames_received_during_qwen,
+                "prompt_version": detail.prompt_version,
+                "schema_version_used": detail.schema_version,
+                "fusion_version": detail.fusion_version,
+                "posture": detail.posture,
+                "summary": detail.summary,
+                "last_frame_description": detail.last_frame_description,
+                "visible_distress": detail.visible_distress,
+                "vlm_is_true_fall": detail.vlm_is_true_fall,
+                "error_message": detail.error_message,
+                "keyframes": _qwen_keyframe_summary(images, frame_files),
+            },
+        )
+        return list(images)
+
     @staticmethod
     def _has_visual_fall_evidence(posture: str, summary: str, fall_verdict: str = "unclear") -> bool:
         """Require an explicit VLM fall verdict while preserving empty-scene protection."""
@@ -190,3 +240,22 @@ def _event_description(posture: str, summary: str) -> str:
     if (summary or "").strip().lower() in _UNKNOWN_VISUAL_VALUES:
         return _short_text(posture, 80)
     return _short_text(summary or posture, 80)
+
+
+def _qwen_decision_label(fall_verdict: str) -> str:
+    if fall_verdict == "confirmed_fall":
+        return "确认跌倒"
+    if fall_verdict in {"non_fall", "normal_activity", "intentional_low_posture"}:
+        return "非真实跌倒"
+    return "无法确认"
+
+
+def _qwen_keyframe_summary(images: list[QwenImageInput], frame_files: list[str]) -> list[dict]:
+    frames = []
+    for image, file_name in zip(images, frame_files):
+        frames.append({
+            "role": image.role,
+            "offset_ms": image.offset_ms,
+            "file": file_name,
+        })
+    return frames
