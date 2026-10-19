@@ -136,21 +136,21 @@ After the latest queue-size change, `nvidia-smi` showed no residual Python GPU p
 Recommended GPU startup:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\start_visual_gpu.ps1
 ```
 
 Equivalent direct startup:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Rollback startup remains available:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -163,7 +163,7 @@ Chinese VS Code operator guide:
 Local preflight before manual startup:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\check_gpu_runtime_preflight.ps1
 ```
 
@@ -178,7 +178,7 @@ nvidia-smi
 One-shot local runtime diagnosis:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\diagnose_gpu_runtime.ps1
 ```
 
@@ -384,7 +384,7 @@ These fields are intended for the real RTSP long-run acceptance question: whethe
 Preferred one-command comparison after a reachable authorized RTSP URL is available:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\benchmark_real_rtsp_comparison.ps1 `
   -SourceUrl "rtsp://<user>:<password>@<host>:<port>/<path>" `
   -CameraId "camera_01" `
@@ -453,7 +453,7 @@ Single-scenario commands remain useful for troubleshooting:
 Use this after providing a reachable authorized RTSP URL. Do not paste credentials into public logs or screenshots.
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\benchmark_runtime.ps1 `
   -PythonPath "E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe" `
   -Label "real_rtsp_gpu_001" `
@@ -466,9 +466,9 @@ cd E:\国赛\camera-service
 CPU rollback comparison:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\benchmark_runtime.ps1 `
-  -PythonPath "E:\国赛\camera-service\.venv\Scripts\python.exe" `
+  -PythonPath "E:\HealthProtection\camera-service\.venv\Scripts\python.exe" `
   -Label "real_rtsp_venv_cpu_001" `
   -Port 8781 `
   -DurationSeconds 300 `

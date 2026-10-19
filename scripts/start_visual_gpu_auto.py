@@ -80,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     project_root = Path(__file__).resolve().parents[1]
     gpu_launcher = project_root / "scripts" / "start_visual_gpu.ps1"
     if not gpu_launcher.is_file():
-        print(f"GPU launcher not found: {gpu_launcher}", file=sys.stderr)
+        print(f"GPU launchar not found: {gpu_launcher}", file=sys.stderr)
         return 2
 
     try:

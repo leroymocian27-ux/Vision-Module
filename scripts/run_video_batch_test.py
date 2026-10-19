@@ -31,7 +31,7 @@ from app.post_fall_v2.vlm_review_service import VLMReviewService
 from app.streaming.result_channel_manager import ResultChannelManager
 
 VIDEO_DIR = Path(r"C:\Users\YANG\Desktop\视频")
-OUTPUT_ROOT = Path(r"E:\国赛\event\video_batch_tests")
+OUTPUT_ROOT = PROJECT_ROOT.parent / "event" / "video_batch_tests"
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
 OLLAMA_ENDPOINT = "http://127.0.0.1:11434/api/chat"
 _DLL_DIRECTORY_HANDLES: list[object] = []

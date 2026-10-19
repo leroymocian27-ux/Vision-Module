@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 
-$runtimeRoot = "E:\国赛\go2_video_portable_runtime_2026-08-21"
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$workspaceRoot = Split-Path -Parent $projectRoot
+$runtimeRoot = Join-Path $workspaceRoot "go2_video_portable_runtime_2026-08-21"
 $ffmpeg = Join-Path $runtimeRoot "tools\ffmpeg\bin\ffmpeg.exe"
 $stdout = Join-Path $env:TEMP "go2-mjpeg-rtsp-stdout.log"
 $stderr = Join-Path $env:TEMP "go2-mjpeg-rtsp-stderr.log"

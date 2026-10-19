@@ -1,7 +1,7 @@
 # 机器狗 Go2 画面接入与视觉处理工程交接文档
 
 版本：`2026-08-21`  
-适用工程：`E:\国赛\camera-service`  
+适用工程：`E:\HealthProtection\camera-service`  
 面向对象：视觉算法工程师、后端工程师、机器狗/设备接入工程师、现场联调工程师  
 当前运行架构：`PIPELINE_MODE=post_fall_v2`
 
@@ -249,7 +249,7 @@ ResultPublisherService
 机器狗相机输出经确认后，用以下方式接入：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 
 $body = @{
   camera_id = "go2_front_camera"
@@ -317,13 +317,13 @@ onnxruntime
 当前机器已经存在：
 
 ```text
-E:\国赛\camera-service\.venv
+E:\HealthProtection\camera-service\.venv
 ```
 
 建议使用项目虚拟环境：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.txt
@@ -334,7 +334,7 @@ python -m pip install -r requirements-dev.txt
 用于验证软件链路，不代表真实机器狗相机通过：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\start_safe_demo.ps1
 ```
 
@@ -367,7 +367,7 @@ MAIN_SYSTEM_ALERT_ENABLED=false
 推荐通过环境变量覆盖目标地址：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 
 $env:VISION_SERVICE_ENV_FILE = (Resolve-Path ".\configs\post_fall_v2_candidate.env")
 $env:DEFAULT_RTSP_URL = "rtsp://<user>:<password>@<host>:<port>/<path>"
@@ -384,7 +384,7 @@ $env:DEVICE_DISCOVERY_ENABLED = "false"
 ### 5.4 启动前检查
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 
 .\.venv\Scripts\python.exe scripts\validate_config.py `
   --profile configs\post_fall_v2_candidate.env
@@ -886,7 +886,7 @@ artifacts/post_fall_v2/finalization/final_p3_gate_report.json
 ### 12.1 代码回归
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\.venv\Scripts\python.exe -m pytest `
   tests\test_post_fall_v2_binary_decision_aggregator.py `
   tests\test_post_fall_v2_runtime_service.py `
@@ -906,7 +906,7 @@ cd E:\国赛\camera-service
 ### 12.2 Mock 运行验收
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\start_safe_demo.ps1
 
 Invoke-RestMethod http://127.0.0.1:8000/healthz

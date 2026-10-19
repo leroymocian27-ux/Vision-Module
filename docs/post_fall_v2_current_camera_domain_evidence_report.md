@@ -40,7 +40,7 @@ The 30-session P2.5C plan dry-run validated successfully:
 
 Verified project venv:
 
-- Python executable: `E:\国赛\camera-service\.venv\Scripts\python.exe`
+- Python executable: `E:\HealthProtection\camera-service\.venv\Scripts\python.exe`
 - `onnxruntime`: available
 - `onnxruntime` version: `1.23.2`
 - Providers: `AzureExecutionProvider`, `CPUExecutionProvider`

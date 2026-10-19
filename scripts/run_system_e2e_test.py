@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EVENT_ROOT = Path(r"E:\国赛\event")
+EVENT_ROOT = PROJECT_ROOT.parent / "event"
 DEFAULT_CAMERA_API = "http://127.0.0.1:8000/api/v1"
 DEFAULT_MAIN_API = "http://127.0.0.1:8090/api/v1"
 DEFAULT_CAMERA_ID = "camera_01"

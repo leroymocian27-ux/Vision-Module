@@ -110,7 +110,7 @@ Fields not available because the test was correctly stopped:
 
 For the next run, camera-service should produce these files under:
 
-`E:\国赛\event\<camera_id>\<event_id>\`
+`E:\HealthProtection\event\<camera_id>\<event_id>\`
 
 Required files:
 

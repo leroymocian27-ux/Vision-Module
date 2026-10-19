@@ -5,6 +5,9 @@ from pathlib import Path
 from scripts.run_video_batch_test import build_final_result
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 def test_build_final_result_prefers_active_binary_provider() -> None:
     result = build_final_result(
         video_path=Path(r"C:\Users\YANG\Desktop\视频\demo.mp4"),
@@ -26,7 +29,13 @@ def test_build_final_result_prefers_active_binary_provider() -> None:
         archive_status={},
         preflight={
             "binary_model": {
-                "path": r"E:\国赛\camera-service\models\post_fall_v2\efficientnet_b0\fall_candidate_efficientnet_b0.onnx",
+                "path": str(
+                    PROJECT_ROOT
+                    / "models"
+                    / "post_fall_v2"
+                    / "efficientnet_b0"
+                    / "fall_candidate_efficientnet_b0.onnx"
+                ),
                 "requested_providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
                 "active_providers": ["CPUExecutionProvider"],
                 "available_providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],

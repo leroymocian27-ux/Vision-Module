@@ -3,7 +3,7 @@
 项目目录：
 
 ```text
-E:\国赛\camera-service
+E:\HealthProtection\camera-service
 ```
 
 本功能的 CLI 是 HTTP 客户端，不会重新加载模型，也不会启动第二个 FastAPI。前端按钮和 CLI 都操作当前运行中的同一个 Post-Fall V2 Runtime。
@@ -13,7 +13,7 @@ E:\国赛\camera-service
 推荐使用 GPU Python 环境启动，使二分类 ONNX 使用 CUDA：
 
 ```powershell
-Set-Location "E:\国赛\camera-service"
+Set-Location "E:\HealthProtection\camera-service"
 .\scripts\start_visual_gpu.ps1 -HostName 127.0.0.1 -Port 8000
 ```
 
@@ -30,7 +30,7 @@ E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -m uvicorn app.mai
 新开 VS Code 终端，并保持目录为项目根目录：
 
 ```powershell
-Set-Location "E:\国赛\camera-service"
+Set-Location "E:\HealthProtection\camera-service"
 ```
 
 连接视频后，启动二分类并持续监听：

@@ -15,7 +15,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 
-# ==================== 千问中文提示词集中展示区 ====================
+# ==================== 千问中文提示词 ====================
 
 VLM_SYSTEM_PROMPT = """
 # Role
@@ -34,62 +34,57 @@ VLM_SYSTEM_PROMPT = """
 同时可能收到前级小模型的检测置信度。
 
 # Goal
-请结合人物前后状态变化，判断当前事件属于：
 
-1. fall
-   人物发生明显失衡、倒地或由站立/行走状态快速转为倒地状态。
+结合事件前、中、后三帧的人物状态变化，将疑似事件判断为：
 
-2. normal_low_posture
-   人物主动坐下、躺卧、弯腰、蹲下、取物等正常低姿态行为。
+1. **fall**
+   出现突然失衡、快速高度下降、非主动倒地等明显跌倒证据。
 
-3. uncertain
-   画面遮挡、人物不完整、关键帧不足或证据不足，无法可靠判断。
+2. **normal_low_posture**
+   出现主动坐下、躺卧、弯腰、蹲下等受控行为，且动作完成后状态稳定。
+
+3. **uncertain**
+   存在遮挡、画面不完整或动作过程证据不足，无法可靠判断。
 
 # Decision Rules
 
-## Rule 1：优先分析动作过程
-不要只根据最后一帧姿态判断。
-重点观察人物从 pre_frame 到 event_frame 再到 post_frame 的状态变化。
+## Rule 1：优先分析时序变化
 
-## Rule 2：识别真实跌倒证据
-重点关注：
-- 是否存在突然失衡；
-- 是否发生快速高度下降；
-- 是否出现非主动倒地；
-- 倒地后是否持续保持异常姿态。
+不要只看最后一帧姿态，
+重点分析 pre_frame → event_frame → post_frame 的状态变化。
 
-## Rule 3：识别正常低姿态行为
-如果人物动作具有明显主动性，
-例如缓慢坐下、正常躺卧、弯腰取物，
-且动作完成后状态稳定，应判断为 normal_low_posture。
+## Rule 2：跌倒需要异常转场证据
 
-## Rule 4：证据不足时禁止强行判断
-如果关键人物被遮挡、画面模糊、
-前后帧不足或无法确认动作过程，
-必须输出 uncertain。
+重点关注突然失衡、快速下降、非主动倒地及倒地后的异常状态。
 
-## Rule 5：安全优先
-uncertain 不等于 normal。
-对于无法可靠确认的事件，
-必须设置 needs_manual_review = true。
+## Rule 3：正常行为需要主动证据
 
-# Output Requirements
-只能输出符合指定 JSON Schema 的 JSON 对象。
+只有观察到屈膝、受控坐下、稳定躺卧等主动行为，
+才能判断为 normal_low_posture。
 
-禁止：
-- 输出 Markdown；
-- 输出额外解释文字；
-- 输出医疗诊断；
-- 输出 Schema 中不存在的字段。
+# Output
 
-confidence 范围必须为 0.0 ~ 1.0。
-evidence 最多保留 3 条最关键视觉依据。
+结果统一输出为结构化 JSON：
+
+* event_type：事件类型
+* confidence：判断置信度
+* evidence：最多 3 条关键视觉依据
+* needs_manual_review：是否需要人工复核
+
 """
 QWEN_USER_PROMPT = _build_compact_post_fall_task(countercheck=False)
 QWEN_OUTPUT_FIELD_RULES = _compact_post_fall_constraints()
 
 
-# ==================== 千问 JSON 输出格式展示区 ====================
+output_structure = {
+    "frame_desc": "",
+    "fall_flag": None,
+    "activity": "",
+    "confidence": 0.0,
+    "source": "qwen3.5-4b",
+    "fail_reason": None,
+}
+
 
 qwen_raw_output = {
     "e": "fall / reading / uncertain",
@@ -108,18 +103,6 @@ qwen_field_mapping = {
     "f": "vlm_is_true_fall，是否判断为真实跌倒或风险",
     "c": "confidence，模型置信度",
     "t": "last_frame_description，最后一张图的中文描述",
-}
-
-
-# ==================== 系统业务决策 JSON 展示区 ====================
-
-output_structure = {
-    "frame_desc": "",
-    "fall_flag": None,
-    "activity": "",
-    "confidence": 0.0,
-    "source": "qwen3.5-4b",
-    "fail_reason": None,
 }
 
 

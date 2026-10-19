@@ -1,16 +1,24 @@
 param(
     [string]$HostName = "127.0.0.1",
     [int]$Port = 8000,
+    [string]$PythonPath = "",
     [switch]$SkipOllamaCudaPreflight
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$Python = "E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe"
+$Python = $PythonPath
+if (-not $Python) {
+    $Python = $env:VISION_SERVICE_CUDA_PYTHON_PATH
+}
+if (-not $Python) {
+    $Python = "E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe"
+}
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "GPU Python not found: $Python"
 }
+$Python = (Resolve-Path -LiteralPath $Python).Path
 
 $env:PYTHONPATH = $ProjectRoot
 $env:VISION_SERVICE_REQUIRE_CUDA = "true"

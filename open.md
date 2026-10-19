@@ -1,11 +1,11 @@
 ```text
-E:\国赛\camera-service
+E:\HealthProtection\camera-service
 ```
 
 打开 PowerShell 终端，只使用 CUDA 启动器：
 
 ```powershell
-Set-Location "E:\国赛\camera-service"
+Set-Location "E:\HealthProtection\camera-service"
 .\scripts\start_visual_gpu.ps1 -HostName 127.0.0.1 -Port 8000
 ```
 

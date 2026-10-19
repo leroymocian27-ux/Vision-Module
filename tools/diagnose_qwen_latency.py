@@ -1243,7 +1243,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sidecar Ollama/Qwen latency diagnostics")
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3.5:4b")
-    parser.add_argument("--event-root", default=r"E:\国赛\event")
+    parser.add_argument(
+        "--event-root",
+        default=str(Path(__file__).resolve().parents[2] / "event"),
+    )
     parser.add_argument("--image-dir")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=180.0)

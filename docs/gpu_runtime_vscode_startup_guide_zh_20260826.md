@@ -3,7 +3,7 @@
 这份指南只针对当前项目：
 
 ```text
-E:\国赛\camera-service
+E:\HealthProtection\camera-service
 ```
 
 目标是避免继续用旧 `.venv` 命令启动后，让 Post-Fall V2 二分类模型退回 CPU，造成开启二分类后实时画面明显卡顿。
@@ -13,7 +13,7 @@ E:\国赛\camera-service
 在 VS Code 里打开项目根目录：
 
 ```text
-E:\国赛\camera-service
+E:\HealthProtection\camera-service
 ```
 
 ### 右上角一键启动（推荐）
@@ -41,7 +41,7 @@ Vision Service GPU (Auto 8000-8002)
 启动前可以先跑一次本地 GPU 预检：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\check_gpu_runtime_preflight.ps1
 ```
 
@@ -58,7 +58,7 @@ GPU Runtime Preflight
 然后在 VS Code 终端执行：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\start_visual_gpu.ps1
 ```
 
@@ -83,7 +83,7 @@ Run Vision Service GPU (8000)
 如果你不想用脚本，也可以直接执行：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -99,7 +99,7 @@ E:\MathModelingTools\conda-envs\camera-service-gpu
 旧命令仍然保留作 rollback：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -186,7 +186,7 @@ POST_FALL_V2_SAMPLE_FPS=3
 马上在另一个 VS Code 终端执行：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\diagnose_gpu_runtime.ps1 `
   -JsonOut "artifacts/environment_audit/runtime_diagnosis_latest.json" `
   -FailOnCpuBinaryProvider
@@ -237,7 +237,7 @@ Diagnose GPU Runtime (8000)
 ## 9. 快速检查 GPU 环境
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -c "import onnxruntime as ort; print(ort.__version__); print(ort.get_available_providers())"
 nvidia-smi
 ```
@@ -253,7 +253,7 @@ CUDAExecutionProvider
 有可访问的授权 RTSP 源后，运行：
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\benchmark_real_rtsp_comparison.ps1 `
   -SourceUrl "rtsp://<user>:<password>@<host>:<port>/<path>" `
   -CameraId "camera_01" `

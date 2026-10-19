@@ -118,10 +118,10 @@ Transition 告警对外使用 `fallen_confirmed`；Post-Fall 告警使用 `suspe
 测试期间每个二分类完整事件使用同一 `incident_id` 进入千问归档，目录名必须一一对应：
 
 ```text
-E:\国赛\event\binary-classification\full\<incident_id>
-E:\国赛\event\qwen\confirm\<incident_id>
-E:\国赛\event\qwen\deny\<incident_id>
-E:\国赛\event\qwen\review\<incident_id>
+E:\HealthProtection\event\binary-classification\full\<incident_id>
+E:\HealthProtection\event\qwen\confirm\<incident_id>
+E:\HealthProtection\event\qwen\deny\<incident_id>
+E:\HealthProtection\event\qwen\review\<incident_id>
 ```
 
 归档分类：

@@ -1,6 +1,6 @@
 # Post-Fall V2 Architecture Audit
 
-Audit target: `E:/国赛/camera-service`
+Audit target: `E:/HealthProtection/camera-service`
 
 Audit date: 2026-08-10
 

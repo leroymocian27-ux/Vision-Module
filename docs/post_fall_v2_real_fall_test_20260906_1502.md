@@ -10,7 +10,7 @@
 - Evidence export:
   - Binary: `C:\Users\YANG\Desktop\ce\xiao`
   - Qwen: `C:\Users\YANG\Desktop\ce\da`
-- Formal presentation session: `E:\国赛\event\test_sessions\test_20260906_070337`
+- Formal presentation session: `E:\HealthProtection\event\test_sessions\test_20260906_070337`
 
 This run produced four binary fall candidates. Qwen confirmed the first one as a fall, marked the second uncertain, and marked the later two as non-fall.
 

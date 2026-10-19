@@ -10,7 +10,7 @@
 
 | 项 | 结果 |
 | --- | --- |
-| 项目目录 | `E:\国赛\camera-service` |
+| 项目目录 | `E:\HealthProtection\camera-service` |
 | 本机实测 IPv4 | `192.168.8.253` |
 | 主系统 IPv4 | `192.168.8.254` |
 | 主系统 Base URL | `http://192.168.8.254:8000` |
@@ -72,7 +72,7 @@ $env:MAIN_SYSTEM_HEALTH_PATH='/api/integrations/fall-detection/health'
 $env:MAIN_SYSTEM_INTEGRATION_TOKEN=''
 $env:MAIN_SYSTEM_ALERT_TOKEN=''
 $env:MAIN_SYSTEM_ALERT_TOKEN_HEADER='X-Vision-Service-Token'
-$env:TEST_EVENT_ROOT='E:\国赛\event'
+$env:TEST_EVENT_ROOT='E:\HealthProtection\event'
 E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -161,8 +161,8 @@ fall_prob=0.91
 
 | 文件 | 结果 |
 | --- | --- |
-| `E:\国赛\event\go2_front_camera\lan-e2e-20260829-rerun-001\main_system_alert.json` | 已生成 |
-| `E:\国赛\event\go2_front_camera\lan-e2e-20260829-rerun-001\main_system_delivery.json` | `status=delivered`, `attempts=1`, `last_http_status=200`, `duplicate=false` |
+| `E:\HealthProtection\event\go2_front_camera\lan-e2e-20260829-rerun-001\main_system_alert.json` | 已生成 |
+| `E:\HealthProtection\event\go2_front_camera\lan-e2e-20260829-rerun-001\main_system_delivery.json` | `status=delivered`, `attempts=1`, `last_http_status=200`, `duplicate=false` |
 
 主系统 `/api/v1/alarms`：
 

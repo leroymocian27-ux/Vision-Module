@@ -26,9 +26,9 @@ Record these before testing:
 
 | Item | Expected | Actual |
 | --- | --- | --- |
-| Project root | `E:\国赛\camera-service` | |
+| Project root | `E:\HealthProtection\camera-service` | |
 | GPU Python | `E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe` | |
-| Rollback Python | `E:\国赛\camera-service\.venv\Scripts\python.exe` | |
+| Rollback Python | `E:\HealthProtection\camera-service\.venv\Scripts\python.exe` | |
 | RTSP source authorized | yes | |
 | Main system endpoint available if delivery is tested | yes/no | |
 | Qwen/Ollama endpoint available if Qwen is tested | yes/no | |
@@ -37,7 +37,7 @@ Record these before testing:
 Provider precheck:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 E:\MathModelingTools\conda-envs\camera-service-gpu\python.exe -c "import onnxruntime as ort; print(ort.__version__); print(ort.get_available_providers())"
 nvidia-smi
 ```
@@ -55,7 +55,7 @@ Close any old service on port `8000`, or choose a temporary benchmark port.
 Start the visual service for manual browser testing:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\start_visual_gpu.ps1
 ```
 
@@ -92,7 +92,7 @@ Pass condition:
 Use the same real RTSP source for all scenarios:
 
 ```powershell
-cd E:\国赛\camera-service
+cd E:\HealthProtection\camera-service
 .\scripts\benchmark_real_rtsp_comparison.ps1 `
   -SourceUrl "rtsp://<user>:<password>@<host>:<port>/<path>" `
   -CameraId "camera_01" `
@@ -190,10 +190,10 @@ When timed testing is used, inspect:
 
 | Folder | Expected content |
 | --- | --- |
-| `E:\国赛\event\binary-classification\full` | every binary event that would be sent to Qwen |
-| `E:\国赛\event\binary-classification\other` | binary non-fall frame records captured during the timed test |
-| `E:\国赛\event\qwen\confirm` | Qwen-confirmed real fall events with keyframes and JSON |
-| `E:\国赛\event\qwen\deny` | Qwen-denied binary fall events with keyframes and JSON |
+| `E:\HealthProtection\event\binary-classification\full` | every binary event that would be sent to Qwen |
+| `E:\HealthProtection\event\binary-classification\other` | binary non-fall frame records captured during the timed test |
+| `E:\HealthProtection\event\qwen\confirm` | Qwen-confirmed real fall events with keyframes and JSON |
+| `E:\HealthProtection\event\qwen\deny` | Qwen-denied binary fall events with keyframes and JSON |
 
 Event consistency rule:
 

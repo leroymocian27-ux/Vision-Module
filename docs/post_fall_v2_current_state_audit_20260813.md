@@ -1,7 +1,7 @@
 ﻿# 《Post-Fall V2 重构后当前项目真实状态审计报告》
 
 审计日期：2026-08-13  
-审计范围：`E:\国赛\camera-service`  
+审计范围：`E:\HealthProtection\camera-service`  
 审计性质：AUDIT / VERIFY / BASELINE REBUILD，不修改业务逻辑。  
 
 > Historical / superseded on 2026-08-14.  
@@ -251,7 +251,7 @@ last_error=null
 
 解释：mock/colorbars 下产生 `event_count=1` 只证明链路能启动、推理、聚合并创建事件；不能作为真实摄像头准确率或生产阈值证据。
 
-Git 基线：`E:\国赛\camera-service` 当前不是 Git repository，`git status`、`git branch`、`git log`、`git diff --stat` 均不可用。因此无法确认 branch、commit、diff 或 untracked 状态，本报告不使用 Git 历史作为证据。
+Git 基线：`E:\HealthProtection\camera-service` 当前不是 Git repository，`git status`、`git branch`、`git log`、`git diff --stat` 均不可用。因此无法确认 branch、commit、diff 或 untracked 状态，本报告不使用 Git 历史作为证据。
 
 ## 13. 核心场景验收矩阵
 

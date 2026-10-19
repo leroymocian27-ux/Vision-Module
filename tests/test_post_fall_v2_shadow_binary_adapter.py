@@ -30,7 +30,7 @@ from app.post_fall_v2.schemas import (
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT / "models/post_fall_v2/efficientnet_b0/fall_candidate_efficientnet_b0.onnx"
 MODEL_SHA256 = "e9871cdb4687055fb5d934dd994c2ad883adac0c2acab375c240f8e005ee04cc"
-AUDIT_ROOT = Path("E:/国赛/_uploaded_binary_model_audit_20260810_01/dog")
+AUDIT_ROOT = ROOT.parent / "_uploaded_binary_model_audit_20260810_01" / "dog"
 FALL_SAMPLE = AUDIT_ROOT / "data/Fall/go2_fall_batch50_3min_20260731_210528_01_20260731_210537_372.jpg"
 NOFALL_SAMPLE = AUDIT_ROOT / "data/noFall/go2_01_20260731_201522_156.jpg"
 
